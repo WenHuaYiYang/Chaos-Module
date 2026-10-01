@@ -42,10 +42,12 @@ use crate::*;
 /// 在位素材来自哪个包由投递包决定: 素材池 assets/delta_lvgl 是 38 张全在位的那一套,
 /// assets/fluent_lvgl 是存档(33 张, 该池没有运动/血氧/女性健康/米家 的图形
 /// => 换过去会有 5 张读不到)。每张 112x112、cf=0x10、50188B。
-/// 日历是**已知不覆盖**的一张, 不是漏配: 它的磁贴 = 固件自绘日期 + 一张浅灰圆盘底
-/// (`/resource/app/perpetual_calendar/calendar_background_icon.bin`, 解出来就是一个灰圆),
+/// 日历是**已知不覆盖**的一张, 不是漏配: 它的磁贴 = 固件自绘日期 + 一张**白色圆盘底**
+/// (`/resource/app/perpetual_calendar/calendar_background_icon.bin`; 实测均值
+/// R236 G241 B245、逐行不透明宽度 35..101..29 对称 => 圆盘, 内容框 101x100 四边 6px),
 /// 而这条路径是 launcher 代码里的 flash 字面量(0x0CB941A4), **不走注册表节点 +0x0C**
 /// => 本机制改不到它。曾按别名补过第 39 张试, 实测日历仍没换, 已撤。
+/// 注意: 日期两枚文字是画在这张白底上的(所以字色按浅底配), 换深色底图会让日期读不出来。
 const ICON_STEMS: [&[u8]; IC_STEM_N] = [
     b"activities", b"aivs", b"alarm", b"alipay",
     b"breath", b"calendar", b"camera", b"card",
