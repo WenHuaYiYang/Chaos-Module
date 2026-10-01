@@ -1,0 +1,3 @@
+# AGPL 文本必须逐字不变(FSF 要求这份文档只能原样复制):
+# 禁止 checkout/commit 时改写行尾。仓库其余文件混用 CRLF/LF, 所以只钉这一个。
+LICENSE -text
