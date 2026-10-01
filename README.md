@@ -130,7 +130,6 @@ chaos_sup（常驻内核模块，持有设备节点 /dev/chaos）
 | `installer/font_pack.lua` | 字体投递包在设备侧的安装逻辑 |
 | `installer/icon_pack.lua` | 图标投递包在设备侧的安装逻辑 |
 | `installer/font_moved.txt` | 容器第 4 槽的占位文件，槽数不能减，原因见"安装容器格式" |
-| `watchfaces/xu/` | 示例表盘 Lua（数字表盘，含心率 Q24.8 这类在真机上核对过的数据语义） |
 | `chaos_icon.bin` | 应用图标，112×112 |
 
 `supervisor/src/` 的分工：
