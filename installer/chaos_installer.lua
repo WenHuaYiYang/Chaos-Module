@@ -4,7 +4,8 @@
 -- 根因假设：rmmod 释放模块内存但 app 注册链表条目悬空 → 切表盘时 launcher 遍历到悬空回调 → 崩。
 -- 2. 每条命令一个独立 timer 拍（对齐 官方："let miwear receive an event-loop turn\n-- between native registration stages"）。
 -- 3. INSTALL 0x0A(restore 占位) → 0 → 1 → 2 四拍，间隔 1000ms。
--- 4. 诊断显示优先级修复：DIAG(崩溃步骤) > STEP(ST) > OC(args) > THUNKS；加 Info 按钮循环查看。
+-- 4. 状态行只显示当前步骤与结果。早期"把崩点步号落盘再读回来"的那条探针链已整体删掉，
+--    安装过程不在 /data/chaos 留任何调试文件。
 
 local lvgl = require("lvgl")
 
@@ -55,7 +56,6 @@ local ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon.bin"
 local ICON_PATH = "/data/chaos/chaos_icon.bin"
 local DATA_DIR = "/data/chaos"
 local DEVICE_PATH = "/dev/chaos"
-local DIAG_FILE = "/data/chaos/diag.txt"
 
 local CMD_MAGIC = 0x53484331           -- "1CHS"
 local STATUS_MAGIC = 0x53484332        -- "2CHS"
@@ -74,11 +74,6 @@ local function shell_quote(v) return "'" .. tostring(v):gsub("'", "'\\''") .. "'
 local function run(c) print("[chaos] exec: " .. c); local ok = os.execute(c); return ok == true or ok == 0 end
 local function set_status(text, color) status_label:set { text = tostring(text), text_color = color or V_TXT2 } end
 
-local function mark_step(n, label)
-  run("mkdir -p " .. DATA_DIR)
-  local f = io.open(DIAG_FILE, "wb")
-  if f then f:write(tostring(n) .. "|" .. tostring(label)); f:close() end
-end
 local function read_all(path, mode)
   if type(io) ~= "table" or type(io.open) ~= "function" then return nil end
   local f = io.open(path, mode or "rb"); if not f then return nil end
@@ -119,6 +114,9 @@ local function detect_language()
       end
     end
   end
+  -- 两种方法都得靠临时文件把 getprop 的输出绕回 Lua（这个运行时没有 popen）。
+  -- 用完就删, 设备上不留残留文件。
+  run("rm -f " .. LANG_OUTPUT .. " /data/chaos/allprop.txt")
 end
 local FONT_RESOURCE = SCRIPT_PATH .. "lxgw.ttf"
 local FONT_DIR = "/data/chaos/font"
@@ -286,7 +284,6 @@ local function run_next_step(timer)
         return
     end
     set_status("RUN " .. step[1])
-    mark_step(run_phase, step[1])
     local ok, message, extra = pcall(step[2])
     if not ok then
         finish_run(timer, false, "RUN " .. step[1] .. " lua err: " .. tostring(message))
