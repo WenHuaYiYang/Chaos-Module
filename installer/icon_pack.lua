@@ -80,10 +80,11 @@ local function set_status(text, color)
   end
 end
 
-local function le32(s, i)
+-- 小端读一个 u32; 乘项从高位起累(与打包侧的 u32le 互为镜像)
+local function read_u32(s, i)
   local a, b, c, d = s:byte(i, i + 3)
   if not d then return nil end
-  return a + b * 0x100 + c * 0x10000 + d * 0x1000000
+  return d * 0x1000000 + c * 0x10000 + b * 0x100 + a
 end
 
 local function spaces(n) return string.rep(" ", n) end
@@ -198,7 +199,7 @@ local function step()
       finish(false, "pack.bin 头不符")
       return
     end
-    local count = le32(hdr, 5)
+    local count = read_u32(hdr, 5)
     if not count or count < 1 or count > 64 then
       src:close()
       finish(false, "图标张数非法: " .. tostring(count))
@@ -219,7 +220,7 @@ local function step()
         return
       end
       local lh = job.src:read(4)
-      local len = lh and le32(lh, 1)
+      local len = lh and read_u32(lh, 1)
       -- 单张上限 512KB: 实测素材单张 50188 字节, 给足余量又把明显坏的长度挡在写盘之前
       if not len or len < 1 or len > 0x80000 then
         finish(false, "第 " .. (job.idx + 1) .. " 张长度头非法")

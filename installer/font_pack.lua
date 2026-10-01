@@ -100,10 +100,15 @@ local function set_status(text, color)
   end
 end
 
-local function word(v)
-  v = math.floor(v)
-  return string.char(v % 0x100, math.floor(v / 0x100) % 0x100,
-      math.floor(v / 0x10000) % 0x100, math.floor(v / 0x1000000) % 0x100)
+-- u32 小端打包: 逐字节压进 table 再拼(与主安装器/图标包同款新写法)
+local function u32le(value)
+  local n = math.floor(value)
+  local pieces = {}
+  for _ = 1, 4 do
+    pieces[#pieces + 1] = string.char(n % 0x100)
+    n = math.floor(n / 0x100)
+  end
+  return table.concat(pieces)
 end
 
 local function read_status()
@@ -112,13 +117,15 @@ local function read_status()
   local raw = f:read(STATUS_SIZE)
   f:close()
   if type(raw) ~= "string" or #raw ~= STATUS_SIZE then return nil end
-  local w = {}
-  for off = 1, STATUS_SIZE, 4 do
-    local a, b, c, d = raw:byte(off, off + 3)
-    w[#w + 1] = a + b * 0x100 + c * 0x10000 + d * 0x1000000
+  local words = {}
+  local slot = 1
+  for base = 1, STATUS_SIZE, 4 do
+    local a, b, c, d = raw:byte(base, base + 3)
+    words[slot] = a + b * 0x100 + c * 0x10000 + d * 0x1000000
+    slot = slot + 1
   end
-  if w[1] ~= STATUS_MAGIC then return nil end
-  return w
+  if words[1] ~= STATUS_MAGIC then return nil end
+  return words
 end
 
 -- 状态字 +0x46(1 基第 47 个) = 当前在用的字体槽位: 0 = 安装器那份, 1..8 = st1..st8。
@@ -132,7 +139,7 @@ local function live_slot()
 end
 
 local function send_deliver(slot)
-  local payload = word(CMD_MAGIC) .. word(CMD_INSTALL) .. word(CMD_FONT_DELIVER) .. word(slot)
+  local payload = u32le(CMD_MAGIC) .. u32le(CMD_INSTALL) .. u32le(CMD_FONT_DELIVER) .. u32le(slot)
   local f = io.open(DEVICE_PATH, "wb")
   if not f then return false end
   local wok = pcall(f.write, f, payload)

@@ -60,19 +60,47 @@ local STATUS_SIZE = 192
 local STATE_ACTIVE = 1
 
 local status_label
-local run_timer = nil
-local run_phase = 1
-local run_attempted = false
-local clear_armed = false
+-- 运行器状态: runner = 当前执行中的 timer; step_index = 步骤游标;
+-- started_once = 本次会议跑过没有(一个模块只能装一次, 跑过必须重启);
+-- wipe_armed = 清除按钮的两段式确认闸。
+local runner
+local step_index = 1
+local started_once = false
+local wipe_armed = false
 
-local function shell_quote(v) return "'" .. tostring(v):gsub("'", "'\\''") .. "'" end
-local function run(c) print("[chaos] exec: " .. c); local ok = os.execute(c); return ok == true or ok == 0 end
 local function set_status(text, color) status_label:set { text = tostring(text), text_color = color or V_TXT2 } end
 
+-- 把参数变成 POSIX 安全的单引号字面量。单引号内部没有任何转义机制,
+-- 遇到引号只能"关引号 + 转义引号 + 重开引号"。
+local function quote_arg(value)
+  local pieces = { "'" }
+  for ch in tostring(value):gmatch(".") do
+    if ch == "'" then
+      pieces[#pieces + 1] = "'\\''"
+    else
+      pieces[#pieces + 1] = ch
+    end
+  end
+  pieces[#pieces + 1] = "'"
+  return table.concat(pieces)
+end
+
+local function exec(cmd)
+  print("[chaos-installer] " .. cmd)
+  local rc = os.execute(cmd)
+  return rc == true or rc == 0
+end
+
+-- 读整个小文件。这个 Lua 运行时没有 popen, 命令输出全靠重定向到临时文件再读回来。
 local function read_all(path, mode)
-  if type(io) ~= "table" or type(io.open) ~= "function" then return nil end
-  local f = io.open(path, mode or "rb"); if not f then return nil end
-  local c = f:read("*a"); f:close(); return c
+  if type(io) ~= "table" then return nil end
+  local open = io.open
+  if type(open) ~= "function" then return nil end
+  local fh = open(path, mode or "rb")
+  if not fh then return nil end
+  local body = fh:read("*a")
+  fh:close()
+  return body
 end
 
 -- 语言检测: getprop <键> 含 "zh" = 中文界面。
@@ -84,7 +112,7 @@ local lang_seen = false
 local function detect_language()
   local candidates = {"persist.locale", "ro.system.language", "persist.sys.language", "persist.sys.locale", "ro.product.locale", "sys.language", "ro.product.language", "persist.sys.language_code", "ro.miwear.language"}
   for _, k in ipairs(candidates) do
-    run("getprop " .. k .. " > " .. LANG_OUTPUT)
+    exec("getprop " .. k .. " > " .. LANG_OUTPUT)
     local raw = read_all(LANG_OUTPUT, "r")
     if type(raw) == "string" and #raw > 0 then
       local v = raw:gsub("%s+$", "")
@@ -96,7 +124,7 @@ local function detect_language()
   end
   -- 备选: getprop 无参全量 dump, 筛含 lang/locale 的行
   if not lang_seen then
-    run("getprop > /data/chaos/allprop.txt")
+    exec("getprop > /data/chaos/allprop.txt")
     local all = read_all("/data/chaos/allprop.txt", "r")
     if type(all) == "string" then
       for line in all:gmatch("[^\\r\\n]+") do
@@ -110,7 +138,7 @@ local function detect_language()
   end
   -- 两种方法都得靠临时文件把 getprop 的输出绕回 Lua（这个运行时没有 popen）。
   -- 用完就删, 设备上不留残留文件。
-  run("rm -f " .. LANG_OUTPUT .. " /data/chaos/allprop.txt")
+  exec("rm -f " .. LANG_OUTPUT .. " /data/chaos/allprop.txt")
 end
 local FONT_RESOURCE = SCRIPT_PATH .. "lxgw.ttf"
 local FONT_DIR = "/data/chaos/font"
@@ -135,12 +163,12 @@ local function stage_fonts()
   -- 就是这里创建出来的。
   -- 注意: mkdir 不能挪到下面两个提前返回之后 —— 一起被跳过就没人建这个目录,
   -- 投递时报"打不开目标文件"。
-  run("mkdir -p " .. FONT_DIR)
+  exec("mkdir -p " .. FONT_DIR)
   local c = read_all(FONT_RESOURCE, "rb")
   if not c then return true end                    -- 容器里没这一槽: 交给投递包
   if not looks_like_font(c) then return true end   -- 占位文件: 同上
   -- 清掉早期版本多铺出来的名字副本(约 48MB), 只留上面那 2 份
-  run("rm -f " .. FONT_DIR .. "/MiSans-*.ttf " .. FONT_DIR .. "/MiSansF-*.ttf "
+  exec("rm -f " .. FONT_DIR .. "/MiSans-*.ttf " .. FONT_DIR .. "/MiSansF-*.ttf "
       .. FONT_DIR .. "/BaiJamjuree-*.ttf")
   for _, n in ipairs(FONT_NAMES) do
     local f = io.open(FONT_DIR .. "/" .. n, "wb")
@@ -152,7 +180,7 @@ local function stage_fonts()
 end
 local function stage_resource(res, dest)
   local c = read_all(res, "rb"); if not c then return false, "cannot read " .. res end
-  run("mkdir -p " .. DATA_DIR)
+  exec("mkdir -p " .. DATA_DIR)
   local f = io.open(dest, "wb"); if not f then return false, "cannot open " .. dest end
   local wok, wres = pcall(f.write, f, c); local cok, cres = pcall(f.close, f)
   if not wok or not cok then return false, "write failed" end
@@ -167,163 +195,194 @@ end
 -- 铺在 icons/ 下; 现在每个包一个子目录(icons/<包号>/, 由投递脚本建), 通配不会误删。
 local ICON_DIR = DATA_DIR .. "/icons"
 local function stage_icons()
-  run("mkdir -p " .. DATA_DIR)
-  run("mkdir -p " .. ICON_DIR)
-  run("rm -f " .. ICON_DIR .. "/*.bin")
+  exec("mkdir -p " .. DATA_DIR)
+  exec("mkdir -p " .. ICON_DIR)
+  exec("rm -f " .. ICON_DIR .. "/*.bin")
   return stage_resource(ICON_RESOURCE, ICON_PATH)
 end
 
-local function device_present() local f = io.open(DEVICE_PATH, "rb"); if not f then return false end; f:close(); return true end
-
-local function word(v)
-  v = math.floor(v)
-  return string.char(v % 0x100, math.floor(v / 0x100) % 0x100,
-      math.floor(v / 0x10000) % 0x100, math.floor(v / 0x1000000) % 0x100)
-end
-local function bytes_to_words(content)
-  if type(content) ~= "string" or #content ~= STATUS_SIZE then return nil end
-  local w = {}
-  for off = 1, STATUS_SIZE, 4 do
-    local a, b, c, d = content:byte(off, off + 3)
-    w[#w + 1] = a + b * 0x100 + c * 0x10000 + d * 0x1000000
-  end
-  return w
-end
-local function read_status()
-  local f = io.open(DEVICE_PATH, "rb"); if not f then return nil, "cannot open " .. DEVICE_PATH end
-  local raw = f:read(STATUS_SIZE); f:close()
-  local w = bytes_to_words(raw)
-  if not w or #w < 8 or w[1] ~= STATUS_MAGIC then return nil, "status ABI mismatch" end
-  if w[4] ~= STATUS_VERSION then return nil, string.format("old sup version=0x%X reboot", w[4]) end
-  return { state = w[11], write_count = w[3], dbg0 = w[43], dbg1 = w[44], dbg2 = w[45], step = w[48] }
-end
-local function write_install(arg0)
-  local payload = word(CMD_MAGIC) .. word(CMD_INSTALL) .. word(arg0) .. word(0)
-  local f = io.open(DEVICE_PATH, "wb"); if not f then return false, "cannot open " .. DEVICE_PATH end
-  local wok, wres = pcall(f.write, f, payload); local cok, cres = pcall(f.close, f)
-  if not wok or wres == nil or not cok or cres == nil then return false, "write failed" end
+local function module_loaded()
+  local fh = io.open(DEVICE_PATH, "rb")
+  if not fh then return false end
+  fh:close()
   return true
 end
-local function execute_install(arg0)
-  local ok, err = write_install(arg0); if not ok then return false, err end
-  local st, e = read_status(); if not st then return false, e end
-  if st.state ~= STATE_ACTIVE then
-    return false, string.format("state=%d wr=%d step=%d", st.state, st.write_count, st.step or -1)
+
+-- u32 小端打包: 逐字节压进 table 再拼, 避免一行四个取模堆在一起
+local function u32le(value)
+  local n = math.floor(value)
+  local pieces = {}
+  for _ = 1, 4 do
+    pieces[#pieces + 1] = string.char(n % 0x100)
+    n = math.floor(n / 0x100)
   end
-  -- DBG 值含义（ko 侧 fops）：dbg0=lookup结果 dbg1=register_app返回值 dbg2=lookup验证结果
-  return true, string.format("d0=%X d1=%X d2=%X st=%d",
-      st.dbg0 or 0, st.dbg1 or 0, st.dbg2 or 0, st.step or -1)
+  return table.concat(pieces)
 end
 
--- 每步一个 timer 拍（步骤间让 miwear 的事件循环转一圈）
-local notify_retry = 0  -- notify step 重试计数（等 launcher 订阅就绪）
-local steps = {
-    { "1 部署模块",     function() return stage_resource(SUPERVISOR_RESOURCE, SUPERVISOR_PATH) end },
-  { "2 部署应用图标", stage_icons },
-  { "2.5 部署字体", stage_fonts },
-  { "3 加载模块", function()
-      if device_present() then
-        return false, "old module active: power OFF watch, power ON, then Run again"
+local function status_words(raw)
+  if type(raw) ~= "string" or #raw ~= STATUS_SIZE then return nil end
+  local words = {}
+  local slot = 1
+  for base = 1, STATUS_SIZE, 4 do
+    local a, b, c, d = raw:byte(base, base + 3)
+    words[slot] = a + b * 0x100 + c * 0x10000 + d * 0x1000000
+    slot = slot + 1
+  end
+  return words
+end
+
+local function read_status()
+  local fh = io.open(DEVICE_PATH, "rb")
+  if not fh then return nil, "设备打不开" end
+  local raw = fh:read(STATUS_SIZE)
+  fh:close()
+  local words = status_words(raw)
+  if not words or #words < 8 then return nil, "状态字太短" end
+  if words[1] ~= STATUS_MAGIC then return nil, "状态字不符" end
+  if words[4] ~= STATUS_VERSION then
+    return nil, "模块版本旧, 先重启"
+  end
+  -- 词位含义(见 ko 侧 fops): 11=运行态 3=写次数 43/44/45=调试字 48=步骤号
+  return {
+    state = words[11],
+    writes = words[3],
+    dbg_lookup = words[43],
+    dbg_register = words[44],
+    dbg_verify = words[45],
+    step = words[48],
+  }
+end
+
+-- 命令帧: magic | cmd | arg0 | arg1(恒 0), 与 chaos_sup 的 fops 写入口对齐
+local function send_command(arg0)
+  local frame = u32le(CMD_MAGIC) .. u32le(CMD_INSTALL) .. u32le(arg0) .. u32le(0)
+  local fh = io.open(DEVICE_PATH, "wb")
+  if not fh then return false, "设备打不开" end
+  local wrote, werr = pcall(fh.write, fh, frame)
+  local closed = pcall(fh.close, fh)
+  if not wrote or not closed then return false, "写入失败" end
+  return true
+end
+
+local function install_step(arg0)
+  local sent, err = send_command(arg0)
+  if not sent then return false, err end
+  local st, err2 = read_status()
+  if not st then return false, err2 end
+  if st.state ~= STATE_ACTIVE then
+    return false, string.format("state=%d", st.state)
+  end
+  -- DBG 字含义(ko 侧 fops): lookup 结果 / register_app 返回值 / lookup 复核结果
+  return true, string.format("d0=%X d1=%X d2=%X st=%d",
+      st.dbg_lookup or 0, st.dbg_register or 0, st.dbg_verify or 0, st.step or -1)
+end
+
+-- 安装流水线: 每步一个 timer 拍(步骤之间让 miwear 的事件循环转一圈)。
+-- notify_retry: 通知步骤的重试计数(等 launcher 订阅就绪)。
+local notify_retry = 0
+local pipeline = {
+  { name = "1 部署模块",     body = function() return stage_resource(SUPERVISOR_RESOURCE, SUPERVISOR_PATH) end },
+  { name = "2 部署应用图标", body = stage_icons },
+  { name = "2.5 部署字体",   body = stage_fonts },
+  { name = "3 加载模块", body = function()
+      if module_loaded() then
+        return false, "旧模块还在, 请重启"
       end
-      local ok = run(string.format("insmod %s chaos_sup", shell_quote(SUPERVISOR_PATH)))
-      if not ok then return false, "insmod failed" end
+      if not exec(string.format("insmod %s chaos_sup", quote_arg(SUPERVISOR_PATH))) then
+        return false, "insmod 失败"
+      end
       return true
   end },
-  { "4 检查设备", function()
-      if not device_present() then return false, "/dev/chaos missing" end
+  { name = "4 检查设备", body = function()
+      if not module_loaded() then return false, "/dev/chaos 不存在" end
       return true
   end },
-  { "4.5 设置语言", function()
+  { name = "4.5 设置语言", body = function()
       -- 一个语言属性都没读到 => 无法判断, 按中文装
       if not lang_seen then
         set_status("语言: 未知, 按中文装", V_WARN)
-        return execute_install(0x18)
+        return install_step(0x18)
       end
       if lang_zh then
         set_status("语言: 中文", V_OK)
-        return execute_install(0x18)
+        return install_step(0x18)
       end
       set_status("语言: 英文", V_OK)
-      return execute_install(0x19)
+      return install_step(0x19)
   end },
-  { "5 恢复占位", function()
-      return execute_install(0x0A)
-  end },
-  { "6 注册应用", function()
-      return execute_install(0x13)
-  end },
-  { "6.5 通知系统", function()
+  { name = "5 恢复占位", body = function() return install_step(0x0A) end },
+  { name = "6 注册应用", body = function() return install_step(0x13) end },
+  { name = "6.5 通知系统", body = function()
       -- 直接走固件自己的 notify 完整链(0x0CA81D18 注册表查询
       -- + 0x0CA81FB9 notify_installed), 实测这一条必成。
       -- 根因: 手动复刻这条链绕开了固件, 只能靠 0x3F 等 launcher 订阅就绪, 那是缓解不是修好。
-      return execute_install(0x43)
+      return install_step(0x43)
   end },
-    { "7 发布应用", function()
-      return execute_install(1)
-  end },
-  { "8 INSTALL arg0=2 (launcher entries)", function()
-      return execute_install(2)
-  end },
+  { name = "7 发布应用", body = function() return install_step(1) end },
+  { name = "8 INSTALL arg0=2 (launcher entries)", body = function() return install_step(2) end },
 }
 
-local function finish_run(timer, success, message)
+local function stop_runner(timer, ok, message)
     timer:delete()
-    if run_timer == timer then run_timer = nil end
-    set_status(message, success and V_OK or V_ERR)
+    if runner == timer then runner = nil end
+    set_status(message, ok and V_OK or V_ERR)
 end
 
 local function run_next_step(timer)
-    local step = steps[run_phase]
-    if not step then
-        finish_run(timer, true, "运行完成")
+    local item = pipeline[step_index]
+    if not item then
+        stop_runner(timer, true, "运行完成")
         return
     end
-    set_status("RUN " .. step[1])
-    local ok, message, extra = pcall(step[2])
+    set_status("RUN " .. item.name)
+    local ok, message, extra = pcall(item.body)
     if not ok then
-        finish_run(timer, false, "RUN " .. step[1] .. " lua err: " .. tostring(message))
+        -- 失败文案不含步骤名(那一拍之前已经显示过), 一行 13-14 个汉字
+        -- 是状态 Label 的容量上限, 超了会被裁切。
+        stop_runner(timer, false, "失败: " .. tostring(message))
         return
     elseif message == "retry" then
         -- 重试当前步（等下一拍, 用于 notify 等 launcher 就绪）
         timer:ready()
         return
     elseif message == false then
-        finish_run(timer, false, "RUN " .. step[1] .. " failed: " .. tostring(extra))
+        stop_runner(timer, false, "失败: " .. tostring(extra))
         return
     end
-    run_phase = run_phase + 1
-    if run_phase > #steps then
-        execute_install(0x22)
-        local st1 = read_status()
-        local d2 = 0
-        if st1 then d2 = st1.dbg2 or 0 end
-        -- 注册没生效时不能只说"运行完成", 否则界面会让人以为已经装好。
-        -- 判据只用状态字里的 dbg2, 不读设备上的任何落盘文件。
-        if d2 == 0 or d2 == 0xFFFFFFFF then
-          finish_run(timer, false, "运行完成, 但注册未生效")
-        else
-          finish_run(timer, true, "运行完成")
-        end
-    else
+    step_index = step_index + 1
+    if step_index <= #pipeline then
         timer:ready()   -- 立即排下一拍（中间仍有事件循环 turn）
+        return
+    end
+    -- 流水线走完: 先发 0x22 终验命令, 再用状态字里的 dbg2 判注册是否真的生效。
+    -- 判据只用状态字, 不读设备上的任何落盘文件。注册没生效时不能只说"运行完成",
+    -- 否则界面会让人以为已经装好。
+    install_step(0x22)
+    local final_status = read_status()
+    local dbg_verify = 0
+    if final_status then dbg_verify = final_status.dbg_verify or 0 end
+    if dbg_verify == 0 or dbg_verify == 0xFFFFFFFF then
+        stop_runner(timer, false, "运行完成, 但注册未生效")
+    else
+        stop_runner(timer, true, "运行完成")
     end
 end
 
-local function start_run_timer()
-    run_phase = 1
-    local created = lvgl.Timer {
+local function start_runner()
+    step_index = 1
+    local timer = lvgl.Timer {
         period = 1000, repeat_count = -1, paused = true,
-        cb = function(timer)
-            local ok, message = pcall(run_next_step, timer)
+        cb = function(t)
+            local ok, message = pcall(run_next_step, t)
             if not ok then
-                finish_run(timer, false, "运行失败: " .. tostring(message))
+                stop_runner(t, false, "运行失败: " .. tostring(message))
             end
         end,
     }
-    if not created then return false, "cannot create timer" end
-    run_timer = created
-    created:resume()
-    created:ready()
+    if not timer then return false, "cannot create timer" end
+    runner = timer
+    timer:resume()
+    timer:ready()
     return true
 end
 
@@ -376,26 +435,27 @@ status_label = lvgl.Label(card, {
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
 })
 
--- 按钮三态。danger 用**同色系淡底 + 同色字 + 无边框**:
+-- 按钮三态查表(替代 if/elseif 链)。danger 用**同色系淡底 + 同色字 + 无边框**:
 --   Web 上那套写法是 bg-[#ff453a]/15 text-[#ff453a], 即 15% 透明度的红底配红字;
 --   LVGL 里对应 bg_color=同色 + bg_opa=OPA(15)(底下的深灰透出来, 就是 /15 的效果)。
 --   对照过两种不对的写法: "深灰底 + 红字"缺那层红底, "实心红底 + 白字"又太实。
 --   primary = 强调蓝底 + 白字(主操作)
 --   danger  = 红 15% 底 + 红字, 无边框
 --   ghost   = 深底 + 1px 边框 + 次要文字
+local BUTTON_STYLES = {
+  primary = { bg = V_ACC_BG, line = V_ACC_BG, fg = V_TXT,  opa = 100, bw = 1 },
+  danger  = { bg = V_ERR,    line = V_ERR,    fg = V_ERR,  opa = 15,  bw = 0 },
+  ghost   = { bg = V_DEEP,   line = V_LINE2,  fg = V_TXT2, opa = 100, bw = 1 },
+}
+
 local function make_button(text, y_ofs, kind, on_clicked)
-  local bg, border, fg, opa, bw = V_DEEP, V_LINE2, V_TXT2, 100, 1
-  if kind == "primary" then
-    bg, border, fg = V_ACC_BG, V_ACC_BG, V_TXT
-  elseif kind == "danger" then
-    bg, border, fg, opa, bw = V_ERR, V_ERR, V_ERR, 15, 0
-  end
+  local style = BUTTON_STYLES[kind] or BUTTON_STYLES.ghost
   local b = lvgl.Object(root, {
     w = SCR_W - 32, h = 64,
-    bg_opa = lvgl.OPA(opa),
-    bg_color = bg,
-    border_width = bw,
-    border_color = border,
+    bg_opa = lvgl.OPA(style.opa),
+    bg_color = style.bg,
+    border_width = style.bw,
+    border_color = style.line,
     radius = V_R, pad_all = 0,
     align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = y_ofs },
   })
@@ -404,7 +464,7 @@ local function make_button(text, y_ofs, kind, on_clicked)
   b:add_flag(lvgl.FLAG.EVENT_BUBBLE)
   lvgl.Label(b, {
     text = text,
-    text_color = fg,
+    text_color = style.fg,
     text_font = lvgl.Font(F_BODY, 24),
     align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
   })
@@ -416,22 +476,22 @@ local run_button
 detect_language()
 
 run_button = make_button("运行", 110, "primary", function()
-  if run_timer then set_status("运行中"); return end
-  if run_attempted then set_status("仅一次, 重启后重试", V_WARN); return end
-  if device_present() then
+  if runner then set_status("正在运行"); return end
+  if started_once then set_status("每次开机只能运行一次", V_WARN); return end
+  if module_loaded() then
     set_status("已激活, 请重启后运行", V_WARN)
     return
   end
-  run_attempted = true
+  started_once = true
   run_button:clear_flag(lvgl.FLAG.CLICKABLE)
-  local started, err = start_run_timer()
+  local started, err = start_runner()
   if not started then set_status("运行失败: " .. tostring(err), V_ERR) end
 end)
 
 make_button("清除重置", 186, "danger", function()
-  if run_timer then set_status("运行中, 请等待", V_WARN); return end
-  if not clear_armed then clear_armed = true; set_status("再点一次确认清除", V_WARN); return end
-  clear_armed = false
-  run("rm -rf " .. DATA_DIR)
+  if runner then set_status("运行中, 请等待", V_WARN); return end
+  if not wipe_armed then wipe_armed = true; set_status("再按一次以确认清除", V_WARN); return end
+  wipe_armed = false
+  exec("rm -rf " .. DATA_DIR)
   set_status("已清除, 重启后重新运行", V_OK)
 end)

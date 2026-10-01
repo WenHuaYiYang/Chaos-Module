@@ -128,6 +128,10 @@ chaos_row_cb!(chaos_row_ev11, 11);
 
 
 
+// 模块加载即执行的构造(instream: Vela 的 insmod 会对 init_array 调一次):
+// 铺 fops 四件套(open/close/read/write) + 版本字, 然后向固件注册设备节点。
+// register_driver 的四参(path, fops, mode, priv)是这套内核对**所有**设备驱动
+// 的通行入口约定, 0x1B6 = 0666 权限位 —— 固件自带模块全部这么传。
 #[no_mangle]
 unsafe extern "C" fn chaos_ctor() {
     if st_rd!(CTOR_DONE) != 0 {
@@ -135,34 +139,36 @@ unsafe extern "C" fn chaos_ctor() {
     }
     st_wr!(CTOR_DONE, 1);
 
-    // 档位: 0x82 = 信息页(原生读取 /proc + 点击翻页); 0x80 = 竖排稳定版(cmd4 切回),
-    // 与安装器 Lua 步骤 0 一致。注意: 代码里找不到这两个档位的写入点, 描述与代码不一致, 待核。
-
     let fp = core::ptr::addr_of_mut!(FOPS) as *mut u32;
     write_volatile(fp, chaos_open as *const () as u32);
     write_volatile(fp.add(1), chaos_close as *const () as u32);
     write_volatile(fp.add(2), chaos_read as *const () as u32);
     write_volatile(fp.add(3), chaos_write as *const () as u32);
     fops_wr(FOPS_VER, STAT_VERSION);
-    let f: unsafe extern "C" fn(*const u8, *const u8, u32, u32) -> u32 =
+    let register: unsafe extern "C" fn(*const u8, *const u8, u32, u32) -> u32 =
         core::mem::transmute(FW_REGISTER_DRIVER as usize);
-    let path = core::ptr::addr_of!(DEV_PATH) as *const u8;
-    let rc = f(path, fp as *const u8, 0x1B6, 0);
-    // 注册成功才置标志（与固件自带模块的"已注册"标志同一套语义）
-    if rc == 0 {
+    let registered = register(
+        core::ptr::addr_of!(DEV_PATH) as *const u8,
+        fp as *const u8,
+        0x1B6,
+        0,
+    );
+    // 返回 0 才算注册成功, 与固件自带模块的"已注册"标志同一套语义
+    if registered == 0 {
         st_wr!(DRIVER_ON, 1);
     }
 }
 
-// 模块析构（Vela 的 insmod 会立即调一次 fini_array，卸载时再调一次 → 必须幂等）。
-// 仅当 DRIVER_ON==1 时反注册 /dev/chaos 并清标志。
+// 析构必须幂等: Vela 的 insmod 会对 fini_array 立即调一次, 卸载时再调一次。
+// 只有真正注册过(DRIVER_ON==1)才做反注册并清标志。
 #[no_mangle]
 unsafe extern "C" fn chaos_dtor() {
     if st_rd!(DRIVER_ON) != 1 {
         return;
     }
-    let f: unsafe extern "C" fn(*const u8) -> i32 = core::mem::transmute(FW_UNREGISTER_DRIVER as usize);
-    f(core::ptr::addr_of!(DEV_PATH) as *const u8);
+    let unregister: unsafe extern "C" fn(*const u8) -> i32 =
+        core::mem::transmute(FW_UNREGISTER_DRIVER as usize);
+    unregister(core::ptr::addr_of!(DEV_PATH) as *const u8);
     st_wr!(DRIVER_ON, 0);
 }
 

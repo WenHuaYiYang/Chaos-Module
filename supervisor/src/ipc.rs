@@ -26,37 +26,48 @@ pub(crate) unsafe extern "C" fn chaos_close(_: *mut u8) -> i32 {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_read(_: *mut u8, buf: *mut u8, len: u32) -> i32 {
-    // 如果 buffer >= 4096, 返回 thunks 数据
+    // 词位 ABI(Lua 端 status_words 是 1 基数组: words[1] = 本缓冲的第 0 个 u32)。
+    // 下表左列是 Lua 词位, 代码里的 put 索引 = 词位 - 1(Rust 0 基) ——
+    // **两者只差 1, 20261001 曾把前四字段写偏一词导致 "status magic mismatch"**:
+    //   Lua1=魔数(idx0) / Lua2=槽数(idx1) / Lua3=写计数(idx2) / Lua4=版本(idx3) /
+    //   Lua11.. 槽位四元组(idx10..) / Lua43..45 调试字(idx42..44) /
+    //   Lua46 fops 地址(idx45) / Lua47 字体槽(idx46) / Lua48 步骤号(idx47)
+    #[inline(always)]
+    unsafe fn put(words: *mut u32, i: usize, v: u32) {
+        write_volatile(words.add(i), v);
+    }
+
+    // 大缓冲(>=4096)的读是 thunks 通道, 与状态块无关
     if len >= 4096 && THUNKS_LEN > 0 {
-        let copy_len = core::cmp::min(THUNKS_LEN, len);
-        core::ptr::copy_nonoverlapping(THUNKS_BUF.as_ptr(), buf, copy_len as usize);
-        return copy_len as i32;
+        let n = core::cmp::min(THUNKS_LEN, len) as i32;
+        core::ptr::copy_nonoverlapping(THUNKS_BUF.as_ptr(), buf, n as usize);
+        return n;
     }
-    // 否则返回标准状态结构
     if (len as usize) < STAT_LEN { return 0; }
-    let p = buf as *mut u32;
-    write_volatile(p, STAT_MAGIC);
-    write_volatile(p.add(1), SLOT_N as u32);
-    write_volatile(p.add(2), fops_rd(FOPS_WCNT));
-    write_volatile(p.add(3), STAT_VERSION);
-    let mut j = 0;
-    while j < SLOT_N {
-        let base = 10 + j * 4;
-        write_volatile(p.add(base), fops_rd(FOPS_SLOTS + j * 4));
-        write_volatile(p.add(base + 1), 0);
-        write_volatile(p.add(base + 2), 0);
-        write_volatile(p.add(base + 3), 0);
-        j += 1;
+    let words = buf as *mut u32;
+    put(words, 0, STAT_MAGIC);
+    put(words, 1, SLOT_N as u32);
+    put(words, 2, fops_rd(FOPS_WCNT));
+    put(words, 3, STAT_VERSION);
+    // 槽位区从 idx 10 起, 每槽 4 词: 首词是槽值, 其余 3 词恒 0
+    let mut slot = 0;
+    while slot < SLOT_N {
+        let quad = 10 + slot * 4;
+        put(words, quad, fops_rd(FOPS_SLOTS + slot * 4));
+        put(words, quad + 1, 0);
+        put(words, quad + 2, 0);
+        put(words, quad + 3, 0);
+        slot += 1;
     }
-    write_volatile(p.add(42), fops_rd(FOPS_DBG0));
-    write_volatile(p.add(43), fops_rd(FOPS_DBG1));
-    write_volatile(p.add(44), fops_rd(FOPS_DBG2));
-    write_volatile(p.add(45), core::ptr::addr_of_mut!(FOPS) as u32);
-    // +0x46: 当前在用的字体池位(0 = 安装器投递的那一份, 1..8 = st1..st8)。
-    // 字体投递包靠它判"这一份现在在不在用": 在用的那份绝不能被覆写(见 font_apply 红线)。
+    put(words, 42, fops_rd(FOPS_DBG0));
+    put(words, 43, fops_rd(FOPS_DBG1));
+    put(words, 44, fops_rd(FOPS_DBG2));
+    put(words, 45, core::ptr::addr_of_mut!(FOPS) as u32);
+    // idx 45(Lua 词 46): 当前在用的字体池位(0 = 安装器那份, 1..8 = st1..st8)。
+    // 字体投递包靠它判"这一份现在在不在用": 在用的那份绝不能被覆写(font_apply 红线)。
     // 槽位分配不靠它算, 由 /data/chaos/font/index.txt 清单决定。
-    write_volatile(p.add(46), font_apply::live_get());
-    write_volatile(p.add(47), fops_rd(FOPS_STEP));
+    put(words, 46, font_apply::live_get());
+    put(words, 47, fops_rd(FOPS_STEP));
     STAT_LEN as i32
 }
 
@@ -309,23 +320,26 @@ pub(crate) unsafe fn notify_firmware_full() {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32) -> i32 {
+    // 命令帧至少 16 字节: magic | cmd | arg0 | arg1
     if buf.is_null() || (len as usize) < 16 { return 0; }
-    // WRITE_BUSY 重入保护:
-    // notify_installed 内部 lookup 触发 launcher 回调 → launcher 重入 INSTALL
-    // 此时上一次 write 未完成(notify 在栈上) → 静默返回, 让 notify 主链继续
+    // 重入保护(WRITE_BUSY): notify_installed 内部的 lookup 会触发 launcher 重发
+    // INSTALL, 此时上一个 write 还没返回(notify 在栈上) —— 只能静默丢弃,
+    // 让 notify 主链先走完; 拦不住就会在嵌套里崩。
     if st_rd!(WRITE_BUSY) != 0 {
-        return 0; // 重入静默丢弃（挡住重入才不会崩）
+        return 0;
     }
     st_wr!(WRITE_BUSY, 1);
-    let wc = fops_rd(FOPS_WCNT) + 1;
-    fops_wr(FOPS_WCNT, wc);
-    let p = buf as *const u32;
-    let magic = core::ptr::read_volatile(p);
-    if magic != CMD_MAGIC { return 0; }
-    let cmd = core::ptr::read_volatile(p.add(1));
-    let arg0 = core::ptr::read_volatile(p.add(2));
-    // 第 4 个字历史上恒传 0。字体投递(0x30)用它带"目标池位", 其余命令不看它。
-    let arg1 = core::ptr::read_volatile(p.add(3));
+    let writes_now = fops_rd(FOPS_WCNT) + 1;
+    fops_wr(FOPS_WCNT, writes_now);
+    let frame = buf as *const u32;
+    if core::ptr::read_volatile(frame) != CMD_MAGIC {
+        st_wr!(WRITE_BUSY, 0);
+        return 0;
+    }
+    let cmd = core::ptr::read_volatile(frame.add(1));
+    let arg0 = core::ptr::read_volatile(frame.add(2));
+    // 第 4 字历史上恒 0; 字体投递(0x30)拿它带"目标池位", 其余命令不读它。
+    let arg1 = core::ptr::read_volatile(frame.add(3));
 
     // INSTALL 重入在入口级拦截。
     // APP_REGISTERED=1 后（已经注册过），INSTALL 命令直接返回成功，
@@ -383,6 +397,8 @@ pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32
 
                 _   => {}
             }
+            // 每条 INSTALL 类命令收尾都把槽 0 刷成"激活"记录(激活态/保留/模块 id/0),
+            // Lua 端 read_status 的槽位区读的就是这四词。
             fops_wr(FOPS_SLOTS, ST_ACTIVE);
             fops_wr(FOPS_SLOTS + 1, 0);
             fops_wr(FOPS_SLOTS + 2, MOD_ID);

@@ -3,7 +3,7 @@
 
 用法:
   python container_shell.py                      # 往返校验默认的自己的几个包
-  python container_shell.py <容器.bin> ...        # 校验指定容器
+  python container_shell.py <容器.bin> ...        # 校验指定容器(外部作者的容器一并传进来)
   python container_shell.py extract <容器.bin> <预览块.bin>   # 抠出预览块(引导用)
 
 格式事实(逐条对多个来源不同的容器核过):
@@ -167,6 +167,24 @@ def parse_container(raw):
     }
 
 
+def replace_preview(tpl, new_preview):
+    """把容器模板里的预览块换成另一块(长度可不同)。
+
+    投递包各自复刻自己表盘界面的预览块(由打包侧生成), 而壳继承
+    主包 —— 替换点在记录表结束(0x20 字段)之后: 记录表/主题表/0x20/0xAC 全部在
+    预览块**之前**不受影响; 文件区随预览长度平移, 调用方须以替换后的 tpl 重算
+    file_region(两个打包脚本的 template_file_region 本就是动态的)。
+    """
+    _assert(len(new_preview) >= PREVIEW_HDR_LEN, '新预览块太短')
+    tag, pw, ph, plen = struct.unpack_from('<IHHI', new_preview, 0)
+    _assert(tag == PREVIEW_TAG, '新预览块魔数不对: %#x' % tag)
+    _assert(len(new_preview) == PREVIEW_HDR_LEN + plen, '新预览块长度与头字段不符')
+    rec_end = struct.unpack_from('<I', tpl, 0x20)[0]
+    old_tag, _ow, _oh, olen = struct.unpack_from('<IHHI', tpl, rec_end)
+    _assert(old_tag == PREVIEW_TAG, '模板预览块标签不对: %#x' % old_tag)
+    return tpl[:rec_end] + new_preview + tpl[rec_end + PREVIEW_HDR_LEN + olen:]
+
+
 def roundtrip(path):
     """解析 -> 重建 -> 逐字节比对。相同 = 这个容器的壳我们已能自己生成。"""
     raw = open(path, 'rb').read()
@@ -189,8 +207,10 @@ SAMPLES = [
     'chaos-fontpack-lxgw-rfn.bin',
     'chaos-iconpack-Delta.bin',
 ]
-# 默认只跑自己的包。这个格式另外还拿两个独立作者的容器(一个 10 个文件槽、一个 1 个槽且
-# 缩略图规格不同)验过逐字节相同, 那种样本不在仓库里, 手上有就一并当参数传进来。
+# 默认样本是我们自己那三个包。它们是构建产物、不入库, 所以在干净克隆上三个都会被跳过 ——
+# 那等于什么都没校验, 脚本会按失败退出, 这时把你手上的容器路径传进来即可。
+# 这个格式另外还拿两个独立作者的容器(一个 10 个文件槽、一个 1 个槽且缩略图规格不同)
+# 验过逐字节相同, 那两个样本同样不在仓库里。
 
 
 def extract_preview(container_path, out_path):
@@ -215,17 +235,26 @@ def main(argv):
         return 0
     todo = argv[1:] or SAMPLES
     bad = 0
+    checked = 0
+    skipped = 0
     for p in todo:
         if not os.path.exists(p):
             print('跳过(文件不在): %s' % p)
+            skipped += 1
             continue
+        checked += 1
         try:
             ok, msg = roundtrip(p)
         except Exception as e:
             ok, msg = False, '解析失败: %s' % e
         print('%-6s %s  %s' % ('一致' if ok else '不一致', p, msg))
         bad += 0 if ok else 1
-    print('\n%d/%d 个容器的壳可自建' % (len(todo) - bad, len(todo)))
+    if not checked:
+        print('\n没有任何样本可校验(全被跳过) —— 判据不成立, 按失败退出')
+        return 1
+    print('\n%d/%d 个容器的壳可自建' % (checked - bad, checked))
+    if skipped:
+        print('(另有 %d 个列出的样本不在本地已跳过; 手上的容器传路径进来即可校验)' % skipped)
     return 1 if bad else 0
 
 
