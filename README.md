@@ -68,6 +68,22 @@ rust-lld -flavor gnu -r --gc-sections \
 链完还要把各节 `sh_addr` 从全 0 重排成连续布局，否则 `.rodata` 压在 `.text` 上，切表盘就崩。
 最后校验未定义符号必须为 0：这个模块没有解析外部符号的阶段，留一个就是运行时跳飞。
 
+## 产出 ko 与应用图标
+
+上面那几步是小手工程;仓库里带了脚本,一次跑完:
+
+```bash
+sh tools/build_ko.sh              # -> supervisor/chaos_sup.ko   (也可以传目录/输出路径)
+python3 tools/gen_chaos_icon.py   # -> chaos_icon.bin            (读 tools/chaos.png, 需 Pillow)
+```
+
+`tools/build_ko.sh`(`tools/build_ko.ps1` 是同一件事的 Windows 版)干四件事:cargo 编静态库、
+`rust-lld` 链成可重定位 ELF、`fix_ko_layout.py` 把各节 `sh_addr` 从全 0 重排成连续布局、
+`verify_chaos_ko.py` 要求未定义符号为 0。每一步在救哪个坑写在脚本头部。
+
+这两个产物**不入库**(构建产物),但它们是手机端那个制作 App 的构建前提:App 打出投递包需要
+内核模块与应用图标,所以 App 的构建会来这个仓库取(见 App 仓库 README 的"构建前提")。
+
 ## 装到手环
 
 模块、安装器 Lua、应用图标打进一个表盘容器 `.bin`，手环把它当一枚第三方表盘收下来
