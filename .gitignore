@@ -3,3 +3,10 @@ target/
 __pycache__/
 *.log
 fonts/
+
+# 构建产物一律不入库
+*.ko
+*.bin
+*.a
+*.o
+*.elf
