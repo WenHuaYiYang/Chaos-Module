@@ -2,13 +2,12 @@
 -- 整条链与安装器同源(表盘侧载 -> Lua 写 /data -> /dev/chaos 命令), 不经过蓝牙数据面,
 -- 所以投递一次字体 = 侧载本包一次 + 点一下按钮, 不需要重启手表。
 --
--- 槽位分配(2026-09-26 用户新需求"字体改成清单 + 自由切换"之后重写):
---   旧做法是**轮转**池位(next = cur % 4 + 1), 存在的唯一理由是"绝不覆写正在用的那份"
---   (固件为每个 (名字,尺寸) 建出的 face 会按需回读文件, 覆写正在使用的那份 = 让还活着的
---   老脸读到别人的字节, font_apply.rs 红线)。
---   现在改成**一个字体永远占同一个槽位**: 重投同一字体 = 覆写它自己那份文件, 而它此刻
---   若是 live, ko 的 0x30 门会拒(不打紧, 内容也没变); 不是 live 时没有任何 face 在读它。
---   于是槽位归属由清单 /data/chaos/font/index.txt 决定, 格式与图标清单**逐字节同一套**:
+-- 槽位分配: **一个字体永远占同一个槽位**。
+--   重投同一字体 = 覆写它自己那份文件; 若它此刻正在被使用, ko 的 0x30 门会拒
+--   (内容没变, 拒了不打紧); 不在使用时没有任何 face 在读它。
+--   绝不覆写正在用的那一份(font_apply.rs 定的红线): 固件为每个 (名字,尺寸) 建出的 face
+--   会按需回读文件, 覆写正在使用的那份 = 让还活着的老脸读到别人的字节。
+--   槽位归属由清单 /data/chaos/font/index.txt 决定, 格式与图标清单**逐字节同一套**:
 --   恒 128 字节 = 8 行 x 16 字节, 行 = `[2 位槽号][空格][12 字节短名][换行]`, 空槽 = 16 空格。
 --   分配规则: 文件没投过 -> 取**最小空槽**; 投过 -> 复用原槽位(幂等, 不堆副本); 满 8 个 -> 拒绝。
 --
@@ -16,12 +15,11 @@
 -- 等于本次请求的槽位 => ko 接受了; 不等 => 被拒。被拒的四种原因在 ko 侧各有一道门:
 -- 槽位非法 / 就是当前在用的那份 / 正在跑应用 / 目标文件打不开(没写全)。
 --
--- 界面写法说明(两轮真机修订之后):
---   1. 定位与居中一律用 align 表(安装器原版验证过的写法), Label 不设宽度让它自适应。
---      不要用 "x/w + text_align" —— 那来自自研表盘"墟", 而墟从来没有在真机上显示
---      成功过, 那条路径未被验证; 真机表现是被忽略(文字左对齐、整体不居中)。
+-- 界面写法:
+--   1. 定位与居中一律用 align 表(有实测证据的写法), Label 不设宽度让它自适应。
+--      不要用 "x/w + text_align" —— 实测表现是这两条属性被忽略(文字左对齐、整体不居中)。
 --   2. 定时器在**点按钮时才建**(与安装器同序): 表盘脚本在构建期抛错会让整棵 UI 树
---      不提交, 表现就是全黑(首版黑屏的根因)。
+--      不提交, 表现就是全黑。
 --   3. 建完基础层立刻写一行状态字, 且所有可能失败的动作都过 pcall 把错误写进那一行
 --      (可见的失败优于黑屏)。
 --   4. 界面文案不带换行: Label 宽度自适应时, 多行文本里较短的行走会各自左对齐,
@@ -35,7 +33,7 @@ local lvgl = require("lvgl")
 -- 对应物, 按这套风格的核心理念翻译成三级层次:
 --   页面底(最深 #1c1c1e) / 卡片(中间 #2c2c2e) / 按钮与高亮块(表面 #3a3a3c)。
 -- 硬约束: 背景只用这三个灰阶; 强调色与状态色**只用于文字**; 边框一律 1px;
---         圆角最大 12; 不要阴影、渐变与动画。
+--         圆角上限 12(只有按钮破例, 见 V_R); 不要阴影、渐变与动画。
 local V_DEEP  = 0x1C1C1E
 local V_MID   = 0x2C2C2E
 local V_SURF  = 0x3A3A3C
@@ -46,18 +44,16 @@ local V_TXT2  = 0xB3B3B3
 local V_TXT3  = 0x666666
 local V_OK    = 0x30D158
 local V_ERR   = 0xFF453A
--- 主按钮底的强调蓝: 规范「颜色角色」那节把 bg-blue-600 列在允许的背景强调色里。
--- 禁止的是 #0a84ff 那类高亮色作底; 全灰的按钮太单调, 主按钮就该有这个颜色。
+-- 主按钮底的强调蓝: 禁止的是 #0a84ff 那类高亮色作底, 标准按钮蓝允许做背景。
+-- 按钮全灰会认不出主操作, 主按钮就用这一档蓝。
 local V_ACC_BG = 0x2563EB
--- 圆角 24(用户明确要求"放大一倍": 12 -> 24)。
--- 演进: 8px(规范给 Web 40px 高按钮的值) -> 12(按手环 64px 按钮高度换算) -> 24(用户拍板)。
--- 24 相当于 rounded-3xl, 超出规范 rounded-xl 的上限 —— 这是**用户明确要求的破例**,
--- 不是风格漂移, 别再按规范改回去。边界: 按钮 64px 高, 圆角到 32 就成胶囊了, 不再往上加。
+-- 圆角 24: 高于上面 12 的上限, 按按钮实际尺寸定的刻意取值, 不要按上限改回 12。
+-- 边界: 按钮高 64px, 圆角到 32(高度的一半)就成胶囊形, 那种形状不用, 不再往上加。
 local V_R     = 24
--- 字体只用系统自带的 MiSans-Regular: 规范要的"衬线标题"在手环上做不到 ——
--- 唯一可能的衬线字体是用户换上来的文楷, 而它的 face 只在美化页手动点"重新应用文楷"
+-- 字体只用系统自带的 MiSans-Regular: 衬线标题在这块屏上做不到 ——
+-- 唯一可能的衬线字体是侧载上来的文楷, 而它的 face 只在美化页手动点过"重新应用文楷"
 -- 之后才登记; 重启后没点过就登记不上, 建 face 回退默认字体, 中文直接变空白豆腐块
--- (2026-09-26 真机踩过)。层级改由字号与颜色建立。
+-- (实测踩过)。层级改由字号与颜色建立。
 local F_BODY  = "MiSans-Regular"
 
 local DEVICE_PATH = "/dev/chaos"
@@ -78,7 +74,7 @@ local FONT_RESOURCE = SCRIPT_BASE .. "font.ttf"
 local FONT_NAME = "__FONT_NAME__"
 -- 表盘标题里的短名(同一条, 便于在表盘列表里认出是哪个字体包)
 local PACK_LABEL = "__PACK_LABEL__"
--- 表盘上那行标题(整句, 构建期替换)。默认是"字体投递 <短名>"; 制作端可以让用户改,
+-- 表盘上那行标题(整句, 构建期替换)。默认是"字体投递 <短名>"; 打包时可以换成别的整句,
 -- 但手环上一行只放得下约 16 个半角(一个汉字算 2 个), 超了会折行/截断 —— 界面上提醒。
 local PACK_TITLE = "__PACK_TITLE__"
 
@@ -171,8 +167,8 @@ local function index_read()
       local cut = name:find("[\0-\31\127]")
       if cut then name = name:sub(1, cut - 1) end
       -- 尾部空格必须去掉: 定长记录右侧用空格补齐, 而"同名"是靠**字符串相等**判的
-      -- (index_alloc 拿它跟 FONT_NAME 比) —— 留着补齐空格就永远比不中, 每次投递都当
-      -- 新字体占一个新槽(2026-09-26 离线冒烟抓到过: 清单里 `testfont   ` != `testfont`)。
+      -- (index_alloc 拿它跟 FONT_NAME 比) —— 留着补齐空格就永远比不中, 每次投递都会被
+      -- 当成新字体占一个新槽(清单里的 `testfont   ` 不等于 `testfont`)。
       name = name:gsub("%s+$", "")
       if #name > 0 then out[#out + 1] = { slot = slot, name = name } end
     end
@@ -183,7 +179,7 @@ end
 -- 分配槽位: 同名(即同一个字体)复用原槽 -> 幂等; 否则取最小空槽; 空槽没有 => 满。
 -- 返回 slot, reuse(是不是复用同名的原槽)。**注意调用处必须恰好收两个值** ——
 -- Lua 里 `local slot, reuse = f()` 会把多出来的第 3 个返回值丢弃, 而写成
--- `job.slot, job.reuse = f()` 会把第 3 个塞进后面的字段(这里踩过一次)。
+-- `job.slot, job.reuse = f()` 会把第 3 个塞进后面的字段(实测错过一次)。
 local function index_alloc(entries)
   for i = 1, #entries do
     if entries[i].name == FONT_NAME then return entries[i].slot, true end
@@ -241,14 +237,14 @@ local function step()
       finish(false, "容器里没有 font.ttf")
       return
     end
-    -- 目录先保证存在(2026-09-26 真机: 这里报过"打不开目标文件")。
-    -- 根因: 这个目录原本是安装器 stage_fonts 里那句 mkdir -p 建的, 而主包瘦身后
-    -- 字体槽变成占位文本、那一步整段跳过, 于是再没有人建 /data/chaos/font。
-    -- 写法与安装器同款(它也是 os.execute "mkdir -p"), 失败也不抛错。
+    -- 目录必须先保证存在, 否则下面开目标文件就报"打不开目标文件"(实测踩过)。
+    -- 根因: 这个目录本来由安装器 stage_fonts 里那句 mkdir -p 建, 而字体移出主包之后
+    -- 那一步整段跳过, 于是再没有人建 /data/chaos/font。
+    -- 写法与安装器同款(os.execute "mkdir -p"), 失败也不抛错。
     pcall(function() os.execute("mkdir -p " .. FONT_DIR) end)
     local entries = index_read()
     -- 多值返回必须显式接住: 直接写 `job.slot, job.reuse = index_alloc(...)` 会把
-    -- 第 3 个返回值塞进表里的下一个字段, 而且 job.slot 会是 nil(踩过一次)。
+    -- 第 3 个返回值塞进表里的下一个字段, 而且 job.slot 会是 nil(实测错过一次)。
     local slot, reuse = index_alloc(entries)
     if not slot then
       src:close()
@@ -350,11 +346,10 @@ local function start()
   set_status("开始投递 " .. PACK_LABEL .. " ...")
 end
 
--- ===== 界面(macOS 毛玻璃: 与主包安装器同一套设计语言) =====
+-- ===== 界面(与主包安装器同一套设计语言) =====
 -- 定位与居中一律用 align 表(对象相对父居中), Label **不设 w/x/y** 让它按文字自适应。
--- 重要(2026-09-26 返工): 不要用 "x/w + text_align" 那套。它来自"墟"表盘, 而"墟"
--- 从没在真机上显示成功过, 那条路径没被验证; 真机表现是文字左对齐、整体不居中。
--- 唯一有真机证据的居中方式是 align 表(安装器原版就是这么用的)。
+-- 重要: 不要用 "x/w + text_align" 那套写法 —— 实测表现是文字左对齐、整体不居中,
+-- 也就是这两条属性在设备上根本没生效; 居中只有 align 表这一条有实测证据的路。
 
 local W = lvgl.HOR_RES()
 local H = lvgl.VER_RES()
@@ -364,13 +359,12 @@ local root = lvgl.Object(nil, {
   outline_width = 0, border_width = 0, pad_all = 0,
   bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
 })
--- 重要(2026-09-26 真机, 两次修订): 容器必须凑齐三件事, 少一件长按表盘就进不了表盘选择页。
+-- 重要(实测): 容器必须凑齐三件事, 少一件长按表盘就进不了表盘选择页。
 --   1. clear_flag(SCROLLABLE) —— LVGL 对象默认带这一位, 会吃掉手势;
---   2. add_flag(EVENT_BUBBLE) —— **只清 SCROLLABLE 不够**(真机验证过: 清完仍然无效),
+--   2. add_flag(EVENT_BUBBLE) —— **只清 SCROLLABLE 不够**(清完仍然无效),
 --      事件要冒泡给父层(固件的表盘容器), 系统长按手势才收得到;
 --   3. root 自己也 CLICKABLE —— 空白处按下时得有个接收者, 否则事件无处可冒。
--- 前两条就是指南 §12A.7「10 Pro 已验证写法」里"容器缺 flag"那一行, 官方 theme1 表盘的
--- event_mask 也是 CLICKABLE + EVENT_BUBBLE 两句。
+-- 固件自带表盘用的 event_mask 同样是 CLICKABLE + EVENT_BUBBLE 这两句。
 root:clear_flag(lvgl.FLAG.SCROLLABLE)
 root:add_flag(lvgl.FLAG.CLICKABLE)
 root:add_flag(lvgl.FLAG.EVENT_BUBBLE)
@@ -385,7 +379,7 @@ lvgl.Label(root, {
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -170 },
 })
 
--- 状态卡片: 中间灰 + 1px 边框 + 12 圆角; 状态文字在卡片内居中
+-- 状态卡片: 中间灰 + 1px 边框 + 圆角走 V_R; 状态文字在卡片内居中
 local card = lvgl.Object(root, {
   w = W - 32, h = 150,
   bg_opa = lvgl.OPA(100), bg_color = V_MID,

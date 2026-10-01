@@ -95,10 +95,10 @@ type FnInitBuffer = unsafe extern "C" fn(u32) -> *mut u8;
 
 
 
-// 官方 ROW_CALLBACK 宏等价: 每行独立回调固化行号。
+// 与固件自带模块的 ROW_CALLBACK 宏等价: 每行独立回调, 把行号固化进回调本身。
 // 新增槽位时必须同时补 `chaos_row_cb!(...)` 与 `row_ev_fn` 的分支,
 // 且**禁止在 dispatch 里写 `_ => ev9` 这类 catch-all** —— 槽位布局一变就会静默错配
-// (历史事故: slot10「返回」拿到 ev9 的回调, 被当成「更多」派发)。
+// (踩过的坑: slot10「返回」拿到 ev9 的回调, 被当成「更多」派发)。
 macro_rules! chaos_row_cb {
     ($name:ident, $idx:expr) => {
         #[no_mangle]
@@ -135,8 +135,8 @@ unsafe extern "C" fn chaos_ctor() {
     }
     st_wr!(CTOR_DONE, 1);
 
-    // 档位: 0x82 = 信息页(原生读取 /proc + 点击翻页)
-    // 0x80 = 竖排稳定版仍保留(cmd4 切回); 必须与安装器 Lua 步骤 0 一致
+    // 档位: 0x82 = 信息页(原生读取 /proc + 点击翻页); 0x80 = 竖排稳定版(cmd4 切回),
+    // 与安装器 Lua 步骤 0 一致。注意: 代码里找不到这两个档位的写入点, 描述与代码不一致, 待核。
 
     let fp = core::ptr::addr_of_mut!(FOPS) as *mut u32;
     write_volatile(fp, chaos_open as *const () as u32);
@@ -148,14 +148,14 @@ unsafe extern "C" fn chaos_ctor() {
         core::mem::transmute(FW_REGISTER_DRIVER as usize);
     let path = core::ptr::addr_of!(DEV_PATH) as *const u8;
     let rc = f(path, fp as *const u8, 0x1B6, 0);
-    // 注册成功才置标志（对齐 官方 ctor 的 g_device_registered=1 语义）
+    // 注册成功才置标志（与固件自带模块的"已注册"标志同一套语义）
     if rc == 0 {
         st_wr!(DRIVER_ON, 1);
     }
 }
 
-// 模块析构（Vela insmod 后会立即调一次 fini_array，卸载时再调 → 必须幂等）。
-// 对齐 官方_sup_dtor：仅当 DRIVER_ON==1 时反注册 /dev/chaos 并清标志。
+// 模块析构（Vela 的 insmod 会立即调一次 fini_array，卸载时再调一次 → 必须幂等）。
+// 仅当 DRIVER_ON==1 时反注册 /dev/chaos 并清标志。
 #[no_mangle]
 unsafe extern "C" fn chaos_dtor() {
     if st_rd!(DRIVER_ON) != 1 {

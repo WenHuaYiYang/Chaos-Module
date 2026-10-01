@@ -1,4 +1,4 @@
-//! 文件系统：NuttX VFS 封装（第 6 节）
+//! 文件系统：NuttX VFS 封装
 //!
 //! 本文件是 `fw_api` 的子模块，调用方式仍是 `fw_api::名字`（父模块已 `pub use` 转出）。
 
@@ -9,7 +9,7 @@ use super::*;
 // 6. 文件系统（NuttX VFS）
 // ===========================================================================
 
-/// `open(path, oflag, mode)` 只读请用 `oflag::RDONLY`（=1！） DEVICE_PROVEN
+/// `open(path, oflag, mode)` 只读请用 `oflag::RDONLY`（=1！） 已验证
 pub unsafe extern "C" fn open(path: Cp, flags: u32, mode: u32) -> i32 {
     let f: unsafe extern "C" fn(Cp, u32, u32) -> i32 = transmute(0x0C1D_0A29usize);
     f(path, flags, mode)
@@ -47,13 +47,13 @@ pub unsafe extern "C" fn write(fd: i32, buf: *const u8, len: u32) -> i32 {
     f(fd, buf, len)
 }
 
-/// `opendir(path)` **目录不能用 open()（返回 -6 ENXIX）** DEVICE_PROVEN
+/// `opendir(path)` **目录不能用 open()（返回 -6 ENXIX）** 已验证
 pub unsafe extern "C" fn opendir(path: Cp) -> Obj {
     let f: unsafe extern "C" fn(Cp) -> Obj = transmute(0x0C1E_4529usize);
     f(path)
 }
 
-/// `readdir(dir)` → `dirent*`，`{u8 d_type@0, char d_name@1}`；返回 0 = 已读完 DEVICE_PROVEN
+/// `readdir(dir)` → `dirent*`，`{u8 d_type@0, char d_name@1}`；返回 0 = 已读完 已验证
 pub unsafe extern "C" fn readdir(dir: Obj) -> Obj {
     let f: unsafe extern "C" fn(Obj) -> Obj = transmute(0x0C1E_4591usize);
     f(dir)
@@ -64,7 +64,7 @@ pub unsafe extern "C" fn closedir(dir: Obj) -> i32 {
     f(dir)
 }
 
-/// `remove(path)` 删文件；对目录自动退到 rmdir(只能删空目录) STATIC_CONFIRMED
+/// `remove(path)` 删文件；对目录自动退到 rmdir(只能删空目录) 静态核对
 ///
 /// 判据(`dfx_rmdir_recursive` 0x0C3D36DC 反汇编实证)：内部先走 VFS unlink，
 /// errno==0x15(EISDIR) 时改调 `rmdir`(0x0C1D1648) —— NuttX `remove()` 的标准形态；

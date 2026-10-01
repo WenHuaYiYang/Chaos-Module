@@ -1,4 +1,4 @@
-// 页面抽象层 v2: 每个页面是一个有状态的对象, 通过 PAGE_TABLE 分发
+// 页面抽象层: 每个页面是一个有状态的对象, 通过 PAGE_TABLE 分发
 //
 // 架构原则:
 //   1. 页面知道自己的 id —— trait 方法不传 pid
@@ -32,7 +32,7 @@ pub(crate) struct PageCtx {
 
 // ===== 行构建器 =====
 
-/// 行控件规格。用 builder 模式配置, 消灭 mk_row 的 7 参数函数。
+/// 行控件规格。用 builder 模式配置, 避免带一堆位置参数的构造函数。
 pub(crate) struct RowSpec<'a> {
     pub text: &'a [u8],
     pub sub: *const u8,
@@ -49,10 +49,10 @@ impl<'a> RowSpec<'a> {
     pub fn display(text: &'a [u8], sub: *const u8) -> Self {
         Self { text, sub, trailing: 0, clickable: false }
     }
-    /// **可点击的展示行**: 样子与 `display` 一样(主标签 + 可选的副标签), 但它挂事件。
+    /// 可点击的展示行: 样子与 `display` 一样(主标签 + 可选的副标签), 但它挂事件。
     /// 用在"点这一行要触发一个动作、但这一行不该有开关/勾选框"的场合
-    /// (探测报告的两行抬头就是: 点抬头第 0 行切换看哪一份表)。
-    /// 踩过的坑: 抬头原来用的是 `display`, 它 `clickable: false`, 于是点上去没任何反应。
+    /// (页5 的"补写一遍"行就是: 点它启动或中断任务, 但行右端不放部件)。
+    /// 注意: 这种场合若改用 `display`, 它 `clickable: false`, 点上去没有任何反应。
     pub fn tap(text: &'a [u8], sub: *const u8) -> Self {
         Self { text, sub, trailing: 0, clickable: true }
     }
@@ -63,26 +63,26 @@ impl<'a> RowSpec<'a> {
     /// 复选框行(表盘切换列表同款)。`sub` 非 NULL => 双排(主标签 + 副标签), 与表盘页
     /// 的"名称 + ID"同形; 勾选态由调用方用 `row_update` 的第 6 参**原地**写。
     /// 为什么可以用: 复选框是行控件自带的 trailing 部件(`trailing::CHECKBOX` = 2,
-    /// 见 ui.rs rows_sync), ko 直接调 `row_create` 就能拿到 —— 指南里"原生 checkbox
-    /// 只有原生 ELF 能调"说的是 **Lua 绑定**够不到 `lvx_widgets`, 与 ko 无关。
+    /// 见 ui.rs rows_sync), 内核模块直接调 `row_create` 就能拿到。"原生 checkbox 只有
+    /// 原生 ELF 能调"那个限制只针对 Lua 绑定够不到 `lvx_widgets`, 与内核模块无关。
     pub fn check(text: &'a [u8], sub: *const u8) -> Self {
         Self { text, sub, trailing: fw_api::trailing::CHECKBOX, clickable: true }
     }
 }
 
-/// 行内副标签(值)的对象偏移。`lvx_list_item_update` 的参数归属实证:
+/// 行内副标签(值)的对象偏移。`lvx_list_item_update` 的参数归属已实测核对:
 /// primary -> row+0x3c, secondary -> row+0x40(见 fw_api::row_update 注释)。
 const ROW_SUB_LB: u32 = 0x40;
 
 /// 按 RowSpec 建一行 + 挂事件 + 对齐。返回行句柄, 0=失败。
 /// 重要: slot 必须在 MAX_ROWS_PER_PAGE(=12) 之内 —— ctx.rows 只有 12 个元素,
-/// 越界写会踩坏相邻静态量(2026-09-13 真机: 探针用了 slot 12/13/14, 点哪行都崩)。
+/// 越界写会破坏相邻静态量, 实测表现为 slot 用到 12/13/14 时点任意一行都崩。
 pub(crate) unsafe fn build_row(ctx: &PageCtx, prev: u32, slot: usize, spec: &RowSpec) -> u32 {
     if slot >= fw_api::MAX_ROWS_PER_PAGE { return 0; }
     let r = fw_api::row_create(ctx.content, spec.text.as_ptr(), spec.sub, spec.trailing);
     if r == 0 { return 0; }
     write_volatile(ctx.rows.add(slot), r);
-    // §43: 标签自套不再在此隐式全量执行(28px 统一写会把文件管理/表盘管理等
+    // 注意: 标签自套不在这里隐式全量执行(28px 统一写会把文件管理/表盘管理等
     // 列表行拉成大字)。改由 InfoPage::render 显式调用, 只作用于主页行。
     if spec.trailing == fw_api::trailing::SWITCH {
         let tobj = fw_api::row_trailing(r);
@@ -90,7 +90,7 @@ pub(crate) unsafe fn build_row(ctx: &PageCtx, prev: u32, slot: usize, spec: &Row
         else { fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0); }
     } else if spec.clickable {
         fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
-        // 复选框行: 复选框自己也挂一份, 用户点到圈上也算点这一行(表盘页只挂行本体,
+        // 复选框行: 复选框自己也挂一份, 点到圈上也算点这一行(表盘页只挂行本体,
         // 点到圈上没有反应)。这一行不是 switch 行, 所以复选框发出来的 VALUE_CHANGED
         // 会被 chaos_row_dispatch 丢掉, 只有 CLICKED 会走到 on_click。
         if spec.trailing == fw_api::trailing::CHECKBOX {
@@ -132,7 +132,7 @@ pub(crate) trait Page: Sync {
     fn is_switch_row(&self, _idx: usize) -> bool { false }
     /// 行显隐(渲染后调用)
     fn apply_visibility(&self) {}
-    /// lv_timer 每 50ms 调一次(延迟请求消费 + UI 刷新)。
+    /// 由常驻 lv_timer 调用(忙 50ms / 息屏全空闲 1000ms), 做延迟请求消费 + UI 刷新。
     /// 只在本页是前台页且对象树存活时才被框架调用。
     fn tick(&self) {}
     /// 本页是否有待处理的 tick 逻辑(框架用, 避免空转)
@@ -145,7 +145,7 @@ pub(crate) struct InfoPage;
 
 impl Page for InfoPage {
     fn fill_title(&self, buf: *mut u8) {
-        // 应用名 = Chaos(2026-09-26 用户要求把"墟"全部换掉, 包括应用名)。
+        // 标题栏文本 = 应用名 "Chaos"。
         // 缓冲 48B, 5 字节写入无越界
         unsafe { put_str(buf, "Chaos\0".as_bytes()); }
     }
@@ -194,7 +194,7 @@ impl Page for InfoPage {
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
-            // 会和它打架(真机: 主页导航行 28px 观感正常, 但同一规则套到列表行就偏大)。
+            // 会和它打架(实测: 主页导航行 28px 观感正常, 但同一规则套到列表行就偏大)。
             let _ = cpu;
             Ok(())
         }
@@ -226,9 +226,9 @@ impl Page for InfoPage {
             let tk = st_rd!(STAT_TICK).wrapping_add(1);
             st_wr!(STAT_TICK, tk);
             if tk % 10 != 0 { return; }
-            // 息屏 / AOD 一律不刷(2026-09-30 续航): 这三行数值只有亮屏时才有人看,
-            // 而每 0.5 秒这一轮里含**三次 /proc 读** + 若干 label 重绘。以前没有这道门,
-            // 息屏后自愈还会把本页重建起来 => 整段息屏时间都在 2Hz 读 /proc 并重画。
+            // 息屏 / AOD 一律不刷(续航): 这三行数值只有亮屏时才有人看,
+            // 而每 0.5 秒一次的刷新里含三次 /proc 读 + 若干 label 重绘。少了这道门,
+            // 息屏期间自愈重建还会把本页拉起来 => 整段息屏时间都在 2Hz 读 /proc 并重画。
             if !fw_api::screen_is_on() { return; }
             if PAGES[0].built == 0 || !page_is_live(0) { return; }
             // 值真变了才写: label_set_text / bar_set_pct 每次都要失效重绘, 而存储、内存
@@ -256,9 +256,9 @@ impl Page for InfoPage {
             // 行2(CPU): 数值只写值标签, 不走 row_update。row_update 每次都会把
             // "行级联当前解析到的字体"重烘进行内值标签的 local style
             // (0x0C4C89D6 读属性 0x5A -> 0x0C4C8A34 `bl 0xc588e78`), 而本行 500ms 刷一次
-            // => 我们烘的文楷被盖回行级联字体, 逐对象补写 10s 才追回一次。这正是真机
-            // "只有 CPU 这类周期刷新的行闪变, 标题与数据行不闪"的根因(定案 53)。
-            // 值标签句柄每次从行现取(行的副标签在 +0x40, DEVICE_PROVEN), 不缓存。
+            // => 烘进去的文楷被盖回行级联字体, 逐对象补写 10s 才追回一次。这正是实测
+            // "只有 CPU 这类周期刷新的行闪变, 标题与数据行不闪"的根因。
+            // 值标签句柄每次从行现取(行的副标签在 +0x40, 已实测核对), 不缓存。
             let r2 = read_volatile(rows.add(2));
             if r2 != 0 {
                 stat_fill(2);
@@ -304,7 +304,7 @@ unsafe fn cstr_len(s: *const u8) -> usize {
     n
 }
 
-// ===== 页1-6: 文件目录 =====
+// ===== 页1-4: 文件目录 =====
 
 pub(crate) struct DirPage;
 
@@ -369,7 +369,7 @@ impl Page for DirPage {
                     render_req(pid);
                 }
             } else if idx == 10 && pid == 1 {
-                nav_goto(12, 0);   // 根目录专属: 缓存清理入口
+                nav_goto(12, 0);   // 根目录专属: 清理的是固定两条缓存目录, 与当前目录无关
             } else {
                 nav_back();
             }
@@ -571,7 +571,7 @@ impl Page for WatchfaceListPage {
 // ===== 页10: 表盘管理 =====
 
 pub(crate) struct WfMgmtPage {
-    /// 摇一摇开关状态(Cell 内部可变, 不再用全局 static mut)
+    /// 摇一摇开关状态(AtomicU32 内部可变, 不再用全局 static mut)
     pub shake_en: AtomicU32,
 }
 
@@ -807,19 +807,19 @@ impl Page for CachePage {
 
 // ===== 页13: 系统美化(菜单) / 页5: 更换字体 / 页6: 桌面图标 =====
 //
-// 结构(2026-09-26 用户要求二级界面, 并且**要有页面跳转动画**):
+// 结构(一个菜单页 + 两个二级页, 二级页要带页面跳转动画):
 //   页13 菜单    行0 更换字体 -> nav_goto(5) / 行1 桌面图标 -> nav_goto(6) / 行2 返回
 //   页5  字体    行0..7 字体条目(动态建行 + 真复选框) / 行8 重新应用字体 /
 //                行9 再补写一遍 / 行11 返回(nav_back)
 //   页6  图标    行0..9 图标包条目(动态建行 + 真复选框) / 行11 返回(nav_back)
 //
-// **为什么两个二级页要占独立 page_id**: 固件的页面跳转动画只在真正的
-// page_goto/page_back 里有 —— 这正是文件管理当初"每级目录一个独立 page_id"的原因
-// (ipc.rs 注册处那句注释)。页内切层级(只 render_req)是**没有动画**的, 用户一眼就看出来。
-// 代价: 原生应用最多 14 页(陷阱 11 真机定案), 所以把文件管理从 6 级压到 4 级,
-// 腾出两个 page_id 给这两个二级页 —— 注册总数仍然是 14, 只是重新分配。
+// 为什么两个二级页要占独立 page_id: 固件的页面跳转动画只在真正的 page_goto/page_back
+// 里有(页面注册见 ipc.rs)。页内切层级(只 render_req)没有动画, 整页内容原地换一批,
+// 观感上就不是"进了另一个页面"。文件管理每级目录各占一个 page_id 也是同一个原因。
+// 代价: 原生应用最多注册 14 页, 再多会在安装过程中黑屏自重启(机制未验证, 按硬上限处理);
+// 所以文件管理从 6 级压到 4 级腾出两个 page_id —— 注册总数仍是 14, 只是重新分配。
 //
-// 2026-09-26 之前那两版(页内层级 BF_LEVEL / 把字体两行与图标列表挤在同一页)都撤了。
+// 行位分配都受 MAX_ROWS_PER_PAGE(=12) 封顶: 条目行从行 0 起排, 页5/页6 的行 11 固定"返回"。
 
 /// 图标列表的第 0 个行槽(页6: 行0..9 共 10 行, 行11 返回)
 const ICON_ROW0: usize = 0;
@@ -865,21 +865,21 @@ impl Page for BeautifyPage {
 
 // ===== 页5: 系统美化 -> 更换字体(二级) =====
 //
-// 2026-09-26 用户新需求: 这一页原来是"文字与字体"(两个按钮: 重新应用文楷 / 再补写一遍),
-// 现在改成**像"桌面图标"页那样的复选框列表** —— 有哪些字体就列几条, 想用哪个点哪个。
+// 页面形态: 复选框列表(与"桌面图标"页同款) —— 清单里有几条字体就列几条,
+// 点哪条就切到哪条; 已选中的那条再点走两步删除。
 // 数据面全在 font_list.rs(清单 / 切换 / 两步删除), 这里只负责建行与派发点击。
 //
 // 行位: 0..7 = 字体条目(动态, 有几条建几条), 8 = 重新应用字体, 9 = 补写一遍,
-// 11 = 返回(行 9 原是"扫描未覆盖文字", §44 按用户要求整功能删除)。
-// 删除字体的确认浮层(§44)叠在本页 content 上, 不占行位。
+// 11 = 返回。条目行数由 font_list::entry_shown() 截断, 与 0..7 这 8 个槽位一致。
+// 删除字体的确认浮层叠在本页 content 上, 不占行位。
 pub(crate) struct FontListPage;
 
 /// 字体条目行的起始槽位(与 action/返回 隔开: 8 条占 0..7)
 const FONT_ROW0: usize = 0;
 /// "重新应用字体"那一行的槽位
 const FONT_ROW_REAPPLY: usize = 8;
-/// "补写一遍"那一行的槽位(§41 恢复逐对象补写的一次性任务; 原"扫描"行在行 9,
-/// §44 按用户要求删除探测功能后补写移进行 9)
+/// "补写一遍"那一行的槽位。逐对象补写(font_tree)是一次性任务: 点一下排一趟, 再点 = 中断。
+/// 样式级写回盖不到的对象(小部件屏 / 桌面"布局切换"的旧脸对象)只有这条路够得到。
 const FONT_ROW_BFILL: usize = 9;
 /// 行9 副标签的静态文本缓冲(行控件一直读这些指针, 必须是 static)
 static mut FT_BFILL_SUB: [u8; 48] = [0; 48];
@@ -893,7 +893,7 @@ impl Page for FontListPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            // 确认框挂在本页根对象上, 重建 = 连框一起销毁 —— 句柄作废前先归零状态。
+            // 确认框挂在页根上, 重建只销毁 content 带不走它 —— 先把它的状态归零。
             font_list::popup_reset();
             font_list::refresh();          // 新投递的字体不用重启就该出现在列表里
             let ent = font_list::entry_shown();
@@ -909,8 +909,8 @@ impl Page for FontListPage {
                 if r != 0 { last = r; }
                 i += 1;
             }
-            // 字体一个都没有时(status 已断言过 14 页上限, 这里不新增行)给一句说明:
-            // 空列表页上什么都不说, 用户会以为界面坏了。副标签指着那句静态文本。
+            // 字体一个都没有时不新增行(复用行 0 那个槽位), 只给一句说明:
+            // 空列表页什么都不说会像是界面坏了。副标签指着那句静态文本。
             if ent == 0 {
                 let r = build_row(ctx, last, FONT_ROW0, &RowSpec::display(
                     "还没有投递过字体\0".as_bytes(), FONT_EMPTY_SUB.as_ptr()));
@@ -918,7 +918,7 @@ impl Page for FontListPage {
             }
             let bf_on = font_tree::enabled();
             // 行9 副标签 = 任务读数(跑: 进度; 完: 生效/没生效/导航中断/树变丢弃四个数)。
-            // 判据可分辨: 每种结局一个独立计数, 用户念一次数就能判全。
+            // 判据可分辨: 每种结局一个独立计数, 一次读数就能区分全部结局。
             {
                 let (ok, nw, nav, ch, rounds, pages) = font_tree::backfill_stats();
                 let mut w = W::new(FT_BFILL_SUB.as_mut_ptr(), FT_BFILL_SUB.len());
@@ -937,10 +937,10 @@ impl Page for FontListPage {
             }
             build_rows(ctx, last, &[
                 (FONT_ROW_REAPPLY, RowSpec::clickable("重新应用字体\0".as_bytes())),
-                // §41(2026-09-27 用户指示)恢复补写: 样式级写回(含 23 条派生样式)盖不住
-                // 小部件屏与桌面"布局切换"的旧脸对象 —— 它们的 face 不经过我们写过的
-                // 任何样式。逐对象直写是唯一够得到的路(67 轮一次性任务 + 全部门控)。
-                // §44: 移进行 9(原"扫描"行已按用户要求删除)。
+                // 样式级写回(含 23 条派生样式)盖不住小部件屏与桌面"布局切换"的旧脸
+                // 对象 —— 它们的 face 不经过样式级写回触及的任何样式。
+                // 逐对象直写是唯一够得到的路, 所以做成带门控的一次性任务(见 font_tree)。
+                // 这一行用 tap 而不是 switch/check: 点它只是排一趟任务或中断, 行右端不放部件。
                 (FONT_ROW_BFILL, RowSpec::tap(if bf_on {
                     "补写中, 再点中断\0".as_bytes() } else { "补写一遍(修小部件/桌面)\0".as_bytes() },
                     FT_BFILL_SUB.as_ptr())),
@@ -963,7 +963,7 @@ impl Page for FontListPage {
                 // 8 = 请求重跑样式级写回。不在这里直接跑: 点击回调是固件的事件派发
                 //     上下文, 建 132 张 face 是秒级重活, 交给 UI tick 消费(见 font_apply::tick)。
                 8 => font_apply::request(),
-                // 9 = 一次性补写任务(§41): 只翻静态量, 遍历与写入都在 50ms tick 里。
+                // 9 = 一次性补写任务: 只翻静态量, 遍历与写入分拍在常驻 tick 里跑。
                 //     任务在跑时再点 = 中断(见 font_tree::toggle)。
                 9 => font_tree::toggle(),
                 11 => nav_back(),
@@ -985,15 +985,15 @@ impl Page for IconSubPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            // 确认框挂在本页根对象上(§46): 重建只销毁 content, 带不走它 —— 开头先兜住
-            // 上一轮没删掉的框, 再把状态归零(与"更换字体"页同款)。
+            // 确认框挂在本页根对象上: 重建只销毁 content, 带不走它 —— 开头先兜住
+            // 前一次没关掉的框, 再把状态归零(与"更换字体"页同款)。
             icon_apply::popup_reset();
             icon_apply::refresh_packs();   // 新投递的包不用重启就该出现在列表里
             let ent = icon_apply::entry_shown();
             icon_apply::lines_fill();
             // 动态建行: 有几条建几行。条目行带真复选框(trailing::CHECKBOX),
             // 勾选态靠 row_update 原地写 —— 与"表盘切换"页同一套做法。
-            // 列表第一项是"系统原图标": 用户要的是图标切换(复选框列表), 不是
+            // 列表第一项是"系统原图标": 这一页的交互就是图标切换(复选框列表), 不是
             // "应用/恢复"两个动作按钮; 做成第 0 项之后切换与还原是同一个动作。
             let mut last = ctx.title;
             let mut i = 0usize;

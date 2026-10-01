@@ -4,7 +4,7 @@ use crate::*;
 use crate::mem::{rd16, rd32, rd8};
 
 // 表盘名: 内联 name(+0x48) 为空时回退 name_translation
-// (+0xB4=条数, +0xB8=数组; 每条 8B: [0]=language(u8), [4]=char* 字符串) 0xCA7E2DA/0xCA7E3B2 实证
+// (+0xB4=条数, +0xB8=数组; 每条 8B: [0]=language(u8), [4]=char* 字符串) 0xCA7E2DA/0xCA7E3B2 静态核对
 // 系统内置表盘在 watchface_list.json 里没有内联 name, 名字只在 name_translation
 pub(crate) unsafe fn wf_copy_name(node: u32, dst: *mut u8) {
     let nmp = (node + 0x48) as *const u8;
@@ -53,10 +53,11 @@ pub(crate) unsafe fn wf_copy_name(node: u32, dst: *mut u8) {
     write_volatile(dst.add(k), 0u8);
 }
 
-// 表盘枚举: 两遍链表 引擎当前面(*0x20119770)的 type=主表盘类型(自校准)
-// 只收集 type==主类型 节点(AOD息屏面/deco 被滤掉)。schema 定案(序列化器0xCA7E59C键↔偏移):
+// 表盘枚举(下面的 load_watchfaces): 两遍链表, 先取引擎当前面(*0x20119770)的 type 当主表盘类型
+// (自校准), 第二遍收市场表盘(type 1) 与按开关纳入的内置表盘(type 0), AOD 息屏面/deco 被滤掉。
+// 节点字段偏移(序列化器 0xCA7E59C 的键 ↔ 偏移核对):
 // id@+8 name@+0x48 type@+0x88 version@+0x8C in_use@+0x90 is_delete@+0x91 support_AOD@+0x97
-// (WF_STATE=type, WF_PEND=in_use 语义误判已修正)
+// (WF_STATE 存 type, WF_PEND 存 in_use)
 pub(crate) unsafe fn desel_has(node: u32) -> bool {
     let a = core::ptr::addr_of!(WF_DESEL) as *const u32;
     let n = st_rd!(WF_DESEL_CNT) as usize;
@@ -130,10 +131,10 @@ pub(crate) unsafe fn load_watchfaces(show_builtin: u32) {
         if (node & 0xE000_0000) != 0x2000_0000 { break; }
         total += 1;
         let ty = rd8((node + 0x88) as *const u8);
-        // type 定案(0xCA7CAA2 用 [node+0x88] 索引 0x2013FE4C 的目录数组):
+        // type 取值(0xCA7CAA2 用 [node+0x88] 索引 0x2013FE4C 的目录数组):
         // 0=/data/app/watchface/builtin/(内置) 1=.../market/(市场) 2=.../aod/(息屏)
         // 固件找"当前面"时跳过 type==2; 切面核心拒 type==3。
-        // 主表盘 = type 0 + 1。旧逻辑"与当前面同 type"会把内置表盘全滤掉。
+        // 主表盘 = type 0 + 1。注意判据不能写成"与当前面同 type", 那样内置表盘会被全滤掉。
         // 内置表盘(type 0)是否纳入本页列表 = 调用方传入的开关(两页独立)
         if (ty == 1 || (ty == 0 && show_builtin != 0)) && cnt < 24 {
             let idp = (node + 8) as *const u8;
@@ -160,7 +161,7 @@ pub(crate) unsafe fn load_watchfaces(show_builtin: u32) {
     st_wr!(WF_COUNT, cnt as u32);
 }
 
-// 表盘页行文本: 行0-7="<*> 名称 id"(8/窗, 名称=node+0x48 中文), 行8="< 更多 >", 行9="< 返回 >"
+// 表盘页行文本: 行0="显示内置表盘"开关, 行1-8=窗内条目(主标签=名称, 副标签=ID), 行9="更多", 行10="返回"
 pub(crate) unsafe fn refresh_watchface_lines() {
     // 双排: 主标签 = 表盘名称 / 副标签 = 表盘 ID
     let base = core::ptr::addr_of_mut!(WATCH_LINES) as *mut u8;
@@ -230,8 +231,10 @@ pub(crate) unsafe fn refresh_watchface_lines() {
     x.end();
 }
 
-// 表盘页勾选态"原地"更新: 只调 update_row 的第6参(非0→set_state(trailing,3) 勾选),
-// 不销毁/重建任何对象 用于 首次建行后补写勾选 切面后把勾选挪到新表盘
+// 表盘页勾选态"原地"更新: 只调 row_update 的第 6 参(非 0 → set_state(trailing,3) 打勾),
+// 不销毁/重建任何对象; 用于首次建行后补写勾选、切面后把勾选挪到新表盘。
+// 注意: row_update 不止改文字(标签已存在时照样 set_text + 给 trailing 做 set_state, 后者连带
+// 子树样式失效), 逐字说明见 font_apply::apply_finish; 调用方必须先过 built + page_is_live 两道门。
 pub(crate) unsafe fn wf_apply_selection(pid: usize) {
     let upd: unsafe extern "C" fn(u32, *const u8, *const u8, *const u8, i32, u8) -> i32 = fw_api::row_update;
     let rows = page_rows_ptr(pid);
@@ -274,11 +277,11 @@ pub(crate) unsafe fn wf_apply_selection(pid: usize) {
 }
 
 // ===== 摇一摇切表盘(quick_guesture eventbus + lv_timer UI线程延迟执行) =====
-// eventbus 回调(派发线程): 只做旗标/计数 重活全部交给 lv_timer(UI线程), 线程风险归零
+// eventbus 回调跑在派发线程: 只置旗标/计数, 重活全部交给 lv_timer(UI 线程) —— 不在派发线程上动对象树
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
     if event == 0 { return 0; }
-    // 手势码 = payload+8 u16 (event[+0x18]=payload 指针, 固件 system handler 同款读法)
+    // 手势码 = payload+8 u16 (event[+0x18]=payload 指针, 与固件自带 system handler 的读法一致)
     let pay = rd32((event + 0x18) as *const u32);
     if pay == 0 || (pay & 0xE000_0000) != 0x2000_0000 { return 0; }
     let code = rd16((pay + 8) as *const u16) as u32;
@@ -287,10 +290,10 @@ pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
         return 0;
     }
     if st_rd!(SHAKE_EN) == 0 { return 0; }
-    // 三条门控(都经真机验证):
+    // 三条门控(都已实测):
     //   1. 屏幕亮着  —— 挡住息屏与 AOD
-    //   2. 最上层页属 home 应用 —— 挡住设置(22)与其它应用(真机: 表盘/launcher 均 top=16:0)
-    //   3. 固件的"表盘在显示"标志非 0 —— 挡住 launcher(真机: 表盘页 on=1, launcher on=0)
+    //   2. 最上层页属 home 应用 —— 挡住设置(22)与其它应用(实测: 表盘/launcher 均 top=16:0)
+    //   3. 固件的"表盘在显示"标志非 0 —— 挡住 launcher(实测: 表盘页 on=1, launcher on=0)
     if !fw_api::screen_is_on() || fw_api::top_app_id() != fw_api::HOME_APP_ID { return 0; }
     if fw_api::watchface_is_on() == 0 { return 0; }
     st_wr!(SHAKE_PENDING, 1);
@@ -299,22 +302,22 @@ pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
 
 // lv_timer(UI线程): 框架级维护 + 页面 tick 分发
 //
-// 节拍自适应(2026-09-30, 用户报告"装完 Chaos 后续断崖 + 卡顿"):
-//   **亮屏期间一律 50ms** —— 用户在操作, 手感不能退(50ms 就是为了压末段延迟才从 200 改过来的);
-//   **息屏且完全空闲 = 1000ms**。手表绝大部分时间在息屏, 原来 20 拍/秒里绝大多数拍只是
+// 节拍自适应:
+//   **亮屏期间一律 50ms** —— 亮屏就是有人在操作, 手感不能退(50ms 是为压末段延迟从 200ms 收窄来的);
+//   **息屏且完全空闲 = 1000ms**。手表绝大部分时间息屏, 恒定的 20 拍/秒里绝大多数拍只是
 //   读几个静态量就早退, 但它是永不停脚的唤醒源; 加上信息页那 0.5 秒一次的 /proc 读与重绘
-//   (息屏时也不再需要), 就是续航账单里我们这一份。
+//   (息屏时同样不需要), 这两项就是息屏功耗里本模块贡献的那一份。
 //   "完全空闲" = 下面 tick_busy() 里那些旗标全为 0 —— 任何倒计时/跑批/待重建/提示挂着
 //   都算有活, 所以**所有以"拍"为单位的等待量都还在按 50ms 走, 不会因为降频被拉长**。
 const TICK_FAST_MS: u32 = 50;
 const TICK_IDLE_MS: u32 = 1000;
 
-/// 有没有活在推进(或用户在用)。为 true 就保持快节拍。
+/// 有没有活在推进(或有人在用)。为 true 就保持快节拍。
 unsafe fn tick_busy() -> bool {
     fw_api::screen_is_on()                        // 亮屏 = 随时可能有操作, 不降频
     || st_rd!(RENDER_REQ) != RENDER_NONE          // 有一次重建排队
     || st_rd!(SHAKE_COOL) != 0                    // 摇一摇冷却按拍计
-    || st_rd!(HEAL_TRYS) != 0                     // 自愈试过的痕迹: 保持原节奏到本轮结束
+    || st_rd!(HEAL_TRYS) != 0                     // 自愈重试的痕迹: 保持快节拍到本轮结束
     || font_apply::pending()
     || font_tree::backfill_running()
     || icon_apply::pending()
@@ -330,8 +333,8 @@ unsafe fn tick_adapt() {
     let t = st_rd!(SHAKE_TIMER);
     fw_api::timer_set_period(t, want);
     // 写完读回核对: 读不回来我们要的值, 说明这个句柄不是**这条 LVGL 定时器链表**上的
-    // 对象(建它的是 0x0C587ED1 那层 veneer, 真机之前没验过它落到哪一份实现)。
-    // 那种情况下**永久放弃自适应**, 也不再写第二刀 —— 顶多回到改动前的"恒 50ms"。
+    // 对象(建它的是 0x0C587ED1 那层 veneer, 它落到哪一份实现未经实测确认)。
+    // 那种情况下**永久放弃自适应**, 也不再写第二次 —— 最坏退回恒 50ms 的原节拍。
     if fw_api::timer_period_of(t) != want {
         st_wr!(TICK_ADAPT, 0);
         st_wr!(TICK_PERIOD_MS, TICK_FAST_MS);
@@ -344,9 +347,9 @@ unsafe fn tick_adapt() {
 pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     // 0. 先按上一拍的忙闲把节拍定好(放在最前: 后面的分支里有提前 return)
     tick_adapt();
-    // 1. 自愈: 页句柄还在但内容树不在(息屏唤醒后固件没回调 on_resume)。
-    //    **只在亮屏时做**: 息屏期间 on_destroy 会把 built 清零, 这时候把它重建起来
-    //    等于凭空画一整页(而且信息页会因此继续 0.5 秒刷一次) —— 白烧电。
+    // 1. 自愈: 页句柄还在但内容树没建(built == 0, 而 on_resume 没来, 例如息屏唤醒)。
+    //    **只在亮屏时做**: 息屏时把它重建起来等于在关闭的屏幕上凭空画一整页,
+    //    而且信息页会因此继续 0.5 秒读写一遍 —— 纯粹多耗功耗。
     {
         let fgp = st_rd!(FG_PAGE) as usize;
         if fgp <= MAX_PID
@@ -384,8 +387,8 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     font_apply::tick();
     font_tree::tick();
     icon_apply::tick();
-    // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面两页的跑批同一个位置:
-    // 50ms 一拍, 息屏自然停(页面不在前台时 render_req 也只是置位, 由存活门挡住)。
+    // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面几项跑批同一个位置:
+    // 快节拍 50ms 一拍, 息屏空闲时降到 1000ms(页面不在前台时 render_req 也只是置位, 由存活门挡住)。
     font_list::tick();
     // 5. 摇一摇: 冷却 + 消费旗标 + 切表盘
     let cool = st_rd!(SHAKE_COOL);
@@ -450,15 +453,15 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
             wf_apply_selection(fg);
         }
     }
-    st_wr!(SHAKE_COOL, 20);   // 1s 冷却(20×50ms)防连切
+    st_wr!(SHAKE_COOL, 20);   // 20 拍冷却(快节拍 50ms 时约 1s)防连切
 }
 
-// 武装(首次 on_resume = UI线程): 订阅 quick_guesture + 建 lv_timer; 常驻至重启(模块不 rmmod)
+// 武装(首次 on_resume = UI线程): 订阅 quick_guesture + 建 lv_timer; 常驻到重启(模块不卸载)
 //
-// 幂等铁律: 句柄一旦建起来就**永不丢弃**。曾经在"疑似定时器已随息屏销毁"时把句柄清零再重建,
-// 但真机现象证明那个定时器一直活着 —— 只清句柄不删对象, 等于把它遗弃在 LVGL 定时器链表里继续跑,
-// 每经历一次息屏/重开就多一个并发实例(表现为 CPU 数值刷新越来越快, 息屏次数越多越快)。
-// 要"先删后建"必须先逆向出 lv_timer_delete 的地址, 在那之前只建一次。
+// 重要: 句柄一旦建起来就**永不丢弃**。"疑似定时器已随息屏销毁"的判断是错的 ——
+// 实测那个定时器一直活着。而**只清句柄不等于删除对象**: 它仍挂在 LVGL 定时器链表里继续跑,
+// 每清零重建一次就多一个并发实例(表现为 CPU 数值刷新越来越快, 经历的息屏轮次越多越快)。
+// 要做"先删后建"必须先确认 lv_timer_delete 的地址, 在那之前只建一次。
 pub(crate) unsafe fn shake_arm() {
     if st_rd!(SHAKE_SUB) == 0 {
         let cb: unsafe extern "C" fn(u32, u32) -> u32 = chaos_shake_cb;
@@ -471,7 +474,7 @@ pub(crate) unsafe fn shake_arm() {
         st_wr!(SHAKE_TIMER, t);
         st_wr!(TIMER_CREATE_N, st_rd!(TIMER_CREATE_N).wrapping_add(1));
         // 允许自适应之前先验句柄: create 返回的就是 lv_timer_t*, 周期在 +0x00,
-        // 读回来必须正好是我们刚传的 50。读不上来就永远不改(= 改动前的行为),
+        // 读回来必须正好是我们刚传的 50。读不上来就永远不改(保持恒 50ms),
         // 绝不往一个没验证的指针上写。
         st_wr!(TICK_PERIOD_MS, TICK_FAST_MS);
         st_wr!(TICK_ADAPT, if fw_api::timer_period_of(t) == TICK_FAST_MS { 1 } else { 0 });

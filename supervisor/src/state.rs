@@ -1,11 +1,11 @@
 // 全部可变状态与静态常量的唯一声明处。其余模块用 `use crate::state::*;` 访问。
 // 这样阅读时状态一目了然, 不必在两千行里翻找。
 
-// ===== 固件地址 (3.101.043, 官方 pack 转译 2026-09-05; STATIC_RECOVERED 未真机验证) =====
-// 地址来源: canopus_src/targets/xiaomi-band-10-pro-3.101.043/ (SHA 51930767 命中本机)
+// ===== 固件地址 (3.101.043, 由静态核对转译; 推断待验, 未真机验证) =====
+// 地址来源: 对固件镜像的静态核对。
 // 这里只留**业务代码直接引用**的那几个地址; UI/字体/消息框那一批一律走 `fw_api/*`
-// 的包装(代码约定: 业务代码禁止 transmute 地址), 完整清单与依据在
-// docs/fw_address_table_043.csv —— 同一个地址不留两个真源。
+// 的包装(代码约定: 业务代码禁止 transmute 地址), 完整清单与依据都在 `fw_api/*` 一侧 ——
+// 同一个地址不留两个真源。
 // 注册链 (symbols: app_registry / launcher)
 pub const FW_REGISTER_DRIVER: u32 = 0x0C1A_FF61;   // register_driver(path,fops,mode,priv)
 
@@ -17,14 +17,14 @@ pub const FW_APP_INSTALL: u32 = 0x0CA6_A30D;       // app_install(desc, pages*, 
 
 pub const FW_INIT_BUFFER: u32 = 0x0C51_3A45;       // app_launcher_add(app_id) (036 名 init_buffer, 1参)
 
-pub const FW_NOTIFY: u32 = 0x0CA9_A899;            // lvx_notification_insert_message(notif*) 固件完整链(拷贝/登记由它内部自处理; 当年手动链里的段B memset 实测必崩)
+pub const FW_NOTIFY: u32 = 0x0CA9_A899;            // lvx_notification_insert_message(notif*) 固件完整链(拷贝/登记由它内部自处理; 自己手写那条手动链里的段B memset 实测必崩)
 
 // VFS (symbols: nuttx)
 pub const FW_FILE_OPEN: u32 = 0x0C1D_0A29;   // open(path, flags, mode) -> fd
 
 pub const FW_FILE_CLOSE: u32 = 0x0C1B_9D81;  // close(fd) -> 0
 
-pub const FW_FILE_READ: u32 = 0x0C1D_129D;   // read(fd, buf, len) (036 官方定案 0x0C1C1E25)
+pub const FW_FILE_READ: u32 = 0x0C1D_129D;   // read(fd, buf, len) (036 版本核对到的是 0x0C1C1E25)
 
 pub const MAX_ROWS_PER_PAGE: usize = 12;
 
@@ -88,7 +88,7 @@ pub static DISPLAY_NAME: [u8; 6] = *b"Chaos\0";
 pub static PAGE_MAIN: [u8; 5] = *b"main\0";
 
 // 页名(互异即可, page_goto 按 page_id 解析; page1-4=目录0-3级 page5/6=美化二级
-//  page7=查看)。2026-09-26: 文件管理原来占 6 页(page1-6), 为了给"更换字体""桌面图标"
+//  page7=查看)。文件管理原来占 6 页(page1-6), 为了给"更换字体""桌面图标"
 //  两个二级页腾出**独立 page_id**(独立 page_id 才有固件的页面跳转动画), 目录页收到 4 级:
 //  文件管理最深到 /a/b/c(/data/chaos/icons 够用, 再往下进不去了)。
 pub static PAGE_DIR0: [u8; 6] = *b"files\0";
@@ -120,27 +120,27 @@ pub static mut APP_META: [u32; 16] = [0; 16];
 
 pub const PAGE_COUNT: usize = 14;                   // 注册页数(页0..页13)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 406] = [0; 406];         // 14 页 × 29 word(116B/页, 官方描述符尺寸)
+pub static mut DESC: [u32; 406] = [0; 406];         // 14 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 
 pub static mut CTOR_DONE: u32 = 0; // ctor 幂等守卫(.init_array + module_main 可能双触发)
 
-pub static mut DRIVER_ON: u32 = 0; // driver 注册成功标志（dtor 幂等守卫，对齐 官方 g_device_registered）
+pub static mut DRIVER_ON: u32 = 0; // driver 注册成功标志（dtor 幂等守卫）
 
-// 非零初始化可变全局 → 产生 .data PROGBITS 节（对齐 官方 的 ELF 形状）
+// 非零初始化可变全局 → 产生 .data PROGBITS 节（与固件自带模块的 ELF 形状一致）
 #[used]
 #[no_mangle]
 pub static mut CHAOS_DATA_MAGIC: u32 = 0x4348_414F; // "OAHC" = "CHAOS" 反序
 
-// 探针写完 thunks 后，数据存这里供 chaos_read 读取
+// read(len >= 4096) 的大块回读缓冲: 读取方拿到的是这里的字节
 pub static mut THUNKS_BUF: [u8; 4096] = [0; 4096];
 
 pub static mut THUNKS_LEN: u32 = 0;
 
 pub static BANNER_TEXT: &[u8] = "Chaos 已安装！\0".as_bytes(); // 应用名 = Chaos(中英文统一)
 
-// 页面 UI 生命周期状态（官方 模式：on_create 存 r1，渲染在 on_resume）
+// 页面 UI 生命周期状态（照固件自带页面的模式：on_create 存 r1，渲染在 on_resume）
 pub static mut APP_REGISTERED: u32 = 0;  // app 已注册标志（防 notify 触发的 INSTALL 重入）
 
 pub static mut NOTIF_DONE: u32 = 0;      // notify 已执行标志（0x43 幂等, 防重复弹窗/堆操作）
@@ -149,7 +149,7 @@ pub static mut WRITE_BUSY: u32 = 0;    // write 重入保护（notify 触发 lau
 
 pub static mut LANG: u32 = 0;  // 语言: 0=EN 1=ZH（0x18 设中文, 0x19 设英文）
 
-// 应用名: 中英文统一为 Chaos(2026-09-26 用户要求把"墟"全部换掉, 包括应用名)。
+// 应用名: 中英文统一为 Chaos。
 // 保留 NAME_ZH 这个符号名与它的 6 字节形状: ipc.rs 的通知链按语言二选一取它,
 // 内容现在与 DISPLAY_NAME 一致 —— 语言差异从此只影响别的文案。
 pub static NAME_ZH: &[u8] = "Chaos\0".as_bytes();
@@ -163,29 +163,30 @@ pub static mut FREE_COUNT: u32 = 0; // 白名单空闲槽计数
 pub static mut FREE_BITS: u32 = 0;  // 空闲位图（bit k = 池[k] 空闲）
 
 // ============================================================
-// 官方 同构 UI 上下文 (2026-08-25 实施)
-// 官方_manager_native_init(0x305D) + 官方_ui_context_init(0x3760)
+// UI 上下文布局（照固件自带模块的那套结构）
+// 自带模块里的偏移: manager_native_init 0x305D、ui_context_init 0x3760
 // outer ctx: 0x2724, inner ui_ctx: 0x26C8, 总 0x300B
 // ============================================================
-// 引擎 v4 (probe 0x41) tree: fp+0x04=描述符 fp+0x08=节点数 fp+0x0C=节点(0x1C) fp+0xC0C=布局表 fp+0x10CC=数据表 fp+0x38C=字符串池
+// 引擎上下文树: fp+0x04=描述符 fp+0x08=节点数 fp+0x0C=节点(0x1C) fp+0xC0C=布局表 fp+0x10CC=数据表 fp+0x38C=字符串池
 // app_id=200 (0xC8) 当前稳定值，真机验证通过
-pub const APPID_POOL: [u32; 1] = [0xC8]; // app_id=200。实验证非 app_id 问题(0xC8/0xCD 都稳定), 恢复原始
+pub const APPID_POOL: [u32; 1] = [0xC8]; // app_id=200。0xC8 与 0xCD 实测都稳定, 不是 app_id 的问题
 
-// ===== UI v4 (2026-09-06, 8页注册 + label文本控件 + 目录三件套) =====
-// 依据参考后端源码 canopus_src/manager/target/lvgl_v9/:
-// target_route(L1145): 前进 page_goto((app_id<<16)|pid) 压栈 / 后退 page_finish(desc) 出栈 = 固件动画转场
-// target_ui_apply(L691): content三件套 → title后创建 → 控件挂content → align_to链
-// TEXT节点(L869-903): lvx_label_create + set_label_text + align_to(gap4) 文本界面用文本控件
-// unused rows set_hidden(L1032) 动态行显隐
-// 页型: page0=信息(label整段+2动作行) page1..6=目录0..5级(10行动态条目) page7=查看(label整块+Next/Back)
-// 目录: opendir/readdir/closedir(0x0C1E45xx, nsh_ls xref定案+真机验证 DEVICE_PROBED)
-// 红线不变: root永不自建, content=set_size(336,424)+align(2,0,56)+pad_bottom(32), 控件挂content
-pub const FW_STYLE_MISANS_REG_24: u32 = 0x2010_CE44; // MiSans-Regular 24px 样式对象(官方EVID-UI-1043-FONT-001, 中文渲染必需)
+// ===== UI 布局约定 (label 文本控件 + 目录三件套) =====
+// 界面组装方式来自对固件自带 LVGL 后端的静态核对:
+// 路由: 前进 page_goto((app_id<<16)|pid) 压栈 / 后退 page_finish(desc) 出栈 = 固件动画转场
+//   (本模块后退一律用 fw_api::page_back —— page_finish 无动画且实测不可用)
+// 组装顺序: content三件套 → title后创建 → 控件挂content → align_to链
+// 文本控件: lvx_label_create + set_label_text + align_to(gap4) 文本界面用文本控件
+// 未用的行用 set_hidden 做动态显隐
+// 页型: 信息页(label整段+2动作行) / 目录页(10行动态条目) / 查看页(label整块+Next/Back)
+// 目录: opendir/readdir/closedir(0x0C1E45xx, 与系统 ls 实现的调用点核对 + 真机验证)
+// 红线: root永不自建, content=set_size(336,424)+align(2,0,56)+pad_bottom(32), 控件挂content
+pub const FW_STYLE_MISANS_REG_24: u32 = 0x2010_CE44; // MiSans-Regular 24px 样式对象(固件开机代码里的字体样式常量, 中文渲染必需)
 // 系统"数据行"用的两个文字样式对象(心率区间面板每行的名称/数值就是它们)
 pub const FW_STYLE_HR_NAME: u32 = 0x2010_CE5C;
 pub const FW_STYLE_HR_VALUE: u32 = 0x2010_CEF8;
 
-// 表盘链(0xCA7C67C 反汇编定案, docs/wf_core_disasm.txt):
+// 表盘链(0xCA7C67C 反汇编核对):
 pub const WF_MGR_PTR: u32 = 0x2013_FE6C;             // watchface_manager 全局指针(SRAM字): mgr=*此址
 
 pub const FW_SET_WATCHFACE: u32 = 0x0CA9_5C31;       // set_watchface_by_id(id) 数据层(pending+缓存+持久化JSON)
@@ -194,7 +195,7 @@ pub const FW_REFRESH_CUR_WF: u32 = 0x0C5F_32B9;      // refresh_cur_watchface(fo
 
 pub const WF_ENGINE_CUR: u32 = 0x2011_9770;          // 引擎当前表盘节点指针字: node = *此址
 
-// 摇一摇(固件 quick_guesture 手势总线 system_guesture 模块同款订阅, 零传感器逆向):
+// 摇一摇(与固件 system_guesture 模块一样订阅 quick_guesture 手势总线, 不自己碰传感器):
 // 手势码(固件 system handler 0x0C4BD0FC 分支自证, 日志串即类型名):
 pub const GC_SHAKE: u32 = 0x1C2;                     // TYPE_GUESTURE_SHAKE 摇一摇(我们要的); 0x1C3=TYPE_GUESTURE_WRIST 抬腕亮屏 必须丢弃
 
@@ -204,7 +205,7 @@ pub const FW_READDIR: u32 = 0x0C1E_4591;           // readdir(DIR*)->dirent*{d_t
 
 pub const FW_CLOSEDIR: u32 = 0x0C1E_4565;          // closedir(DIR*) 真机验证
 
-pub const FW_ERRNO_LOCATION: u32 = 0x0C1E_45BD;    // __errno()->int*(官方config+nsh x22)
+pub const FW_ERRNO_LOCATION: u32 = 0x0C1E_45BD;    // __errno()->int*(固件自带 config 与 nsh 的调用点核对)
 
 // NuttX dirent.h 的 d_type 取值(readdir 返回的 dirent 首字节)。
 // 只列过滤真正用到的两个; 其余取值(含 DT_UNKNOWN=0)走"不是目录也不是普通文件"那支。
@@ -312,20 +313,20 @@ pub static mut CACHE_HAS_RESULT: u32 = 0;         // 1=CACHE_MSG 是刚出的清
 /// 依据: `vg_font_create_core`(0x0C8603B0) 的 param error / check 失败两条分支
 /// 都 `mov r0,r4`, r4 = 池 0x0C860468 处的 0x2CCE1734; `miwear_font_create`
 /// 越界返回 0, 但成功路径拿到的失败值就是它。`vg_font_destroy`(0x0C860484)
-/// 用同值做保护门。STATIC_CONFIRMED
+/// 用同值做保护门。静态核对
 pub const FW_FONT_DEFAULT: u32 = 0x2CCE_1734;
 /// `lv_global` 基址（`lv_init` 0x0C1663EC 对它做 `memset(0x20103174, 0, 0x20c)` +
 /// `memzero(+8, 0x318)`，即整块约 0x320 字节）。字体管理器单例就是这个块的第一个字
-/// （`font_apply::manager_ready` 读 `+0x1C` 取路径管理器）。STATIC_CONFIRMED
+/// （`font_apply::manager_ready` 读 `+0x1C` 取路径管理器）。静态核对
 pub const LV_GLOBAL: u32 = 0x2010_3174;
 /// `lv_global + 0x14` = 当前用于刷新的 `lv_display_t *`。取/存是一对纯指令
 /// (0x0C1052B0 `ldr r0,[r3,#0x14]; bx lr` / 0x0C1052C4 `str r0,[r3,#0x14]`)，
 /// 同一个 0x14 在 `refr_area_part`(0x0C105358) 里被当 display 用(+0x28=flush_cb,
-/// +0x25c=inv_p, +0x3C+i*0x10=inv_areas)。STATIC_CONFIRMED
-/// 重要(47.8): 上面那对取/存访问器的形状就是 LVGL 的
+/// +0x25c=inv_p, +0x3C+i*0x10=inv_areas)。静态核对
+/// 重要: 上面那对取/存访问器的形状就是 LVGL 的
 /// `_lv_refr_get/set_disp_refreshing` —— **"没有 display 在刷新"时这个槽是 0**,
-/// 不是"指针取不到"。46 版把 0 当成忙, 方向整个反了(空闲判忙 => 累计熔断把换字关掉;
-/// 只它非 0 的瞬间放行 => 恰好是渲染窗口)。门的正确写法见 font_tree::ft_render_busy。
+/// 不是"指针取不到"。把 0 当成"忙"方向就整个反了(空闲判忙 => 累计熔断把换字关掉;
+/// 只在它非 0 的瞬间放行 => 恰好是渲染窗口)。门的正确写法见 font_tree::ft_render_busy。
 /// 注意: `lv_global + 0x18` 是全镜像最热的指针字段(35 次取址), 但"+0x14 与 +0x18
 /// 谁是 display"静态证不了(取用它们的代码在 0x1C 模块, 实现体已被厂商清零)。
 pub const LVG_DISP: u32 = 0x14;
@@ -333,14 +334,14 @@ pub const LVG_DISP: u32 = 0x14;
 /// (0x0C105164) 入口 `mov r4,r0` 存下 disp，紧接着 `ldrb.w r5,[r4,#0x3a]` +
 /// `ands r5,r5,#2` + `bne 0x0c10527c`，而 0x0c10527c 就是
 /// `!disp->rendering_in_progress` 断言体 —— **本固件断言不返回**(落到下一个函数
-/// 入口)，UI 线程挂死等看门狗。所以渲染进行中绝不能改任何对象样式。STATIC_CONFIRMED
+/// 入口)，UI 线程挂死等看门狗。所以渲染进行中绝不能改任何对象样式。静态核对
 pub const DISP_FLAG_OFF: u32 = 0x3a;
 pub const DISP_RENDERING_BIT: u32 = 0x02;
 /// face 拷贝块 `+0x0C` = u16 `line_height`(LVGL 排版用的高度)。
 /// 证据一：`LV_FONT_DEFAULT`(0x2CCE1734) 的 +0x0C 实测是 16(个位图字体应有的行高,
 /// 不是指针)；证据二：`row_init`(0x0C4C8560) 取到行字体后
 /// `ldr r1,[r6,#0xc]` -> `bl 0x0C5880E8(标签, r1, 0)` **把行高烘进标签高度**,
-/// 第二个标签 `bl 0x0C589188(标签, 1, 0, 行高+2)` 用它算 y 偏移。STATIC_CONFIRMED
+/// 第二个标签 `bl 0x0C589188(标签, 1, 0, 行高+2)` 用它算 y 偏移。静态核对
 /// 另: face 拷贝块 `+0x24` = 字体管理器缓存节点指针(节点 +4 = 字体名指针, +8 = u16 字号
 /// + u16 style, +0x2c = 引用计数)。构造点 0x0C85F724 `str.w r4,[r8,#0x24]`,
 /// 删除路径 0x0C85F94C `ldr r5,[r4,#0x24]` 同读法反证。

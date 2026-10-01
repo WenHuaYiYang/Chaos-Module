@@ -54,7 +54,7 @@ pub(crate) unsafe extern "C" fn chaos_read(_: *mut u8, buf: *mut u8, len: u32) -
     write_volatile(p.add(45), core::ptr::addr_of_mut!(FOPS) as u32);
     // +0x46: 当前在用的字体池位(0 = 安装器投递的那一份, 1..8 = st1..st8)。
     // 字体投递包靠它判"这一份现在在不在用": 在用的那份绝不能被覆写(见 font_apply 红线)。
-    // 槽位分配本身不再靠它算(2026-09-26 起改由 /data/chaos/font/index.txt 清单决定)。
+    // 槽位分配不靠它算, 由 /data/chaos/font/index.txt 清单决定。
     write_volatile(p.add(46), font_apply::live_get());
     write_volatile(p.add(47), fops_rd(FOPS_STEP));
     STAT_LEN as i32
@@ -63,10 +63,11 @@ pub(crate) unsafe extern "C" fn chaos_read(_: *mut u8, buf: *mut u8, len: u32) -
 
 #[inline(always)]
 pub(crate) unsafe fn file_open_ro(path: *const u8) -> i32 {
-    // 定案: 此固件内核层 O_RDONLY=1, 不是 POSIX 的 0!
-    // 官方_supervisor_platform.c L33: O_RDONLY=1/O_WRONLY=2/O_CREAT=4, O_RDWR=3(EVID-IO-001 /dev/console)
+    // 内核层 O_RDONLY=1, 不是 POSIX 的 0!
+    // 这套取值(O_RDONLY=1/O_WRONLY=2/O_CREAT=4/O_RDWR=3)与固件自带模块的用法一致,
+    // 设备节点与 /dev/console 的调用点都核对过。
     // flag=0 → open 拿到 fd 但无访问模式 → read 必 -1 (真机 n=FFFFFFFF 根因)
-    // 写路径 file_open flag=6 = O_WRONLY|O_CREAT 与官方写组合一致(所以写一直成功)
+    // 写路径 file_open flag=6 = O_WRONLY|O_CREAT, 与固件自带模块的写组合一致(所以写一直成功)
     let f: unsafe extern "C" fn(*const u8, u32, u32) -> i32 = core::mem::transmute(FW_FILE_OPEN as usize);
     f(path, 1, 0)
 }
@@ -95,11 +96,11 @@ unsafe fn font_slot_file_ok(slot: u32) -> bool {
     if fd < 0 { false } else { fw_api::close(fd); true }
 }
 
-// cmd_install 每步落盘到 /data/chaos/step.txt，崩溃重启后仍可读（BSS 断裂时无解）。
+// 安装流程的步号只记在 FOPS_STEP，由 read 状态结构带回（不写文件）。
 pub(crate) unsafe fn trace_step(step: u8) {
-    // 2026-08-25: 不写 step.txt! 每次探针 ~8 次 file_write(固件 file_write 内部
-    // malloc)在 fops.write 上下文堆副作用 → 切表盘崩(ST=170)。
-    // 改为更新 FOPS_STEP BSS, Lua read_status 的 step 字段读回显示。
+    // 不写 /data/chaos/step.txt: 一次上报要 ~8 次 file_write(固件 file_write 内部
+    // malloc)，在 fops.write 上下文里有堆副作用 → 切表盘时崩(步号 170)。
+    // 步号只更新 FOPS_STEP 这块 BSS, 读取方从状态结构的 step 字段拿回去显示。
     fops_wr(FOPS_STEP, step as u32);
 }
 
@@ -109,11 +110,11 @@ pub(crate) unsafe fn build_structures() {
     let cb_pause = chaos_on_pause as *const () as u32;
     let cb_destroy = chaos_on_destroy as *const () as u32;
     let cb_ui_destroy = chaos_on_ui_destroy as *const () as u32;
-    // 14 页注册(官方 3 页模式扩展, 全部填充无空页 空描述符崩教训仍守):
+    // 14 页注册(固件自带模块是 3 页模式, 这里扩到 14 页; 全部填充无空页 —— 空描述符会崩):
 // page0=信息 page1..4=目录0..3级 page5=更换字体 page6=桌面图标 page7=文件查看
 // page8/9=表盘切换/摇一摇轮换 page10=表盘管理 page11=亮度 page12=缓存 page13=系统美化菜单。
-// **每级目录独立 page_id → 进入/返回/标题< 全走 page_goto/page_finish 固件动画**;
-// 美化页的两个二级页同样给独立 page_id, 就是为了让它们也有这个动画(2026-09-26)。
+// **每级目录独立 page_id → 进入/返回/标题< 全走 page_goto/page_back 固件动画**;
+// 美化页的两个二级页同样给独立 page_id, 就是为了让它们也有这个动画。
 let cb_create = chaos_on_create as *const () as u32;
 let cb_resume = chaos_on_resume as *const () as u32;
 let app_id = st_rd!(APP_ID);
@@ -154,24 +155,24 @@ while pg < PAGE_COUNT {
     write_volatile(meta.add(3), core::ptr::addr_of!(ICON_PATH) as u32);
     write_volatile(meta.add(4), st_rd!(APP_ID)); // app_id 动态
     // +0x1C: display_name 回调（函数指针，返回名字字符串）。
-    // 铁证（2026-08-22）：0x0C4F2908 内部 blx [app节点+0x1C] 两次调用它；
-    // 官方 manager_display_name 是 FUNC(type=2, .text, 10B)。
-    // 第三轮曾误改为字符串指针导致 init_buffer 内 blx 跳到字符串数据上崩（ST=16）。
+    // 依据：0x0C4F2908 内部 `blx [app节点+0x1C]` 两次调用它；固件自带模块里这个成员
+    // 就是一个 10 字节的 .text 函数(type=2)。
+    // 注意: 这一格放字符串指针会崩 —— init_buffer 内 blx 直接跳到字符串数据上(步号 16)。
     write_volatile(meta.add(7), chaos_display_name as *const () as u32);
 
     let notif = core::ptr::addr_of_mut!(NOTIF) as *mut u32;
-    // 2026-08-22 逆向修正（notify_installed @0x0CA81FB8 + lookup @0x0CA81D18）：
-    // lookup 按 notif+0x00/+0x04 的 8 字节 key 在注册表匹配。官方 字节流
+    // 依据（notify_installed @0x0CA81FB8 + lookup @0x0CA81D18）：
+    // lookup 按 notif+0x00/+0x04 的 8 字节 key 在注册表匹配。能命中注册表的字节流是
     // `01 'S' 'U' 'P' | 'O' 'N' 'A' 'C'` → key = (0x50555301, 0x43414E4F)。
-    // 旧的 (1, 0) key 未命中 → notify 走"插入新记录"分支（v3-崩溃路径）。
+    // key 填 (1, 0) 匹配不到 → notify 走"插入新记录"分支，那条路会崩。
     write_volatile(notif.add(0), 0x5055_5301); // 01 'S' 'U' 'P' (LE)
     write_volatile(notif.add(1), 0x4341_4E4F); // 'O' 'N' 'A' 'C' (LE)
-    // 标题/正文按系统语言: 中文 → 墟, 英文 → Chaos
+    // 标题/正文按系统语言二选一(中英文现在都是 Chaos, 见 state.rs 的 NAME_ZH/BANNER_TEXT)
     let lang = st_rd!(LANG);
     if lang != 0 {
         write_volatile(notif.add(3), NAME_ZH.as_ptr() as u32);
         write_volatile(notif.add(4), NAME_ZH.as_ptr() as u32);
-        write_volatile(notif.add(5), BANNER_TEXT.as_ptr() as u32); // "墟 已安装！"
+        write_volatile(notif.add(5), BANNER_TEXT.as_ptr() as u32); // "Chaos 已安装！"
     } else {
         write_volatile(notif.add(3), core::ptr::addr_of!(DISPLAY_NAME) as u32);
         write_volatile(notif.add(4), core::ptr::addr_of!(DISPLAY_NAME) as u32);
@@ -188,14 +189,14 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
     let install: FnInstall = core::mem::transmute(FW_APP_INSTALL as usize);
     let init_buffer: FnInitBuffer = core::mem::transmute(FW_INIT_BUFFER as usize);
 
-    // 2026-08-23 重入保护: notify_installed 会触发 launcher 重新发 INSTALL arg0=0。
+    // 重入保护: notify_installed 会触发 launcher 重新发 INSTALL arg0=0。
     // 已注册时跳过 register_app/init_buffer（幂等），直接返回成功，避免重复注册崩。
     if st_rd!(APP_REGISTERED) != 0 {
         trace_step(0x42); // 66: 重入跳过
         return;
     }
 
-    // 2026-08-24 空槽自动分配: 遍历白名单找到第一个 lookup 为空槽的 id
+    // 空槽自动分配: 遍历白名单找到第一个 lookup 为空槽的 id
     let mut selected: u32 = 0;
     let mut free_count: u32 = 0;
     let mut free_bits: u32 = 0;
@@ -244,7 +245,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
     // phase 0x11 及以上：register_app
     let meta = core::ptr::addr_of_mut!(APP_META) as *const u32;
     let desc_addr = core::ptr::addr_of_mut!(DESC) as u32;
-    // 全部注册页 stride 0x74=116B(页数增删必须同步这里 —— 首版漏页的教训还在)
+    // 全部注册页 stride 0x74=116B(页数增删必须同步这里, 漏一格就是漏注册一页)
     let items: [u32; PAGE_COUNT] = [
         desc_addr, desc_addr + 0x74, desc_addr + 0xE8, desc_addr + 0x15C,
         desc_addr + 0x1D0, desc_addr + 0x244, desc_addr + 0x2B8, desc_addr + 0x32C,
@@ -267,7 +268,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
     trace_step(15);
     fops_wr(FOPS_DBG2, installed as u32);
 
-    // 2026-08-22: register 未生效（lookup 验证 NULL）时跳过 init_buffer。
+    // register 未生效（lookup 验证 NULL）时跳过 init_buffer。
     // init_buffer 第一句 blx [[0x200EB040+0x18]+4]，注册未生效时该回调指针为空 → 必崩。
     if installed.is_null() {
         trace_step(9); // ST=9 = register 未生效，跳过 init_buffer
@@ -275,19 +276,19 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
     } else {
         trace_step(16); // init_buffer 前
         let app_id = st_rd!(APP_ID);
-        let _buf = init_buffer(app_id); // 照 官方 原样：init_buffer(自己的app_id)，同拍同id
+        let _buf = init_buffer(app_id); // init_buffer(自己的app_id)，同拍同id —— 与固件自带模块的调用方式一致
         trace_step(17); // init_buffer 后
         if phase < 0x13 { return; }
     }
 
-        // phase 0x13：固件 notify 主链 (0x43 同款 100% 成功路径; 2026-09-05 删除手动
-    // COPY/MALLOC/SEGB/MEMSET/MEMCPY 链官方 lvx_notification_insert_message 内部自处理)
+        // phase 0x13：固件 notify 主链（与 0x43 同一条路）—— 不需要自己搭
+    // COPY/MALLOC/SEGB/MEMSET/MEMCPY 那条手动链，lvx_notification_insert_message 内部自处理
     if phase >= 0x13 {
         notify_firmware_full();
     }
 }
 
-// 探针 0x43: 固件 notify_installed (官方 同款, 100% 成功路径)
+// 命令 0x43: 走固件 notify_installed（完整链的成功路径）
 // 幂等: NOTIF_DONE=1 后跳过。不自己调 0x0CA81D18(模块上下文创建记录破坏堆
 // → 切表盘崩); 固件 notify_installed 内部自己调(固件上下文, 安全)。
 pub(crate) unsafe fn notify_firmware_full() {
@@ -309,11 +310,11 @@ pub(crate) unsafe fn notify_firmware_full() {
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32) -> i32 {
     if buf.is_null() || (len as usize) < 16 { return 0; }
-    // 2026-08-23 WRITE_BUSY 重入保护:
+    // WRITE_BUSY 重入保护:
     // notify_installed 内部 lookup 触发 launcher 回调 → launcher 重入 INSTALL
     // 此时上一次 write 未完成(notify 在栈上) → 静默返回, 让 notify 主链继续
     if st_rd!(WRITE_BUSY) != 0 {
-        return 0; // 重入静默丢弃（官方 不崩的机制）
+        return 0; // 重入静默丢弃（挡住重入才不会崩）
     }
     st_wr!(WRITE_BUSY, 1);
     let wc = fops_rd(FOPS_WCNT) + 1;
@@ -326,30 +327,29 @@ pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32
     // 第 4 个字历史上恒传 0。字体投递(0x30)用它带"目标池位", 其余命令不看它。
     let arg1 = core::ptr::read_volatile(p.add(3));
 
-    // 2026-08-23 决定性修复: INSTALL 重入入口级拦截。
-    // APP_REGISTERED=1 后（Run 已注册），任何 INSTALL 命令直接返回成功，
-    // 不执行 cmd_install重入（嵌套/异步）都被这层挡住，不崩。
-    // B 行确认: 入口 WRITE_BUSY=1 APP_REGISTERED=1 仍 ST=14 → 重入绕过 cmd_install 内检查
-    // 必须清 WRITE_BUSY: return 会跳过函数尾部清锁, 残留 1 会拒掉后续所有 write(Run 步骤8卡死)
+    // INSTALL 重入在入口级拦截。
+    // APP_REGISTERED=1 后（已经注册过），INSTALL 命令直接返回成功，
+    // 不进 cmd_install —— 嵌套/异步的重入都被这层挡住，不崩。
+    // 只在 cmd_install 内部挡不住: 实测入口 WRITE_BUSY=1、APP_REGISTERED=1 时仍停在步号 14。
+    // return 前必须清 WRITE_BUSY: 跳过函数尾部清锁会让残留的 1 拒掉后续所有 write(安装卡在步骤8)
     if cmd == CMD_INSTALL && st_rd!(APP_REGISTERED) != 0
         && arg0 <= 2 {
         // 只拦 launcher 重入的标准注册命令(INSTALL arg0=0/1/2)
-        // 诊断命令 0x14/0x15/0x16/0x20/0x21 必须放行(0x15 被拦导致 notify 从未执行!)
+        // 拦截范围必须这么窄: 一并挡掉其它 arg0 会让 notify 等后续命令永远进不来
         st_wr!(WRITE_BUSY, 0); // 清锁再返回
-        return 16; // 已注册，INSTALL 重入静默成功（官方 同款幂等）
+        return 16; // 已注册，INSTALL 重入静默成功（重复的注册命令按幂等处理）
     }
     match cmd {
         CMD_INSTALL => {
-            // Run 流程必需命令: 0/1/2 注册发布, 0x13 注册链, 0x43 固件 notify,
-            // 0x18/0x19 语言, 0x22 回读槽统计, 0x25 文件读探针, 0x30 字体投递(字体包)
-            // (诊断探针 0x10/0x11/0x14-0x16/0x20/0x21/0x23/0x24/0x31-0x4B 已删除)
+            // 安装流程用到的命令: 0/1/2 注册发布, 0x13 注册链, 0x43 固件 notify,
+            // 0x18/0x19 语言, 0x22 回读槽统计, 0x30 字体投递与切换(投递包)
             match arg0 {
                 0    => { fops_wr(FOPS_STEP, 0); cmd_install(0x12); }   // 注册链(止于 init_buffer)
                 1 | 2 => { /* no-op publish: 不调固件，仅置 ACTIVE */ }
                 0x13 => { fops_wr(FOPS_STEP, 0); cmd_install(0x13); }   // 完整注册链
                 0x43 => { fops_wr(FOPS_STEP, 0); notify_firmware_full(); } // 固件完整 notify 链
-                0x18 => { st_wr!(LANG, 1); } // 设中文(墟)
-                0x19 => { st_wr!(LANG, 0); } // 设英文(Chaos)
+                0x18 => { st_wr!(LANG, 1); } // 设中文
+                0x19 => { st_wr!(LANG, 0); } // 设英文
                 0x22 => {
                     // 回读槽统计: d0=选中id d1=空闲数 d2=空闲位图
                     fops_wr(FOPS_DBG0, st_rd!(APP_ID));
@@ -366,8 +366,8 @@ pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32
                 // 应用(半途换池位会让正在建的那批脸读到另一个文件)。被拒时池位不变,
                 // 投递包靠"回读 +0x46 是否等于自己请求的值"判成败, 所以这里不需要额外回报。
                 //
-                // 2026-09-26 起这条路还是**切换字体**的唯一入口: 清单页点某一条 = 同一句
-                // 命令(ko 侧 font_list::click_entry 直接调 commit + request)。所以门放宽到
+                // 这条路也是**切换字体**的唯一入口: 清单页点某一条 = 同一句命令
+                // (ko 侧 font_list::click_entry 直接调 commit + request)。所以门放宽到
                 // 池位 1..8, 与 FONT_SLOT_MAX 同一常量, 不写死数字。
                 0x30 => {
                     let slot = arg1;

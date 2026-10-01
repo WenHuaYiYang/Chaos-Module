@@ -34,10 +34,10 @@ pub(crate) unsafe fn path_basename(src: *const u8, dst: *mut u8, cap: usize) -> 
     o
 }
 
-// 查看页读文件: VIEW_PATH + VIEW_BLK 块(顺序读弃 skip; 官方 sup_read_exact 512B 循环)
+// 查看页读文件: 读 VIEW_PATH 的第 VIEW_BLK 块; 跳块靠顺序读丢弃, 每轮 512B 直到 2047 上限
 pub(crate) unsafe fn file_read_view() -> i32 {
     let path = core::ptr::addr_of!(VIEW_PATH) as *const u8;
-    let fd = file_open_ro(path);            // O_RDONLY=1(官方值 定案)
+    let fd = file_open_ro(path);            // 内核层 O_RDONLY=1, 不是 POSIX 的 0
     if fd < 0 {
         st_wr!(FILE_VIEW_N, fd);
         return -1;
@@ -71,7 +71,7 @@ pub(crate) unsafe fn file_read_view() -> i32 {
     0
 }
 
-// 目录遍历(真机验证): opendir → readdir循环(过滤./..) → closedir; 目录排前插入排序
+// 目录遍历(实测): opendir → readdir 循环(过滤 ./..) → closedir; 目录排前插入排序
 pub(crate) unsafe fn load_dir() {
     st_wr!(DIR_COUNT, 0);
     st_wr!(DIR_ERR, 0);
@@ -142,7 +142,8 @@ pub(crate) unsafe fn load_dir() {
     st_wr!(DIR_COUNT, cnt as u32);
 }
 
-// 目录页行文本: 行0-7=窗内条目("[D]/[F] 名"), 行8="< More >", 行9="< Up >"/"< Back >"
+// 目录页行文本: 行0-7=窗内条目(目录名后加 '/', 非普通文件加 '*'), 行8="更多",
+// 行9="上级"/"返回", 行10="缓存清理"(仅根目录页建行)
 pub(crate) unsafe fn refresh_dir_lines() {
     let base = core::ptr::addr_of_mut!(FILE_LINES) as *mut u8;
     let mut i = 0usize; while i < 11 * 88 { write_volatile(base.add(i), 0); i += 1; }
@@ -169,7 +170,7 @@ pub(crate) unsafe fn refresh_dir_lines() {
         if e < cnt {
             let dt = read_volatile(types.add(e));
             let src = names.add(e * 64);
-            // 不再用 [D]/[F] 前缀; 目录靠名字后的 '/' 区分
+            // 目录靠名字后的 '/' 区分, 不加 [D]/[F] 前缀
             // 设备/管道/套接字等非普通文件标 '*' —— 点进去不读内容(驱动 read 会阻塞)
             let mut x = W::new(dp, 88);
             let mut k = 0usize;
@@ -189,7 +190,7 @@ pub(crate) unsafe fn refresh_dir_lines() {
     let mut x = W::new(base.add(8 * 88), 88);
     if (win + 1) * 8 < cnt { x.s("更多".as_bytes()); }
     x.end();
-    // 目录页: 返回/上级 在 slot9(原布局)
+    // 目录页: 返回/上级 在 slot9
     let mut x = W::new(base.add(9 * 88), 88);
     x.s(if st_rd!(DIR_DEPTH) > 0 { "上级".as_bytes() } else { "返回".as_bytes() });
     x.end();
@@ -201,10 +202,10 @@ pub(crate) unsafe fn refresh_dir_lines() {
 
 // ===== 缓存清理 =====
 //
-// 范围定案(固件字符串实证): 只清 /data/cache 与 /data/quickapp/cache 两个目录下的
+// 清理范围(固件字符串核对): 只清 /data/cache 与 /data/quickapp/cache 两个目录下的
 // 普通文件(含一层子目录)。**不碰 /data/fitness/cache** —— 那里的 *.db 是等待同步到
 // 手机的健康数据缓存, 删了会丢记录。
-// 删除走 fw_api::fs_remove(libc remove, 0x0C1EABE0, 全盘 182 处调用的标准入口)。
+// 删除走 fw_api::fs_remove(libc remove, 0x0C1EABE0, 固件里广泛调用的标准入口)。
 
 const CACHE_DIR1: &[u8] = b"/data/cache\0";
 const CACHE_DIR2: &[u8] = b"/data/quickapp/cache\0";

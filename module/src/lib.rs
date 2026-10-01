@@ -1,4 +1,4 @@
-//! chaos_mod 墟 Chaos 示例模块 v0
+//! chaos_mod 最小示例模块: 只验"加载链 + exec 链"通不通
 //! 被 supervisor INSTALL(槽) 经 0x0C1EE091 加载后:
 //! 1. .init_array 自动跑 chaos_mod_ctor: 写标记 (验证加载链)
 //! 2. Lua exec base+1 → module_main: 写标记 + 返回 (验证 exec 链)
@@ -26,7 +26,7 @@ pub extern "C" fn module_main() -> i32 {
     0
 }
 
-// .init_array: 加载即执行 (modlib insmod 语义, 官方 ctor 已验证)
+// .init_array: 加载即执行 (modlib insmod 语义, 已验证)
 #[used]
 #[link_section = ".init_array"]
 static MOD_CTOR: unsafe extern "C" fn() -> i32 = chaos_mod_ctor;

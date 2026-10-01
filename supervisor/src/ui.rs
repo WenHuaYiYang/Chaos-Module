@@ -3,11 +3,11 @@
 use crate::*;
 use crate::mem::{rd16, rd32};
 
-// ===== content 容器的固有几何(红线: root 永不自建, 控件一律挂 content) =====
+// ===== content 容器的固有几何(约束: root 永不自建, 控件一律挂 content) =====
 // 336x424 摆在 y=56 起的地方, 底部再留 32 不压手势区。56 不是随手取的:
 // 它就是 lvx_page_title 的类固有高度(0x38 = 56, 见 fw_api::page 的注释),
-// 标题栏与内容区首尾相接、**不重叠** —— 所以"新 content 盖住标题栏"这种解释从来
-// 不成立(§45.23 定案时按这条几何排除过一类嫌疑)。
+// 标题栏与内容区首尾相接、**不重叠** —— "新 content 盖住标题栏"这类解释
+// 按这条几何就能直接排除。
 const CONTENT_W: i32 = 336;
 const CONTENT_H: i32 = 424;
 const CONTENT_TOP: i32 = 56;
@@ -21,14 +21,14 @@ pub(crate) unsafe extern "C" fn chaos_on_signal() -> i32 {
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_on_create(_page: u32, _p1: u32, _p2: u32) -> i32 {
     // 多页架构: 固件每页 on_create(page_desc, root, start_data) 传各自 root
-    // page_id = 描述符 +0x14 (u16, build_structures 已写 app_id<<16|0/1/2)
-    // 存该页 root/start_data, PAGE_BUILT=0 → on_resume 在新 root 上重建对象树
+    // page_id = 描述符 +0x14 (u16, 注册时 ipc::build_structures 写成 app_id<<16|页号)
+    // 存该页 root/start_data, built=0 → on_resume 在新 root 上重建对象树
     if _page == 0 { return 0; }
     let pid = rd16((_page + 0x14) as *const u16) as usize;
     if pid <= MAX_PID {
         // 旧对象树的句柄在这里统一作废, 且**只丢句柄不删对象**: 固件把新页交给我们时,
-        // 上一轮的对象树已经随旧页销毁了。反过来不能在 on_destroy 里清 —— 息屏时固件也会
-        // 回调 on_destroy, 但对象树和页面都还在, 清了会让信息页的实时刷新永久停摆。
+        // 上一个实例的对象树已经随旧页销毁了。反过来不能在 on_destroy 里清 —— 息屏时固件
+        // 也会回调 on_destroy, 但对象树和页面都还在, 清了会让信息页的实时刷新永久停摆。
         PAGES[pid].content = 0;
         PAGES[pid].label = 0;
         PAGES[pid].title = 0;
@@ -40,12 +40,12 @@ pub(crate) unsafe extern "C" fn chaos_on_create(_page: u32, _p1: u32, _p2: u32) 
         PAGES[pid].desc = _page;
         PAGES[pid].root = _p1;
         PAGES[pid].built = 0;
-        // 页5/页6 的确认框挂在**页根**上(§45.20 / §46), 新实例 = 旧根连同旧框已被固件销毁:
-        // 框句柄状态必须在这里归零, 否则后面的删除会打到复用同一块内存的新对象上。
+        // 页5/页6 的确认框挂在**页根**上(状态机见 confirm_pop.rs), 新实例 = 旧根连同旧框已被
+        // 固件销毁: 框句柄状态必须在这里归零, 否则后面的删除会打到复用同一块内存的新对象上。
         crate::font_list::popup_forget(pid);
         crate::icon_apply::popup_forget(pid);
         st_wr!(HEAL_TRYS, 0);
-    st_wr!(APP_FG, 1);   // 诊断: 我们的应用在前台
+    st_wr!(APP_FG, 1);   // 我们的应用在前台(逐对象补写那类跑批按这道门过滤)
         if pid == 7 {
             // 查看页每次进入 = 新文件: 块归零 + 强制重读(VIEW_PATH 已由目录页写好)
             st_wr!(VIEW_BLK, 0);
@@ -61,7 +61,7 @@ pub(crate) unsafe fn page_rows_ptr(pid: usize) -> *mut u32 {
 }
 
 // 页面对象树是否还活着: 读固件描述符 +0x30 的 root_object。
-// 官方类型文档写明 destroy wrapper 递归删除 root 后会把它清零, 所以:
+// 静态核对: 固件的 destroy 包装递归删除 root 之后会把这一项清零, 所以
 //   非 0 = 对象树仍在, 可以安全写行/内容; 0 = 已经删干净, 什么都别碰(否则 UAF 崩)。
 // 这是固件自己维护的标志, 比我们缓存的句柄可靠 —— 退出应用时只有它会立刻反映出来。
 pub(crate) unsafe fn page_is_live(pid: usize) -> bool {
@@ -96,7 +96,7 @@ pub(crate) unsafe fn bright_fill_status() {
     write_volatile(buf.add(o), 0u8);
 }
 
-// 行显隐(通过 trait 分发, 不再 if-else)
+// 行显隐(通过 trait 分发, 不写 if-else 长链)
 pub(crate) unsafe fn apply_row_visibility(pid: usize) {
     if pid <= MAX_PID {
         PAGE_TABLE[pid].apply_visibility();
@@ -104,14 +104,15 @@ pub(crate) unsafe fn apply_row_visibility(pid: usize) {
 }
 
 // 登记"重建某页"请求: 点击回调里不能直接销毁自身对象树(事件派发中 → use-after-free),
-// 交给 50ms 的 lv_timer(UI线程, 不在事件派发上下文)真正重建
+// 交给常驻 lv_timer(UI线程, 不在事件派发上下文)真正重建
 pub(crate) unsafe fn render_req(pid: usize) {
     st_wr!(RENDER_REQ, pid as u32);
 }
 
-// ===== 动态建行(逆向结论: 系统无批量建行 API, 由调用方按需循环建) =====
+// ===== 动态建行(固件核对: 无批量建行 API, 由调用方按需循环建) =====
 // rows_sync: 只为 slots 里的槽建行控件(未列出的槽不建=不占位); 已建的按 slots 顺序重排对齐链
-// 条目行(pid8 的 slot<8)= 名称+ID 双排 + 复选框(trailing=2); 导航行 = 单排无复选框
+// 表盘页(8/9)的 slot0 = 名称行 + switch(trailing=1), slot1..8 = 名称+ID 双排 + 复选框(trailing=2);
+// 其余条目与导航行 = 单排无 trailing。行右端部件由 row_create 第 4 参选, 见 fw_api::trailing。
 pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
     let c = PAGES[pid].content;
     let t = PAGES[pid].title;
@@ -144,7 +145,8 @@ pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
             if row != 0 {
                 write_volatile(rows.add(slot), row);
                 if wf_page && slot == 0 {
-                    // switch 行: 事件挂 trailing、码 0(=LV_EVENT_ALL), 官方 ROW_SWITCH 做法
+                    // switch 行: 事件挂在 trailing 对象上、事件码 0(=LV_EVENT_ALL),
+                    // 取不到 trailing 时退回挂整行(事件码 7=CLICKED)
                     let gtr: unsafe extern "C" fn(u32) -> u32 = fw_api::row_trailing;
                     let tobj = gtr(row);
                     if tobj != 0 { ea(tobj, row_ev_fn(slot), 0, 0); }
@@ -154,12 +156,12 @@ pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
                 }
             }
         }
-        // §43: 此处不再调 row_font_fix —— 框架路径服务目录/表盘列表,
-        // 28px 统一写回把这些页拉成大字(真机判读)。标签自套收窄到主页, 见 page.rs。
+        // 注意: 这里不做统一的字号写回 —— 本路径服务目录页与表盘列表,
+        // 按 28px 统一写回会把这两类列表拉成大字(实测)。标签字号各自收窄, 见 page.rs。
         if row != 0 { at(row, prev, 14, 0, 8); prev = row; }
         k += 1;
     }
-    // 官方 target_ui_apply 末尾同款: 未列入 slots 的已建行全部隐藏
+    // 与固件自带页面的做法一致: 未列入 slots 的已建行全部隐藏
     // 关键是它们**不在对齐链里**, 所以不会把后面的行顶下去留出空白
     let mut j = 0usize;
     while j < MAX_ROWS_PER_PAGE {
@@ -184,14 +186,15 @@ pub(crate) unsafe fn rows_layout(pid: usize) {
         (st_rd!(DIR_COUNT) as usize,
          st_rd!(DIR_WIN) as usize)
     };
-    // 只算「本窗内」的条目数 原来按全量 cnt 算, 第二屏会多建空行
+    // 只算「本窗内」的条目数: 若按全量 cnt 算, 第二屏会多建空行,
     // 并把"返回"行链到隐藏行下面 → 中间留一大片空白
     let win_base = win * 8;
     let ent = if cnt > win_base {
         let left = cnt - win_base;
         if left < 8 { left } else { 8 }
     } else { 0 };
-    // 槽位上限: 8 条目 + 更多 + switch + 返回 = 11 → 原来 [0;10] 会栈越界写(表盘页卡死根因)
+    // 槽位上限: 8 条目 + 更多 + switch + 返回 = 11 → 数组按 12 留; 少一格就是栈越界写,
+    // 越界落在相邻局部量上, 表现为表盘页卡死
     let mut slots = [0usize; 12];
     let mut n = 0usize;
     let mut i = 0usize;
@@ -203,7 +206,7 @@ pub(crate) unsafe fn rows_layout(pid: usize) {
         if (win + 1) * 8 < cnt { slots[n] = 9; n += 1; }
         slots[n] = 10; n += 1;
     } else {
-        // 目录页(1-6)保持原布局: 0..7=条目, 8=更多, 9=返回, 10=缓存清理入口(仅根目录 pid1)
+        // 目录页: 0..7=条目, 8=更多, 9=返回/上级, 10=缓存清理入口(仅根目录页 pid1 建这一行)
         while i < ent { slots[n] = i; n += 1; i += 1; }
         if ent == 0 { slots[n] = 0; n += 1; }
         if (win + 1) * 8 < cnt { slots[n] = 8; n += 1; }
@@ -213,25 +216,25 @@ pub(crate) unsafe fn rows_layout(pid: usize) {
     rows_sync(pid, &slots[..n]);
 }
 
-// 统一渲染(官方 target_ui_apply 等价): content三件套 → title → 控件挂content; build一次+刷新
+// 统一渲染: 需要重建时先删旧 content/title → content 三件套 → title → 页面专属控件挂 content
 pub(crate) unsafe fn render_page(pid: usize) -> i32 {
     if pid > MAX_PID { return -1; }
     let root = PAGES[pid].root;
     if root == 0 { return -1; }
     // 重建式渲染: 先销毁上次的 content(行/label 是其子对象, 一并销毁) → 再走与首次
     // 完全相同的 build 路径。刷新旧对象会让 align_to 读到脏几何(错位/空白/重叠的根源)。
-    // 标题栏: 2026-09-30 起**跟着一起重做**(原来"只建一次并保留"会把上一代的 local 脸
-    // 留在活对象上, 切完字体整条标题栏不画且救不回来, 见下面 §45.23 的说明)。
+    // 标题栏**跟着一起重做**(只建一次并保留会把上一代的 local 脸留在活对象上,
+    // 切完字体整条标题栏不画且救不回来, 原因见下面删除标题那段)。
     if PAGES[pid].built != 0 {
         let oc = PAGES[pid].content;
         if oc != 0 { fw_api::obj_delete(oc); }
-        // §45.23: 标题栏跟着一起重做(旧对象删掉, 后面按首次建页那条路重建)。
-        // 真机(2026-09-30): 页5 切一次字体后**整条标题栏不再画**, 重新应用/上下滚动都
+        // 标题栏跟着一起重做(旧对象删掉, 后面按首次建页那条路重建)。
+        // 实测: 页5 切一次字体后**整条标题栏不再画**, 重新应用/上下滚动都
         // 救不回来, 只有退出重进才好。原因是标题标签上那份"固件建行时直烘的
         // local text_font"指着上一代**已被回收的脸**:
         //   * 样式级写回(font_apply)改的是共享样式表, 盖不住对象身上的 local 覆盖;
         //   * 唯一能改写 local 覆盖的逐对象补写, 被 font_apply 的 `APP_FG == 0` 门锁住
-        //     —— 我们的页在前台时一拍都不跑(定案 66/67 的崩溃轴就是"边重建边写对象")。
+        //     —— 我们的页在前台时一拍都不跑(边重建边写对象就是那条崩溃轴)。
         // 而"退出重进"做的恰好就是"删掉旧标题 + 重新建一个", 这里把它自动化。
         // 顺序仍然是 content 先建、title 后建 => 标题照旧压在 content 之上(frontmost)。
         let ot = PAGES[pid].title;
@@ -247,7 +250,7 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
         PAGES[pid].built = 0;
     }
     if PAGES[pid].built == 0 {
-        // content 三件套(官方 L784-795)
+        // content 三件套: 创建 → 定尺寸 → 顶部对齐 → 底部留白
         let cc: unsafe extern "C" fn(u32) -> u32 = fw_api::content_create;
         let c = cc(root);
         if c == 0 { return -1; }
@@ -258,7 +261,7 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
         let pb: unsafe extern "C" fn(u32, i32, u32) -> u32 = fw_api::content_pad_bottom;
         pb(c, CONTENT_PAD_BOTTOM, 0);
         PAGES[pid].content = c;
-        // title(content 后创建→frontmost; 页1-7 mode=1+返回键=动画返回上级, 官方 L847-864)
+        // title(content 后创建→frontmost; mode 由各页 title_mode() 给出, 1=带返回键 → 动画返回上级)
         let tc: unsafe extern "C" fn(u32, *const u8, u32, u32, u32) -> u32 =
             fw_api::page_title_create;
         // 标题 = 进入本页时点的那个行控件名; 目录页/查看页是动态的, 写进本页的标题缓冲。
@@ -268,11 +271,11 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
         let tb = (core::ptr::addr_of_mut!(TITLE_TXT) as *mut u8).add(pid * 48);
         let page_ref = PAGE_TABLE[pid];
         // 所有页(含页0)一律走 fill_title 写进本页标题缓冲。
-        // 根因: 页0 曾在这被特判成硬编码 "Chaos"，页面自己的 fill_title 根本不被调用。
+        // 根因: 在这一行特判页0 直接给硬编码标题, 页面自己的 fill_title 就根本不被调用。
         page_ref.fill_title(tb);
         let tname: *const u8 = tb;
         let mode: u32 = page_ref.title_mode();
-        // 标题栏: 上面 §45.23 的重建分支已经把旧对象删掉并把句柄归零, 所以每次重建都会
+        // 标题栏: 上面重建分支已经把旧对象删掉并把句柄归零, 所以每次重建都会
         // 重走一遍创建(与首次建页同一条路、同一个顺序: content 之后建标题)。
         let mut t = PAGES[pid].title;
         if t == 0 {
@@ -282,7 +285,7 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
             sh(t, 0);
             PAGES[pid].title = t;
         }
-        // 页面专属控件(通过 trait 分发, 不再 if-else)
+        // 页面专属控件(通过 trait 分发, 不写 if-else 长链)
         let ctx = PageCtx {
             content: PAGES[pid].content,
             title: t,
@@ -295,18 +298,18 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
     0
 }
 
-// 导航(官方 target_route: page_goto 压栈 / page_finish 出栈, 固件动画)
+// 导航: page_goto 压栈 / page_finish 出栈, 转场动画由固件提供
 pub(crate) unsafe fn nav_goto(target_pid: u32, start_data: u32) {
     let key = (st_rd!(APP_ID) << 16) | target_pid;
     fw_api::page_goto(key, start_data);
 }
 
 pub(crate) unsafe fn nav_back() {
-    // 系统动画返回(固件默认 title back 同款); page_finish(desc) 无动画已被真机证伪
+    // 系统动画返回(与固件默认 title back 同款); page_finish(desc) 无动画, 实测已证伪
     fw_api::page_back();
 }
 
-// 行事件分发(通过 trait 查表, 不再 if-else)
+// 行事件分发(通过 trait 查表, 不写 if-else 长链)
 pub(crate) unsafe fn chaos_row_dispatch(idx: usize, event: u32) -> u32 {
     if event == 0 { return 0; }
     let pid = st_rd!(FG_PAGE) as usize;
@@ -337,22 +340,22 @@ pub(crate) unsafe fn row_ev_fn(i: usize) -> u32 {
         3 => cb_u32(chaos_row_ev3), 4 => cb_u32(chaos_row_ev4), 5 => cb_u32(chaos_row_ev5),
         6 => cb_u32(chaos_row_ev6), 7 => cb_u32(chaos_row_ev7), 8 => cb_u32(chaos_row_ev8),
         9 => cb_u32(chaos_row_ev9),
-        // 原来 `_ => ev9` 把 slot10/11 也映射成 ev9 → "返回"被当成"更多"派发!
+        // 注意: 每个槽位都要有自己的回调; 用 catch-all 兜住 slot10/11 会把"返回"当"更多"派发
         10 => cb_u32(chaos_row_ev10),
         _ => cb_u32(chaos_row_ev11),
     }
 }
 
-// ===== 页面生命周期(官方 manager_page_on_* 等价; 描述符 +0x14 = page_id) =====
+// ===== 页面生命周期(对应固件的 manager_page_on_* 一组回调; 描述符 +0x14 = page_id) =====
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     st_wr!(HEAL_TRYS, 0);
-    // 这里不再做「定时器存活检测」。曾经的写法是判定 timer 已死就把 SHAKE_TIMER 清零、
-    // 再让 shake_arm 重建 —— 但**只清句柄不等于删除对象**：旧 timer 仍挂在 LVGL 定时器
-    // 链表里继续跑，于是每命中一次就多一个并发定时器；而 STAT_TICK 是每拍 tick 递增一次，
+    // 这里不做「定时器存活检测」: 判定 timer 已死就把 SHAKE_TIMER 清零、再让 shake_arm
+    // 重建 —— 但**只清句柄不等于删除对象**: 旧 timer 仍挂在 LVGL 定时器链表里继续跑,
+    // 于是每命中一次就多一个并发定时器; 而 STAT_TICK 是每拍 tick 递增一次,
     // 定时器变成 N 个 -> STAT_TICK 快 N 倍 -> 信息页的 % 10 刷新门槛被命中 N 倍
-    // => 表现就是「刷新越来越快」（进查看页/多次 resume 后尤其明显，用户实测）。
-    // 结论：shake_arm 全生命周期只建一次；要「先删后建」必须先拿到并验证 lv_timer_delete。
+    // => 表现就是「刷新越来越快」(进查看页/多次 resume 后尤其明显, 实测)。
+    // 结论: shake_arm 全生命周期只建一次; 要「先删后建」必须先拿到并验证 lv_timer_delete。
     // 描述符可能不是本页的(唤醒时固件换了编码) → 解析不出就退回当前前台页, 保证仍能渲染
     let mut pid = if page == 0 { FG_PAGE as usize }
                   else { rd16((page + 0x14) as *const u16) as usize };
@@ -362,7 +365,7 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     shake_arm();   // 首次进入(UI线程)订阅摇一摇+建timer, 幂等
     if pid >= 1 && pid <= 4 {
         // 目录页: depth=pid-1, 恢复该级窗位, 重新加载目录(数据永远新鲜)。
-        // 2026-09-26: 目录页从 6 级收到 4 级(腾两个 page_id 给美化二级页), 上界跟着改
+        // 目录页对应 pid 1-4: 更深的层级没有分配 page_id, 这里的上界跟着那条分配走
         st_wr!(DIR_DEPTH, (pid - 1) as u32);
         let w = read_volatile((core::ptr::addr_of!(DIR_WIN_SAVE) as *const u32).add(pid - 1));
         st_wr!(DIR_WIN, w);
@@ -394,14 +397,14 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_on_pause() -> i32 {
     st_wr!(APP_FG, 0);
-    // 息屏/退后台: 不做任何事。曾经在这里置旗标让 on_resume 重建 lv_timer, 但真机实测
+    // 息屏/退后台: 不做任何事。在这里置旗标让 on_resume 重建 lv_timer 是不行的 —— 实测
     // 定时器在息屏期间存活, 重建只会多出一个并发实例(见 watchface.rs shake_arm 注释)
     0
 }
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_on_destroy(_page: u32) -> i32 {
-    // 这里**不清任何句柄**。真机实测: 息屏时固件也会回调 on_destroy, 而页面对象树并没有销毁
+    // 这里**不清任何句柄**。实测: 息屏时固件也会回调 on_destroy, 而页面对象树并没有销毁
     // (唤醒后行控件照样能点、内容照样显示 —— 事件回调就挂在我们建的行对象上)。
     // 一旦在这里清零 built/root, 信息页的刷新会永久停摆, 而点击却正常(点击不看这些句柄)。
     // 句柄作废统一放到 on_create: 那时固件给的是新页, 旧对象树确实已经销毁。
@@ -410,9 +413,9 @@ pub(crate) unsafe extern "C" fn chaos_on_destroy(_page: u32) -> i32 {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_on_ui_destroy(page: u32) -> i32 {
-    // 固件递归删除 root_object **之前**回调这里(官方类型文档: "optional callback before
-    // recursive deletion of root_object")。把该页 LVGL 句柄全部作废 —— 只丢句柄不删对象,
-    // 因为固件马上就要把整棵树删掉。
+    // 固件递归删除 root_object **之前**回调这里(静态核对固件页面类型说明: 这是删除前的
+    // 可选回调)。把该页 LVGL 句柄全部作废 —— 只丢句柄不删对象, 因为固件马上就要把
+    // 整棵树删掉。
     // 这一步是"退出应用不崩"的关键: 定时器比页面活得久, 句柄不清零它就会往已释放的对象上写。
     if page == 0 { return 0; }
     let pid = rd16((page + 0x14) as *const u16) as usize;
@@ -430,7 +433,7 @@ pub(crate) unsafe extern "C" fn chaos_on_ui_destroy(page: u32) -> i32 {
 }
 
 pub(crate) unsafe extern "C" fn chaos_display_name() -> *const u8 {
-    // 应用名中英文统一为 Chaos(2026-09-26 用户要求把"墟"全部换掉, 包括应用名)。
+    // 应用名中英文统一为 Chaos。
     // 两条分支都返回 "Chaos"; 保留分支结构是因为 LANG 还被别的文案用着。
     if st_rd!(LANG) != 0 {
         NAME_ZH.as_ptr()

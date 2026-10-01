@@ -1,18 +1,18 @@
 // 字体清单层 —— "更换字体"页的数据面: 有哪些字体可选 / 点一下切换 / 两步删除。
 //
-// 为什么要有这一层(2026-09-26 用户新需求):
-//   原来"文字与字体"页只有两个按钮(重新应用文楷 / 再补写一遍), 用户要的是**像"桌面图标切换"
-//   那样的复选框列表**: 想用哪个字体就点哪个。于是:
-//     1) 池子从 4 扩到 8(见 font_apply::FONT_PATHS), 一个字体永远占同一个槽位, 不再轮转;
+// 为什么要有这一层:
+//   这一层之前, 字体页只有两个按钮(重新应用字体 / 补写一遍), 要的是**和"桌面图标切换"
+//   一样的复选框列表**: 想用哪个字体就点哪个。于是:
+//     1) 池位共 8 个(见 font_apply::FONT_PATHS), 一个字体永远占同一个槽位, 不轮转;
 //     2) 槽位归属由 /data/chaos/font/index.txt 这份**定长清单**决定 —— 格式与图标清单
 //        (`/data/chaos/icons/index.txt`)**逐字节同一套**: 恒 128 字节 = 8 行 x 16 字节,
 //        行 = `[2 位槽号][空格][12 字节短名][换行]`, 空槽 = 16 个空格。两处代码各自写一遍
-//        (刻意不抽公共模块: 图标那条链已在真机上跑通, 不去动它), 离线冒烟里有跨文件断言守着。
+//        (刻意不抽公共模块: 图标那条链已经跑通, 不去动它), 两侧的常量与行格式必须逐条对上。
 //     3) 切换 = font_apply::commit(n) + font_apply::request() —— 这两句正是 0x30 门里
-//        一直在做的事(真机验证过), 所以切换这条路的机制风险最低。
+//        一直在做的事(已验证), 所以切换这条路的机制风险最低。
 //
-// 清单是唯一来源, **绝不遍历目录**(真机踩过 procfs 遍历死锁: 表盘 Lua 回调里走目录必死)。
-// 清单文件本身是普通文件(不是设备节点), UI 线程读它不会阻塞 —— 陷阱 8 只针对设备节点。
+// 清单是唯一来源, **绝不遍历目录**(procfs 目录遍历在表盘 Lua 回调里必死锁)。
+// 清单文件本身是普通文件(不是设备节点), UI 线程读它不会阻塞 —— 会阻塞到看门狗复位的是设备节点。
 //
 // 删除的两条红线(与图标那边同理):
 //   1) 绝不删当前在用的那一份 —— 固件建出的 face 会按需回读文件。清单页上"点已选中的条目"
@@ -33,7 +33,7 @@ const FONT_DIR: &[u8] = b"/data/chaos/font";
 const FONT_INDEX: &[u8] = b"/data/chaos/font/index.txt\0";
 /// 清单一行的字节数(2 位槽号 + 空格 + 12 字节短名 + 换行)
 const FL_LINE: usize = 16;
-/// 清单最多几个字体 = 池位上限(font_apply::FONT_SLOT_MAX), 两边必须一致, 离线冒烟核对
+/// 清单最多几个字体 = 池位上限(font_apply::FONT_SLOT_MAX), 两边必须一致
 const FL_MAX: usize = 8;
 /// 清单文件恒长(128 字节)
 const FL_INDEX_SIZE: usize = FL_LINE * FL_MAX;
@@ -46,7 +46,7 @@ pub(crate) const FONT_PID: u32 = 5;
 
 /// 槽号(1..8), 与 index.txt 每行前两位十进制一致
 static mut FL_ID: [u32; FL_MAX] = [0; FL_MAX];
-/// 短名(UTF-8, 最多 12 字节 + NUL)。**允许非 ASCII** —— 用户要的是中文名("文楷")。
+/// 短名(UTF-8, 最多 12 字节 + NUL)。**允许非 ASCII** —— 短名要能写中文(如"文楷")。
 /// 图标那条线是纯 ASCII, 这里是唯一放宽的地方: 名字门只挡控制字符(< 0x20 与 0x7F)。
 static mut FL_NAMES: [[u8; FL_NAME_CAP]; FL_MAX] = [[0; FL_NAME_CAP]; FL_MAX];
 /// 清单里有几个字体
@@ -66,10 +66,10 @@ static mut FL_DEL: u32 = 0;         // 待删除的槽号, 0 = 无
 static mut FL_DEL_ST: u32 = 0;      // 0=空闲 1=改清单 2=删文件
 static mut FL_DEL_K: u32 = 0;       // 删除进度(0 = 还没删, 1 = 文件已删)
 // ===== 两步删除的"确认态" + 第三击的真系统确认框 =====
-// 交互(§45.8/45.14, 与"桌面图标"页同一套): 点已选中的条目第一次变成"再点一次删除 X",
+// 交互(与"桌面图标"页同一套): 点已选中的条目第一次变成"再点一次删除 X",
 // 第二次弹系统消息框(lvx_page_msgbox, 与"确认重启？"同款); 勾 = 进删除流水线(在用中的
-// 先恢复系统字体再删, §45.10-13), 叉 = 取消。
-// **框本身的状态机在 `confirm_pop`**(四条真机定案只有一份实现); 本页只留名字来源、
+// 先恢复系统字体再删), 叉 = 取消。
+// **框本身的状态机在 `confirm_pop`**(四条已验证的约束只有一份实现); 本页只留名字来源、
 // 失败读数, 以及"关掉框要排一次整页重建"这条本页的收尾。
 static mut FL_DELCONF: u32 = 0;     // 界面上"再点一次删除"的槽号, 0 = 无
 static mut FL_MSG: u32 = 0;         // 提示行: 0=无 3=退出后生效 4=清单没写进 5=文件缺失 6=弹框没建出
@@ -82,7 +82,7 @@ static mut FL_TICKS: u32 = 0;       // 本模块自己的拍计数(不借 STAT_T
 /// 由 tick 在 `window_is_quiet()` 那一拍把它变成一次**整页重建**
 /// (不再原地 row_update, 也不再绕过窗口门直接 render_req —— 见 tick 第 1 步的说明)。
 static mut FL_ROWS_REQ: u32 = 0;
-/// 用户刚点的槽号(临时勾选态)。live 追上之后它自然让位, 见 entry_selected。
+/// 刚点下的槽号(临时勾选态)。live 追上之后它自然让位, 见 entry_selected。
 static mut FL_SEL: u32 = 0;
 /// 上一次看到的在用池位(变了就重建本页: 勾选态与"使用中"副标签要跟上 live)
 static mut FL_LAST: u32 = 0;
@@ -122,7 +122,7 @@ unsafe fn fl_parse(buf: &[u8; FL_INDEX_SIZE], got: usize) {
         }
         if ln == 0 { continue; }
         // 尾随空格 = 12 字节定长字段的右填充, 必须剥掉: 列表行宽看不出, 但确认框
-        // 的居中文本会把一串空格暴露成大空隙(§45.17 真机实拍)。
+        // 的居中文本会把一串空格暴露成大空隙(实测可见)。
         while ln > 0 {
             let dst = core::ptr::addr_of_mut!(FL_NAMES[n]) as *mut u8;
             if rd8(dst.add(ln - 1)) != b' ' { break; }
@@ -215,7 +215,7 @@ unsafe fn fl_write() -> bool {
         n += 1;
         i += 1;
     }
-    // O_WRONLY|O_CREAT = 6(官方 supervisor 的写组合, 内核层 O_RDONLY=1 不是 POSIX)
+    // O_WRONLY|O_CREAT = 6(与固件自带模块用的写组合一致; 内核层 O_RDONLY=1, 不是 POSIX)
     let fd = fw_api::open(FONT_INDEX.as_ptr(),
                           fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
     if fd < 0 { return false; }
@@ -267,9 +267,9 @@ pub(crate) unsafe fn entry_slot(e: u32) -> u32 {
 }
 
 /// 第 e 个条目是不是当前勾选的那一个(界面画勾用)。
-/// 判据两处: **live**(真正在用的) + **pending**(用户刚点、等下一拍落地的)。
-/// 两者都要看 —— commit 现在不在点击回调里做, 点完到落地之间有几十毫秒,
-/// 这段时间勾选必须已经跟过去了(否则用户以为没点上)。
+/// 判据两处: **live**(真正在用的) + **pending**(刚点下、等下一拍落地的)。
+/// 两者都要看 —— commit 不在点击回调里做, 点完到落地之间有几十毫秒,
+/// 这段时间勾选必须已经跟过去了(否则看起来像没点上)。
 pub(crate) unsafe fn entry_selected(e: u32) -> bool {
     let s = entry_slot(e);
     if s == 0 { return false; }
@@ -314,21 +314,21 @@ pub(crate) unsafe fn lines_fill() {
         if slot == live {
             w.s("使用中".as_bytes());
         } else if !slot_file_ok(slot) {
-            // 文件不在(清单与文件不一致): 点下去不会有效果, 但不能让用户猜
+            // 文件不在(清单与文件不一致): 点下去不会有效果, 但界面上必须说出来
             w.s("文件缺失".as_bytes());
         } else {
             w.s("槽位 ".as_bytes());
             w.n(slot);
         }
         // 提示行(只在挂着的那几拍显示, 到 FL_MSG_HOLD 自动清)。共用同一个位, 一种结局一句话:
-        //   3 = "已选择, 退出应用后生效"(§42: 点选切换改成退场后落地, 要让用户知道
+        //   3 = "已选择, 退出应用后生效"(点选切换要等退场后落地, 界面上得说清
         //       为什么勾了却不马上换)
         //   4 = 删除时清单没写进去  5 = 字体文件缺失  6 = 弹框没建出来(带分级码)
         if st_rd!(FL_MSG) != 0 && row == 0 {
             if st_rd!(FL_MSG) == 3 {
                 // 注意长度: FL_SUBS 每行只有 32 字节, 这句(含前导空格)28 字节, 不截断。
-                // 第一版写成"已选择, 退出应用后生效并自动补写"(49 字节)被 W 截断成
-                // 非法 UTF-8(半个汉字), 是 §42 包点选路径上的实锤缺陷。
+                // 写超了会被 W 截断成非法 UTF-8(半个汉字), 界面直接出乱码 ——
+                // 这句从"退出应用后生效并自动补写"压到现在的长度就是为了避开它。
                 w.s("  已选择, 退出后生效".as_bytes());
             } else if st_rd!(FL_MSG) == 4 {
                 w.s("  删除失败, 清单写入未成功".as_bytes());
@@ -356,7 +356,7 @@ pub(crate) unsafe fn line_secondary(row: usize) -> *const u8 {
 }
 
 /// render 建完行之后把行句柄数组交给本模块(原地刷新要用)。
-/// 只在页面上下文里调用 —— 页面被销毁后这些句柄就作废了(陷阱 7)。
+/// 只在页面上下文里调用 —— 页面被销毁后这些句柄就作废了(定时器比页面活得久)。
 pub(crate) unsafe fn bind_rows(rows: *mut u32, base: usize, n: usize) {
     st_wr!(FL_ROWS, rows);
     st_wr!(FL_ROWS_BASE, base);
@@ -400,10 +400,10 @@ pub(crate) unsafe fn refresh_rows() {
 
 // ===== 第三击的真系统确认框(状态机在 confirm_pop, 这里只接本页的差异) =====
 
-/// 第三击: 弹"删除「短名」?"。**必须在点击回调里当场建**(§45.15: 闹钟"连接断开"
-/// 弹框就是事件上下文直接建的生产先例; 绕到 tick 安静拍去建, 门没开会整个无声吞掉)。
+/// 第三击: 弹"删除「短名」?"。**必须在点击回调里当场建**(固件闹钟"连接断开"
+/// 的弹框就是事件上下文里直接建的生产先例; 绕到 tick 安静拍去建, 门没开会整个无声吞掉)。
 /// 短名从清单条目取(定长 12 字节字段的右填充已在读时剥掉, 否则居中文案里是一段大空隙
-/// —— §45.17 真机那条)。失败分级码进 FL_MSG_W, 行 0 副标签显示"弹框创建失败(N)"。
+/// —— 实测可见)。失败分级码进 FL_MSG_W, 行 0 副标签显示"弹框创建失败(N)"。
 unsafe fn popup_ask(slot: u32) {
     let mut np: *const u8 = core::ptr::null();
     let mut n = 0usize;
@@ -429,7 +429,7 @@ unsafe fn popup_ask(slot: u32) {
 
 /// 叉/勾共同的处理: 关框交给 `confirm_pop`(它按页根子对象表判框还在不在, 门没过转兜底)。
 /// 非 0 结局都要清确认态 + **排一次整页重建**: obj_delete 只失效框自己那一片, 被它盖住的
-/// 标题栏那一层不在重画范围里, 不重建就冻成一片黑(§46.1)。勾才进删除流水线。
+/// 标题栏那一层不在重画范围里, 不重建就冻成一片黑(实测)。勾才进删除流水线。
 unsafe fn popup_clicked(event: u32, ok: bool) {
     if confirm_pop::click(confirm_pop::SLOT_FONT, event) == 0 { return; }
     st_wr!(FL_DELCONF, 0);
@@ -443,13 +443,13 @@ pub(crate) unsafe extern "C" fn chaos_pop_ok(event: u32) -> u32 { popup_clicked(
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_pop_no(event: u32) -> u32 { popup_clicked(event, false); 0 }
 
-/// 新页实例边界(ui.rs 的 on_create)调用: 只丢状态不碰对象(陷阱 6)。
+/// 新页实例边界(ui.rs 的 on_create)调用: 只丢状态不碰对象(这一路可能拿着上一页的句柄)。
 pub(crate) unsafe fn popup_forget(pid: usize) {
     if pid != FONT_PID as usize { return; }
     confirm_pop::forget(confirm_pop::SLOT_FONT);
 }
 
-/// 建页开头(render 开头)调用: 兜掉上一轮漏删的框并归零状态(见 confirm_pop 的规矩 3)。
+/// 建页开头(render 开头)调用: 兜掉上一轮漏删的框并归零状态(四条规矩只在 confirm_pop 模块头写一份)。
 pub(crate) unsafe fn popup_reset() { confirm_pop::reset(confirm_pop::SLOT_FONT); }
 
 /// 点第 row 行 —— 界面槽位在 page.rs 里映射过来
@@ -458,29 +458,29 @@ pub(crate) unsafe fn click_row(row: usize) {
     click_entry(row as u32);
 }
 
-/// 点某一条目。语义(§45.8, 与 icon_apply::click_entry 同一套交互):
+/// 点某一条目。语义(与 icon_apply::click_entry 同一套交互):
 ///   未选中的条目 -> 切过去(commit + request, 与 0x30 门同一套);
 ///   已选中的条目 -> 第一次点变成"再点一次删除 X", 第二次点走删除流水线;
 ///   已在用中的那份(它就是 live) -> 只给提示("先切走")。在用的那份绝不删, 也不进入确认态。
 /// 判"能不能删"一律以 **live**(font_apply 的当前池位)为准, 不以界面勾选为准 ——
-/// 勾选在切换后立刻跟着用户走, 而 live 要等 0x30 那一套跑完才跟上, 这段时间里按勾选判
+/// 勾选在点完立刻跟上, 而 live 要等 0x30 那一套跑完才跟上, 这段时间里按勾选判
 /// 会把"其实还在用"的那份判成可删。request_delete 里还有第二道同样的门。
 ///
-/// 重要(2026-09-26 修 "点着切字体崩溃"): 本函数**在固件的事件派发上下文里**跑,
+/// 重要: 本函数**在固件的事件派发上下文里**跑,
 /// 所以这里一概**不碰 LVGL 对象** —— 只改静态量, 把"界面要更新"记成 FL_ROWS_REQ,
 /// 由 font_list::tick 在"没有跑批在动"的那一拍排一次**整页重建**(不再原地 row_update)。
 /// (icon_apply 在点击回调里直接 refresh_rows 是因为它那边没有字体脸的回退扫描
-/// 0x0CA666D8; 字体行有, §39 的崩溃轴, 不能照抄这一条。)
+/// 0x0CA666D8; 字体行有, 就是那条崩溃轴, 不能照抄这一条。)
 unsafe fn click_entry(e: u32) {
     let slot = entry_slot(e);
     if slot == 0 { return; }
     // 已选中的(在用中的那份永远算已选中): 两步删除的确认态(与图标页同款)。
-    // 第二击 = 行文字变"再点一次删除 X"; 第三击 = 当场弹系统确认框(§45.14), 勾才进流水线。
+    // 第二击 = 行文字变"再点一次删除 X"; 第三击 = 当场弹系统确认框, 勾才进流水线。
     if entry_selected(e) {
         if st_rd!(FL_DELCONF) == slot {
             // 第三击: **当场**弹系统确认框 —— 闹钟"连接断开"弹框就是事件上下文直接建的
-            // 生产先例(0x0C53D58C), 不绕 tick 安静拍(那扇门没开就整个无声吞掉, §45.14
-            // 真机"点了没反应"的嫌疑路径)。建失败给可见提示, 确认态收回。
+            // 生产先例(0x0C53D58C), 不绕 tick 安静拍(那扇门没开就整个无声吞掉,
+            // 表现就是"点了没反应")。建失败给可见提示, 确认态收回。
             st_wr!(FL_MSG, 0);
             popup_ask(slot);
         } else {
@@ -493,11 +493,11 @@ unsafe fn click_entry(e: u32) {
     // 换了目标: 确认态作废(弹框是模态的, 有框在的时候点不到别的行, 走到这里必然没框)。
     st_wr!(FL_DELCONF, 0);
     st_wr!(FL_MSG, 0);
-    // 2026-09-26: **不在事件派发链里改字体管理器身份** —— 这里只记下选择。
-    // §42(2026-09-27 真机: §39.5 消掉全部原地动作后点选**仍崩**): 落地时机再退一步 ——
-    // 应用在前台时 pending_tick 不落地, 等用户 nav_back 退出应用之后才 commit + 应用,
-    // 整条链与投递包那条从不崩的路完全同形(§39.7 预案)。所以要在这里告诉用户
-    // "为什么勾了却不马上换"。
+    // **不在事件派发链里改字体管理器身份** —— 这里只记下选择。
+    // 落地时机还要再退一步(实测: 消掉全部原地动作之后点选**仍崩**):
+    // 应用在前台时 pending_tick 不落地, 等 nav_back 退出应用之后才 commit + 应用,
+    // 整条链与投递包那条从不崩的路完全同形。所以要在这里就说明
+    // "为什么勾了却不马上换"(提示行 3)。
     if font_apply::busy() { click_feedback(); return; }   // 上一次还在跑: 不做半途切换
     st_wr!(FL_SEL, slot);                              // 勾选立刻跟过去(原地刷新即可)
     font_apply::set_pending(slot);
@@ -506,12 +506,12 @@ unsafe fn click_entry(e: u32) {
     click_feedback();
 }
 
-/// 点击反馈(§45.9, 图标页同款): 安静拍**原地刷新行**, 不再排整页重建。
-/// 根因(§45.8 真机"连点条目返回上一界面"): 每次点击都排一次 render_req 整页重建,
+/// 点击反馈(图标页同款): 安静拍**原地刷新行**, 不再排整页重建。
+/// 根因(症状是"连点条目就退回上一界面"): 每次点击都排一次 render_req 整页重建,
 /// 重建期间旧行对象销毁/新行重建, 连续快速点击正好砸进这个窗口 —— 固件在半死对象上
 /// 派发事件, 崩溃被页面框架回收 = 表现为"返回"。图标页点击后原地 refresh_rows 从不
-/// 重建整页, 所以没有这个症状。字体行的 row_update 危险只在**跑批窗口**(陷阱 17:
-/// 0x0CA666D8 回退扫描撞上建脸/写样式), 安静拍做 = 图标页已验证的同等安全条件;
+/// 重建整页, 所以没有这个症状。字体行的 row_update 危险只在**跑批窗口**
+/// (0x0CA666D8 回退扫描撞上建脸/写样式), 安静拍做 = 图标页已验证的同等安全条件;
 /// 不安静时照旧延后(登记 FL_ROWS_REQ, tick 慢拍重建)。
 /// set_pending 不再自带 mark_rows_dirty(那是每次点选都触发整页重建的另一半)。
 unsafe fn click_feedback() {
@@ -524,12 +524,12 @@ unsafe fn click_feedback() {
 
 /// 界面请求删除(两步确认之后才会走到这里): 只置状态位, 真正的活在 tick 里逐拍做。
 /// 门(第二道, 界面提示不是门): 槽号合法 / 文件在 / **不是当前在用的那一份**。
-/// 删的是用户刚点过切换的那份的话, 把未落地的切换请求一并撤掉 —— 文件都删了,
+/// 删的正好是刚点过切换、还没落地的那份的话, 把未落地的切换请求一并撤掉 —— 文件都删了,
 /// 不能在退场时再应用它。
 pub(crate) unsafe fn request_delete(slot: u32) {
     if slot < 1 || slot > FL_MAX as u32 { return; }
     if !slot_file_ok(slot) {
-        // 文件不在 = 无从删起, 给可见反馈(§45.9 起删除路径不再无声吞掉)
+        // 文件不在 = 无从删起, 要给可见反馈, 不能无声吞掉
         st_wr!(FL_MSG, 5);
         st_wr!(FL_MSG_AT, st_rd!(FL_TICKS));
         click_feedback();
@@ -539,7 +539,7 @@ pub(crate) unsafe fn request_delete(slot: u32) {
     if st_rd!(FL_SEL) == slot { st_wr!(FL_SEL, 0); }
     font_apply::cancel_pending(slot);
     st_wr!(FL_DEL, slot);
-    // 在用中的那份(§45.10): 先把样式写回系统字体(face 换回开机原字, 我们的文件
+    // 在用中的那份: 先把样式写回系统字体(face 换回开机原字, 我们的文件
     // 不再被引用), 之后才允许删文件 —— "face 按需回读文件"红线由恢复步骤解除。
     st_wr!(FL_DEL_ST, if slot == font_apply::live_get() { 10 } else { 1 });
 }
@@ -550,7 +550,7 @@ pub(crate) unsafe fn request_delete(slot: u32) {
 ///   2 逐拍删文件(一拍一个)。清单是唯一来源, 所以文件删掉之后界面上它就不存在了。
 unsafe fn delete_tick() {
     match st_rd!(FL_DEL_ST) {
-        // §45.10 在用中的那份: 第一步先把样式恢复成系统字体(分拍应用队列)。
+        // 10 = 在用中的那份: 第一步先把样式恢复成系统字体(分拍应用队列)。
         10 => {
             font_apply::request_revert();
             st_wr!(FL_DEL_ST, 11);
@@ -567,7 +567,7 @@ unsafe fn delete_tick() {
                 st_wr!(FL_LOADED, 0);              // 内存清单作废, 下次重读磁盘
                 st_wr!(FL_DEL_ST, 0);
                 st_wr!(FL_DEL, 0);
-                st_wr!(FL_MSG, 4);                 // §45.9: 失败必须可见, 不能无声吞掉
+                st_wr!(FL_MSG, 4);                 // 失败必须可见, 不能无声吞掉
                 st_wr!(FL_MSG_AT, st_rd!(FL_TICKS));
                 st_wr!(FL_ROWS_REQ, 1);            // 重建统一走 tick 的窗口门
                 return;
@@ -586,7 +586,7 @@ unsafe fn delete_tick() {
                 return;
             }
             if st_rd!(FL_DEL) == font_apply::live_get() {
-                font_apply::clear_live();      // §45.10: 在用的那份删掉了, 池位归零
+                font_apply::clear_live();      // 在用的那份删掉了, 池位归零
             }
             st_wr!(FL_DEL_ST, 0);
             st_wr!(FL_DEL, 0);
@@ -615,7 +615,7 @@ pub(crate) unsafe fn pending() -> bool {
 /// 与字体应用(font_apply::tick 分拍建脸)是两条独立的事, 各走各的状态位。
 pub(crate) unsafe fn tick() {
     st_wr!(FL_TICKS, st_rd!(FL_TICKS).wrapping_add(1));
-    // 0) 删除确认框: 弹框在点击回调里当场做(§45.15), 这里只剩**兜底销毁** ——
+    // 0) 删除确认框: 弹框在点击回调里当场做, 这里只剩**兜底销毁** ——
     //    勾/叉那一下没过关(页已经把框带走/句柄对不上)才转到这里, 安静拍补一刀。
     if page_is_live(FONT_PID as usize) && window_is_quiet()
         && confirm_pop::close_deferred(confirm_pop::SLOT_FONT) {
@@ -630,15 +630,15 @@ pub(crate) unsafe fn tick() {
     }
     // 点击/收尾/提示超时/删除流水线留下的"界面要更新"请求 —— **不在这里原地 row_update**,
     // 统一只在窗口开着的那一拍排一次整页重建。为什么不能原地改行: 见 font_apply::apply_finish
-    // 的说明与 §39.2 / AGENTS.md 陷阱 17(同一份证据不抄三遍)。
+    // 的说明(row_update 的真实代价), 同一份证据不在这里重抄。
     // 观感代价明确: 点完到勾选跟上 ≈ 应用剩余时长(1~2 秒), 期间不做原地闪烁。
     if st_rd!(FL_ROWS_REQ) != 0 {
         if !page_is_live(FONT_PID as usize) {
             st_wr!(FL_ROWS_REQ, 0);        // 页不在了: 下次进页本来就会重画, 请求没有意义
         } else if confirm_pop::shown(confirm_pop::SLOT_FONT) {
             // 框还挂着(显示中, 或已请求关闭但门没过在等兜底): 等它关掉再重建 ——
-            // 重建开头会把没删掉的框兜掉, 那等于把用户正对着的确认框变没。
-            // 框是全屏模态, 这期间用户只能点框上的叉/勾, 不会有别的请求积压。
+            // 重建开头会把没删掉的框兜掉, 那等于把正对着的确认框变没。
+            // 框是全屏模态, 这期间能点的只有框上的叉/勾, 不会有别的请求积压。
         } else if window_is_quiet() {
             st_wr!(FL_ROWS_REQ, 0);
             render_req(FONT_PID as usize);

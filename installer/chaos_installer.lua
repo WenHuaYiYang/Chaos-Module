@@ -1,15 +1,15 @@
--- Chaos installer v3 自研 chaos_sup 原生应用安装器（生产版，无探针）
--- 2026-08-22 重构（对齐 官方 installer_main.lua 的可行流程）：
--- 1. 不再 rmmod！官方 从不 rmmod。若 /dev/chaos 已存在（旧模块在内核）→ 要求重启手表再 Run。
--- 根因假设：rmmod 释放模块内存但 app 注册链表条目悬空 → 切表盘时 launcher 遍历到悬空回调 → 崩。
--- 2. 每条命令一个独立 timer 拍（对齐 官方："let miwear receive an event-loop turn\n-- between native registration stages"）。
+-- chaos_sup 原生应用安装器
+-- 流程约束：
+-- 1. 不做 rmmod。若 /dev/chaos 已存在说明旧模块还在内核里，此时要求重启设备再运行。
+--    根因: rmmod 释放模块内存，但 app 注册链表的条目留在原地悬空 → 切表盘时
+--    launcher 遍历到悬空回调 → 崩。
+-- 2. 每条命令一个独立 timer 拍，让 miwear 的事件循环在两个注册阶段之间转一圈。
 -- 3. INSTALL 0x0A(restore 占位) → 0 → 1 → 2 四拍，间隔 1000ms。
--- 4. 状态行只显示当前步骤与结果。早期"把崩点步号落盘再读回来"的那条探针链已整体删掉，
---    安装过程不在 /data/chaos 留任何调试文件。
+-- 4. 状态行只显示当前步骤与结果，安装过程不在 /data/chaos 留任何调试文件。
 
 local lvgl = require("lvgl")
 
--- ===== 视觉: macOS 毛玻璃(vibrancy) =====
+-- ===== 视觉: macOS 毛玻璃(vibrancy) 的单屏翻译 =====
 -- Web 上的 backdrop-blur / hover / transition-colors / 三栏布局, 在 336x480 的单屏 LVGL
 -- 上没有对应物, 所以按这套风格的**核心理念**翻译:
 --   层级即色彩 —— 不用渐变和发光, 纯靠背景深浅区分层级;
@@ -17,37 +17,32 @@ local lvgl = require("lvgl")
 --   无装饰主义 —— 没有渐变、没有发光、没有动画。
 -- 三栏 -> 单屏的三级层次: 页面底(最深) / 卡片(中间) / 按钮与高亮块(表面)。
 -- 硬约束: 背景只用下面三个灰阶; 强调色与状态色**只用于文字**, 绝不作为背景;
---         圆角最大 12(rounded-xl); 边框一律 1px; 不要阴影与动画。
--- 字体: 标题走衬线(文楷 ChaosSans-Regular, 由美化页登记; 若该名字还没登记,
---       固件会回退默认字体, 界面依然完整可用), 正文走系统无衬线 MiSans-Regular。
+--         圆角上限 12, 只有按钮按下面 V_R 处的说明破例; 边框一律 1px;
+--         不要阴影与动画。
+-- 字体: 只用系统自带的无衬线 MiSans-Regular(标题不走衬线, 原因见 F_BODY 处的说明)。
 local V_DEEP  = 0x1C1C1E   -- #1c1c1e 最深: 页面底
 local V_MID   = 0x2C2C2E   -- #2c2c2e 中间: 卡片
 local V_SURF  = 0x3A3A3C   -- #3a3a3c 表面: 按钮
 local V_LINE  = 0x3C3C3E   -- 表面上的 1px 边框
 local V_LINE2 = 0x2A2A2C   -- 最深上的 1px 边框
-local V_TXT   = 0xF2F2F2   -- 主要文字(white/95)
-local V_TXT2  = 0xB3B3B3   -- 次要文字(white/70)
-local V_TXT3  = 0x666666   -- 弱化文字(white/40)
+local V_TXT   = 0xF2F2F2   -- 主要文字(最亮一档)
+local V_TXT2  = 0xB3B3B3   -- 次要文字
+local V_TXT3  = 0x666666   -- 弱化文字
 local V_ACC   = 0x0A84FF   -- 系统强调色(仅文字高亮)
--- 主按钮底的强调蓝: 规范「颜色角色」那节把 bg-blue-600 列在**允许的背景强调色**里
--- (bg-[#3a3a3c], bg-blue-600, bg-indigo-600)。禁止的是 #0a84ff 那类高亮色作底,
--- 不是这种标准按钮蓝。全是灰的时候界面太单调, 主按钮就该是这个颜色。
+-- 主按钮底的强调蓝: 禁止的是 #0a84ff 那类高亮色作底, 标准按钮蓝允许做背景。
+-- 界面全是灰时认不出哪个是主操作, 主按钮就用这一档蓝。
 local V_ACC_BG = 0x2563EB
 local V_OK    = 0x30D158   -- 成功(仅文字)
 local V_WARN  = 0xFFD60A   -- 提醒(仅文字)
 local V_ERR   = 0xFF453A   -- 失败(仅文字)
--- 圆角 24(用户明确要求"放大一倍": 12 -> 24)。
--- 演进: 8px(规范给 Web 40px 高按钮的值) -> 12(按手环 64px 按钮高度换算) -> 24(用户拍板)。
--- 说明: 规范上限是 rounded-xl(12px), 24 相当于 rounded-3xl, 这属于**用户明确要求的破例**,
--- 不是风格漂移, 别再按规范改回去。边界: 按钮 64px 高, 圆角到 32 就成胶囊
--- (rounded-full, 规范也禁), 所以不要再往上加。
+-- 圆角 24: 高于上面那条 12 的上限, 这是按按钮实际尺寸定的刻意取值, 不要按上限改回 12。
+-- 边界: 按钮高 64px, 圆角到 32(高度的一半)就成胶囊形, 那种形状不用, 不要再往上加。
 local V_R     = 24
 -- 字体: 只用系统自带的 MiSans-Regular。
--- 规范要求"标题用衬线", 但手环上唯一可能的衬线字体是用户换上来的文楷, 而它的 face
--- **只在美化页手动点"重新应用文楷"之后**才登记(59 轮按用户要求去掉了开机自动应用)。
--- 重启后没点过就登记不上, 建 face 会回退默认字体 —— 中文直接变空白豆腐块、字还变小
--- (2026-09-26 真机踩过, 用户报"上面有空白框、字体用错了")。
--- 所以标题改用系统字体, 层级靠**字号与颜色**建立。
+-- 标题本想走衬线, 但手环上唯一可能的衬线字体是侧载上来的文楷, 而它的 face 只在美化页
+-- 手动点过"重新应用文楷"之后才登记 —— 重启后没点过就登记不上, 建 face 会回退默认
+-- 字体, 中文直接变空白豆腐块、字还变小(实测踩过)。
+-- 所以标题也走系统字体, 层级靠**字号与颜色**建立。
 local F_BODY  = "MiSans-Regular"
 
 local SUPERVISOR_RESOURCE = SCRIPT_PATH .. "chaos_sup.ko"
@@ -81,9 +76,8 @@ local function read_all(path, mode)
 end
 
 -- 语言检测: getprop <键> 含 "zh" = 中文界面。
--- 只保留两个布尔量: lang_seen(读到过任何语言属性没有, 决定是否走 fallback)、
+-- 只留两个布尔量: lang_seen(有没有读到过任何语言属性, 决定是否走 fallback)、
 -- lang_zh(是不是中文, 决定发 0x18 还是 0x19)。
--- 原来还顺手攒了一个给人看的 lang_probe 字符串(候选键的原始值), 于界面无用, 已删。
 local LANG_OUTPUT = "/data/chaos/lang.txt"
 local lang_zh = false
 local lang_seen = false
@@ -100,7 +94,7 @@ local function detect_language()
       end
     end
   end
-  -- 方法B: getprop 无参全量 dump, 筛含 lang/locale 的行
+  -- 备选: getprop 无参全量 dump, 筛含 lang/locale 的行
   if not lang_seen then
     run("getprop > /data/chaos/allprop.txt")
     local all = read_all("/data/chaos/allprop.txt", "r")
@@ -120,17 +114,17 @@ local function detect_language()
 end
 local FONT_RESOURCE = SCRIPT_PATH .. "lxgw.ttf"
 local FONT_DIR = "/data/chaos/font"
--- 只需要 2 个名字。真机确认: 真正生效的机制是"用系统没见过的名字建 face
--- + 把 face 写回样式对象"(实验5); 而"字体记录改向"那条路无效。
--- 多部署名字纯属白占空间: 14 名 x 3.4MB = 48MB, 且本设备文件系统不支持
--- 硬链接(ln 失败退化成写副本), 2026-09-13 真机实测多占 50MB。
+-- 只需要 2 个名字。实测确认生效的机制是"用系统没见过的名字建 face
+-- + 把 face 写回样式对象"; 而"改字体记录指向"那条路无效。
+-- 多铺名字只是占空间: 14 名 x 3.4MB = 48MB, 且本设备文件系统不支持硬链接
+-- (ln 失败退化成写副本), 实测多占 50MB。
 local FONT_NAMES = {
   "ChaosWenKai.ttf", "ChaosWenKai-All.ttf",
 }
 -- 字体魔数判定: 00010000=TrueType / OTTO=CFF / true|ttcf=Apple 变体。
--- 2026-09-26 起字体已移出主包(包体 5.6MB -> 2.1MB), 这一槽改成占位说明文件,
--- 所以第 2.5 步必须先认内容 —— 不是字体就跳过, 不能报错(否则整个 Run 流程断在这)。
--- 字体改由独立的字体投递包送上机(见 docs/Chaos_字体投递_20260926.md)。
+-- 主包不内嵌字体(包体 5.6MB -> 2.1MB), 容器里这一槽是占位说明文件,
+-- 所以第 2.5 步必须先认内容 —— 不是字体就跳过, 不能报错(报错整个运行流程断在这)。
+-- 字体由独立的字体投递包侧载上机(见 installer/font_pack.lua)。
 local function looks_like_font(c)
   if type(c) ~= "string" or #c < 4 then return false end
   local m = c:sub(1, 4)
@@ -138,13 +132,14 @@ local function looks_like_font(c)
 end
 local function stage_fonts()
   -- 目录必须**无条件**先建: 字体改由投递包送上机之后, 它落盘的 /data/chaos/font
-  -- 就是这里创建出来的。2026-09-26 真机踩过: 字体包报"打不开目标文件", 根因就是
-  -- 下面两句 return 把这一句 mkdir 也一起跳过了, 于是那个目录再没人建。
+  -- 就是这里创建出来的。
+  -- 注意: mkdir 不能挪到下面两个提前返回之后 —— 一起被跳过就没人建这个目录,
+  -- 投递时报"打不开目标文件"。
   run("mkdir -p " .. FONT_DIR)
   local c = read_all(FONT_RESOURCE, "rb")
   if not c then return true end                    -- 容器里没这一槽: 交给投递包
   if not looks_like_font(c) then return true end   -- 占位文件: 同上
-  -- 清理历史上误部署的多余名字(约 48MB 副本), 恢复只留 2 份
+  -- 清掉早期版本多铺出来的名字副本(约 48MB), 只留上面那 2 份
   run("rm -f " .. FONT_DIR .. "/MiSans-*.ttf " .. FONT_DIR .. "/MiSansF-*.ttf "
       .. FONT_DIR .. "/BaiJamjuree-*.ttf")
   for _, n in ipairs(FONT_NAMES) do
@@ -163,12 +158,12 @@ local function stage_resource(res, dest)
   if not wok or not cok then return false, "write failed" end
   return true
 end
--- 图标素材投递。2026-09-26 起主包**不再内嵌图标包**: 这一槽只有我们自己的应用图标
+-- 图标素材投递。主包**不内嵌图标包**: 这一槽只有本应用自己的图标
 -- chaos_icon.bin(注册原生应用必用), 整份写到 /data/chaos/chaos_icon.bin。
--- 桌面图标包改由独立的图标投递包侧载上机(scripts/build_icon_pack.py + installer/icon_pack.lua),
--- 与字体同一条路 —— 换一套图标不再需要重刷主包, 也不会把主包撑到 2MB。
+-- 桌面图标包由独立的图标投递包侧载上机(scripts/build_icon_pack.py + installer/icon_pack.lua),
+-- 与字体同一条路 —— 换一套图标不需要重刷主包, 也不会把主包撑大 2MB。
 --
--- 顺带清理 2026-09-26 之前的扁平布局(/data/chaos/icons/*.bin, 约 1.9MB): 那时素材直接
+-- 顺带清掉早期扁平布局的残留(/data/chaos/icons/*.bin, 约 1.9MB): 那时素材直接
 -- 铺在 icons/ 下; 现在每个包一个子目录(icons/<包号>/, 由投递脚本建), 通配不会误删。
 local ICON_DIR = DATA_DIR .. "/icons"
 local function stage_icons()
@@ -220,7 +215,7 @@ local function execute_install(arg0)
       st.dbg0 or 0, st.dbg1 or 0, st.dbg2 or 0, st.step or -1)
 end
 
--- 每步一个 timer 拍（对齐 官方：步骤间让 miwear 事件循环转一圈）
+-- 每步一个 timer 拍（步骤间让 miwear 的事件循环转一圈）
 local notify_retry = 0  -- notify step 重试计数（等 launcher 订阅就绪）
 local steps = {
     { "1 部署模块",     function() return stage_resource(SUPERVISOR_RESOURCE, SUPERVISOR_PATH) end },
@@ -258,9 +253,9 @@ local steps = {
       return execute_install(0x13)
   end },
   { "6.5 通知系统", function()
-      -- 2026-08-25 根本修复: 直接调固件 notify 完整链(0x0CA81D18 注册表查询
-      -- + 0x0CA81FB9 notify_installed), 官方 同款 100% 成功路径。
-      -- 替代手动复刻链(0x3F 订阅等待只是缓解, 根因是绕开了固件)。
+      -- 直接走固件自己的 notify 完整链(0x0CA81D18 注册表查询
+      -- + 0x0CA81FB9 notify_installed), 实测这一条必成。
+      -- 根因: 手动复刻这条链绕开了固件, 只能靠 0x3F 等 launcher 订阅就绪, 那是缓解不是修好。
       return execute_install(0x43)
   end },
     { "7 发布应用", function()
@@ -302,9 +297,8 @@ local function run_next_step(timer)
         local st1 = read_status()
         local d2 = 0
         if st1 then d2 = st1.dbg2 or 0 end
-        -- 注册没生效时不能只说"运行完成", 否则用户会以为已经装好。
-        -- (原来这里还会把 app_id/reg 版本号落盘到 reg.txt 并读 pread.txt 拼成一长串 ——
-        --  那些落盘用户根本读不到, 对应的 file_read 探针也早删了, 一并清掉。)
+        -- 注册没生效时不能只说"运行完成", 否则界面会让人以为已经装好。
+        -- 判据只用状态字里的 dbg2, 不读设备上的任何落盘文件。
         if d2 == 0 or d2 == 0xFFFFFFFF then
           finish_run(timer, false, "运行完成, 但注册未生效")
         else
@@ -333,12 +327,11 @@ local function start_run_timer()
     return true
 end
 
--- ===== 界面(macOS 毛玻璃: 页面底 / 卡片 / 按钮 三级层次) =====
+-- ===== 界面(页面底 / 卡片 / 按钮 三级层次) =====
 -- 定位与居中一律用 align 表(对象相对父居中), 且 Label **不设 w/x/y** —— 让它按文字
 -- 自适应宽度, 再整体居中, 这才是视觉居中。
--- 重要(2026-09-26 返工): 不要用 "x/w + text_align" 那套写法。它来自自研表盘"墟",
--- 而"墟"从来没有在真机上显示成功过(一直是黑的), 所以那条路径**没有被验证过**;
--- 真机上表现就是文字左对齐、整体不居中。唯一的居中证据是安装器原版用的 align 表。
+-- 重要: 不要用 "x/w + text_align" 那套写法 —— 实测表现是文字左对齐、整体不居中,
+-- 也就是这两个属性在真机上没生效, 居中只有 align 表这一条有证据的路。
 local SCR_W = lvgl.HOR_RES()
 local SCR_H = lvgl.VER_RES()
 
@@ -347,15 +340,13 @@ local root = lvgl.Object(nil, {
   outline_width = 0, border_width = 0, pad_all = 0,
   bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
 })
--- 重要(2026-09-26 真机): LVGL 对象默认带 SCROLLABLE, 会把手势吃掉 —— 表现就是
--- **长按表盘进不了表盘选择页**(用户实测, 主包与投递包都一样)。
--- 原版安装器对三个根对象全都显式清了这一位, 重构时被删掉过。凡是本脚本创建的
--- 容器对象, 一律清掉 SCROLLABLE; 需要点击的再单独加 CLICKABLE。
+-- 重要(实测): LVGL 对象默认带 SCROLLABLE, 会把手势吃掉 —— 表现就是
+-- **长按表盘进不了表盘选择页**(主包与投递包都一样)。凡是本脚本创建的容器对象,
+-- 一律清掉 SCROLLABLE; 需要点击的再单独加 CLICKABLE。
 root:clear_flag(lvgl.FLAG.SCROLLABLE)
--- 指南 §12A.7「10 Pro 已验证写法」那条: 容器缺 flag => clear_flag(SCROLLABLE) + add_flag(EVENT_BUBBLE)。
--- **只清 SCROLLABLE 不够** —— 真机验证过: 清完长按仍然进不了表盘选择页。
--- EVENT_BUBBLE 才让触摸事件**冒泡给父层**(固件的表盘容器), 系统的长按手势才收得到;
--- 官方 theme1 表盘的 event_mask 也是这两句(CLICKABLE + EVENT_BUBBLE)。
+-- 只清 SCROLLABLE **不够**(清完长按仍然进不了表盘选择页) —— 还要 add_flag(EVENT_BUBBLE)。
+-- EVENT_BUBBLE 让触摸事件**冒泡给父层**(固件的表盘容器), 系统的长按手势才收得到;
+-- 固件自带表盘用的也是 CLICKABLE + EVENT_BUBBLE 这两句。
 -- root 自己也加 CLICKABLE: 空白处按下时得有个接收者, 否则事件无处可冒。
 root:add_flag(lvgl.FLAG.CLICKABLE)
 root:add_flag(lvgl.FLAG.EVENT_BUBBLE)
@@ -368,7 +359,7 @@ lvgl.Label(root, {
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -170 },
 })
 
--- 状态卡片: 中间灰 + 1px 边框 + 12 圆角(卡片里不再套卡片); 状态文字在卡片内居中
+-- 状态卡片: 中间灰 + 1px 边框 + 圆角走 V_R(卡片里不再套卡片); 状态文字在卡片内居中
 local card = lvgl.Object(root, {
   w = SCR_W - 32, h = 150,
   bg_opa = lvgl.OPA(100), bg_color = V_MID,
@@ -385,14 +376,10 @@ status_label = lvgl.Label(card, {
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
 })
 
--- 按钮三态。颜色抄自 StyleKit 示例站的真实实现(用户给了其离线导出源码):
---   站上 Danger 按钮原文:
---     bg-[#ff453a]/15 text-[#ff453a] rounded-lg ... (无边框)
---   站上 Success 按钮同构: bg-[#30d158]/15 text-[#30d158] ...
---   即**同色系淡底(15% 透明度) + 同色字 + 无边框**。
+-- 按钮三态。danger 用**同色系淡底 + 同色字 + 无边框**:
+--   Web 上那套写法是 bg-[#ff453a]/15 text-[#ff453a], 即 15% 透明度的红底配红字;
 --   LVGL 里对应 bg_color=同色 + bg_opa=OPA(15)(底下的深灰透出来, 就是 /15 的效果)。
---   之前两版都不对: "深灰底 + 红字"缺那层红底(用户说"太奇怪");
---   "实心红底 + 白字"又太实。
+--   对照过两种不对的写法: "深灰底 + 红字"缺那层红底, "实心红底 + 白字"又太实。
 --   primary = 强调蓝底 + 白字(主操作)
 --   danger  = 红 15% 底 + 红字, 无边框
 --   ghost   = 深底 + 1px 边框 + 次要文字

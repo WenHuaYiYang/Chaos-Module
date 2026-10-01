@@ -9,7 +9,7 @@ use super::*;
 // 4. 行（stock list row）
 // ===========================================================================
 
-/// `lvx_list_row_create(parent, primary, secondary, trailing)` DEVICE_PROVEN
+/// `lvx_list_row_create(parent, primary, secondary, trailing)` 已验证
 ///
 /// - `secondary` 传 `NONE_PTR` = **单排**（紧凑）；传非 NULL（含空串）会建出副标签
 /// - `trailing` 用 `trailing::*`
@@ -18,17 +18,17 @@ pub unsafe extern "C" fn row_create(parent: Obj, primary: Cp, secondary: Cp, tra
     f(parent, primary, secondary, trailing)
 }
 
-/// `lvx_list_row_trailing(row)` 取行右侧控件（真的就是 `row[+0x50]`） DEVICE_PROVEN
+/// `lvx_list_row_trailing(row)` 取行右侧控件（真的就是 `row[+0x50]`） 已验证
 ///
-/// 开关行的事件要挂**它**上（官方 `ROW_SWITCH` 做法）。
+/// 开关行的事件要挂**它**上（固件自带的开关行就是这么挂的）。
 pub unsafe extern "C" fn row_trailing(row: Obj) -> Obj {
     let f: unsafe extern "C" fn(Obj) -> Obj = transmute(0x0C4C_8C61usize);
     f(row)
 }
 
-/// `lvx_list_item_update(row, a1, primary, secondary, badge, selected)` DEVICE_PROVEN
+/// `lvx_list_item_update(row, a1, primary, secondary, badge, selected)` 已验证
 ///
-/// 参数归属（0x0C4C8904 反汇编实证，**pack 里的命名 primary/secondary/third 是误导**）：
+/// 参数归属（0x0C4C8904 反汇编实证，按"三个文本槽"理解是错的）：
 /// - `a1` → `row+0x34`：`row_create` 从不创建这条标签（写它无效）
 /// - `primary` → `row+0x3c`：**主标签**
 /// - `secondary` → `row+0x40`：**副标签**（传 `NONE_PTR` 才不建；传空串会惰性创建出空行）
@@ -52,41 +52,41 @@ pub unsafe extern "C" fn row_update(
 // 5. 页面（固件 page 框架）
 // ===========================================================================
 
-/// `lvx_page_content_create(root)` DEVICE_PROVEN
+/// `lvx_page_content_create(root)` 已验证
 pub unsafe extern "C" fn content_create(root: Obj) -> Obj {
     let f: unsafe extern "C" fn(Obj) -> Obj = transmute(0x0CA6_7245usize);
     f(root)
 }
 
-/// `lvx_content_pad_bottom(content, pad, flags)` DEVICE_PROVEN
+/// `lvx_content_pad_bottom(content, pad, flags)` 已验证
 pub unsafe extern "C" fn content_pad_bottom(content: Obj, pad: i32, flags: u32) -> Obj {
     let f: unsafe extern "C" fn(Obj, i32, u32) -> Obj = transmute(0x0C58_93C1usize);
     f(content, pad, flags)
 }
 
-/// `lvx_page_title_create(root, title, mode, cb, udata)` DEVICE_PROVEN
+/// `lvx_page_title_create(root, title, mode, cb, udata)` 已验证
 ///
 /// - `mode = 1` → 带返回键；`cb = 0` 时固件装**默认返回回调（带动画）**
 /// - 类固有尺寸 0x150 x 0x38(=56, 正是 content 的 y 偏移), 几何稳定
 /// - 本函数体内 `str` 只写自己对象的字段与栈槽, **不写页描述符也不登记全局单例**
 ///   (对比消息框 0x0C4C9F78 会 `bl 0x0C5891A8` 登记) => 标题对象除了调用方的句柄没有
 ///   第二份引用, 类描述符的 ctor/析构都是 0 => 删除它只走 LVGL 通用删除, 可以安全重建。
-///   2026-09-30 起页重建时**删掉再重建**(留着的 local `text_font` 会指向已回收的脸,
-///   见 `docs/Chaos_字体投递_20260926.md` §45.23 —— 旧结论"保留不删"只是当年的谨慎假设)
+///   重要: 页面重建时标题要**删掉再重建** —— 留着不删的话, 标题对象上的 local
+///   `text_font` 会指向已经回收掉的字体对象, 整条文字不画, 滚动和重新套样式都救不回来。
 pub unsafe extern "C" fn page_title_create(root: Obj, title: Cp, mode: u32, cb: Cb, udata: u32) -> Obj {
     let f: unsafe extern "C" fn(Obj, Cp, u32, Cb, u32) -> Obj = transmute(0x0C4C_A6C5usize);
     f(root, title, mode, cb, udata)
 }
 
-/// `page_goto(app_id<<16 | page_id, start_data, param, callbacks)` 带动画压栈 DEVICE_PROVEN
+/// `page_goto(app_id<<16 | page_id, start_data, param, callbacks)` 带动画压栈 已验证
 pub unsafe extern "C" fn page_goto(key: u32, start_data: u32) {
     let f: unsafe extern "C" fn(u32, u32, u32, u32) -> i32 = transmute(0x0CA6_C359usize);
     let _ = f(key, start_data, 0, 0);
 }
 
-/// 系统动画返回上一级 DEVICE_PROVEN
+/// 系统动画返回上一级 已验证
 ///
-/// 注：`page_finish(desc)` **无动画**且已被真机证伪，统一用这个。
+/// 注：`page_finish(desc)` **无动画**，真机实测也不可用，统一用这个。
 pub unsafe extern "C" fn page_back() {
     let f: unsafe extern "C" fn() -> i32 = transmute(0x0CA7_6FB5usize);
     let _ = f();

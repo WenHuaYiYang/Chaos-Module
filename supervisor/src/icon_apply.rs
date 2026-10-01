@@ -1,6 +1,6 @@
 // 系统桌面图标更换 —— 多图标包共存。
 //
-// 机制(逐字反汇编；证据见 docs/icon_reverse_work/ 与 fw_api/sys.rs 第 11 节)：
+// 机制(逐字反汇编，静态核对)：
 //   1. 应用注册表是带哨兵的循环链表：head = *(0x200EB640)，节点靠 +0x04 成环，
 //      节点 +0x0C = 图标路径串、+0x10 u16 = app_id(app_lookup 0x0CA69934 逐字)。
 //   2. 桌面记录(0x200D0CBC 链)的 +0x0C 是建行时**从注册表节点抄过去的裸指针**
@@ -10,15 +10,15 @@
 //   3. 改完调 launcher_refresh_app(app_id)(0x0C513BC0)：它重读 desc+0x0C 进记录、
 //      释放旧图片对象重新加载、最后 rebuild_all，桌面立即可见。
 //
-// 多图标包(2026-09-26 起): 素材按包分目录放, 清单文件列出有哪些包。
+// 多图标包: 素材按包分目录放, 清单文件列出有哪些包。
 //   /data/chaos/icons/index.txt   恒 128 字节 = 8 行 x 16 字节, 每行 "<2位包号> <12字节短名>"
 //   /data/chaos/icons/<包号>/<stem>.bin
 // 清单只有 8 个位置(界面每页 3 个, 三页刚好用完); 包号 0 保留给"系统原图标"。
-// **刻意不遍历目录**: 真机踩过 procfs 目录遍历死锁(AGENTS Never 条), 所以清单是唯一来源。
-// 定长记录是为了"改写清单"永远是整块写 128 字节, 不需要先删文件也不需要 O_TRUNC ——
-// 官方 supervisor 的固定记录写法就是这么做的(canopus_supervisor_platform.c 第 287 行)。
+// **刻意不遍历目录**: 实测 procfs 目录遍历会死锁, 所以清单是唯一来源。
+// 定长记录是为了"改写清单"永远是整块写 128 字节, 不需要先删文件也不需要 O_TRUNC,
+// 写失败时旧文件也还是完整的 —— 固件自带模块用的同样是这种固定记录写法。
 //
-// 三条硬约束(都是同类操作踩过的坑)：
+// 三条硬约束：
 //   A. 节点 +0x0C 归注册表所有：app_install 用 str_dup_x 分配(0x0CA6A388..390)，
 //      注销路径再 free(0x0CA6A48C..490)。所以我们写进去的指针必须是 fw_str_dup
 //      的堆指针 —— 写 .rodata/.bss 地址等于让固件将来对只读段调 free = 堆损坏。
@@ -29,7 +29,7 @@
 //      并二次核对 app_id 与路径 —— 批量跨多个 tick，期间万一有应用被卸载，
 //      缓存的节点地址就是悬空指针。
 //
-// 多包的第四条(2026-09-26 新增, 由多包切换引入):
+// 多包的第四条(由多包切换引入):
 //   D. 节点 +0x0C 上的堆串只有两种来源, 靠**路径前缀**分辨: `/data/chaos/icons` 开头的是
 //      我们自己 strdup 的(切包时要 free), 其余是固件注册表自己的(绝不能 free)。
 //      原路径(IC_SAVED)只在第一次换指针时记一次 —— 多包之间来回切时, 第二次写进去的
@@ -39,15 +39,13 @@ use crate::mem::{rd16, rd32, rd8};
 use crate::*;
 
 /// 素材 stem 表，与固件桌面 launcher 应用图标去重后的全集一一对应(38 个 stem)。
-/// 在位素材来自哪个包由投递包决定: 主包内嵌 assets/delta_lvgl(38 张全在位),
-/// assets/fluent_lvgl 是存档(33 张, 该素材池没有运动/血氧/女性健康/米家 的图形
-/// => 换过去会读 缺件5)。每张 112x112、cf=0x10、50188B。
-/// 覆盖面全集出处: docs/icon_reverse_work/系统图标覆盖缺口_20260913.md。
+/// 在位素材来自哪个包由投递包决定: 素材池 assets/delta_lvgl 是 38 张全在位的那一套,
+/// assets/fluent_lvgl 是存档(33 张, 该池没有运动/血氧/女性健康/米家 的图形
+/// => 换过去会有 5 张读不到)。每张 112x112、cf=0x10、50188B。
 /// 日历是**已知不覆盖**的一张, 不是漏配: 它的磁贴 = 固件自绘日期 + 一张浅灰圆盘底
 /// (`/resource/app/perpetual_calendar/calendar_background_icon.bin`, 解出来就是一个灰圆),
 /// 而这条路径是 launcher 代码里的 flash 字面量(0x0CB941A4), **不走注册表节点 +0x0C**
-/// => 本机制改不到它。曾按别名补过第 39 张去赌, 真机回访日历仍没换, 已撤
-/// (证据与图见 docs/icon_reverse_work/sheets/B_firmware_calendar.png)。
+/// => 本机制改不到它。曾按别名补过第 39 张试, 实测日历仍没换, 已撤。
 const ICON_STEMS: [&[u8]; IC_STEM_N] = [
     b"activities", b"aivs", b"alarm", b"alipay",
     b"breath", b"calendar", b"camera", b"card",
@@ -113,18 +111,17 @@ static mut IC_DEL_ST: u32 = 0;      // 0=空闲 1=可能要恢复 2=等恢复跑
 static mut IC_DEL_K: u32 = 0;       // 删除进度(第几个 stem; == IC_STEM_N 时删空目录)
 static mut IC_DELCONF: u32 = 0;     // 界面上"再点一次删除"的包号, 0 = 无
 
-// ===== 删除的真系统确认框(§46): 状态机在 confirm_pop, 这里只接本页的差异 =====
-// 四条真机定案(parent = 页根 / 点击回调当场建 / 关框真删对象 / 存活门走页根子对象表)
-// 只有一份实现, 依据见 `confirm_pop.rs` 文件头与 docs/Chaos_字体投递_20260926.md §45.14-45.22。
+// ===== 删除的真系统确认框: 状态机在 confirm_pop, 这里只接本页的差异 =====
+// 四条已验证的规矩(parent = 页根 / 点击回调当场建 / 关框真删对象 / 存活门走页根子对象表)
+// 只有一份实现, 依据见 `confirm_pop.rs` 文件头。
 // 本页留下两件事, 因为它们本来就是各页自己的东西:
-//   * **关过框必须排一次整页重建**(§46.1): obj_delete 只失效框自己那一片, 被它盖住的
+//   * **关过框必须排一次整页重建**: obj_delete 只失效框自己那一片, 被它盖住的
 //     标题栏那一层不在重画范围里, 不重建就冻成一片黑;
 //   * **什么时候才允许动对象树**: 本页的热窗口是 38 张逐拍换的跑批(IC_STATE 2|3),
 //     与字体页的 `window_is_quiet()` 不是同一个判据。
 static mut IP_POP_DIRT: u32 = 0;    // 1 = 关过框, 等一拍没跑批的时机排整页重建
 
-// 判据计数与状态行已删除(2026-09-26 用户要求): 界面上的探针读数撤掉, 页面只留功能。
-// 底层的 IC_STATE / IC_SAVED / IC_PLAN 这些**逻辑量**保留(它们驱动跑批, 不是显示用的)。
+// 注意: IC_STATE / IC_SAVED / IC_PLAN 这些是驱动跑批的**逻辑量**, 不用于界面显示。
 
 // ===== 界面列表(动态建行, 与表盘切换页同一套做法) =====
 /// 图标列表最多几条。条目 = 1(系统原图标) + 最多 8 个包(清单只有 8 行位置) = 9,
@@ -132,7 +129,7 @@ static mut IP_POP_DIRT: u32 = 0;    // 1 = 关过框, 等一拍没跑批的时�
 const IC_ENTRY_MAX: usize = 10;
 
 /// 桌面图标页(系统美化的二级页)的 page_id。删除流水线改完清单要重建这一页,
-/// 而它现在是独立注册页(page.rs / ipc.rs 里的 page6), 不再是页13。
+/// 它是独立注册页(page.rs / ipc.rs 里的 page6), 有自己的 page_goto/page_back。
 pub(crate) const ICON_PID: u32 = 6;
 /// 条目行文本缓冲: 主标签(包名 / "再点一次删除 X") 与副标签(包号 / 说明)。
 /// 静态缓冲的原因与表盘页 WATCH_LINES/WATCH_SUB 一样: 行控件的文本指针必须一直有效。
@@ -149,7 +146,8 @@ const IC_WALK_MAX: u32 = 512;
 
 
 /// 桌面记录链此刻在不在位。不在位时 `launcher_refresh_app` 会静默早退(0x0C513BD0),
-/// 所以我们照样换指针、但不假装刷新成功: 计入 `需重进桌面`, 在判据行上说明。
+/// 所以我们照样换指针、但不假装刷新成功: 指针已经换到我们的素材, 下一次进桌面重建
+/// 记录时会读到新路径, 只是当前这一屏不会立刻变。
 unsafe fn desktop_live() -> bool { fw_api::fw_list_head(fw_api::LAUNCHER_DESKTOP_LIST) != 0 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +209,7 @@ unsafe fn icon_packs_load() {
 
 /// 强制重读清单。投递包刚写进去的包必须**不用重启**就能在界面上看到, 所以每次
 /// 进美化页都重读一次(128 字节, 一次 open/read/close; index.txt 是普通文件,
-/// 不是设备节点, UI 线程读它不会阻塞 —— 陷阱 8 只针对设备节点)。
+/// 不是设备节点 —— 只有设备节点的 read 会在 UI 线程上阻塞到看门狗复位)。
 pub(crate) unsafe fn refresh_packs() {
     st_wr!(IC_LOADED, 0);
     icon_packs_load();
@@ -272,7 +270,7 @@ unsafe fn icon_index_write() -> bool {
         n += 1;
         i += 1;
     }
-    // O_WRONLY|O_CREAT = 6(官方 supervisor 的写组合, 内核层 O_RDONLY=1 不是 POSIX)
+    // O_WRONLY|O_CREAT = 6(与固件自带模块的写组合一致; 内核层 O_RDONLY=1 不是 POSIX)
     let fd = fw_api::open(ICON_INDEX.as_ptr(),
                           fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
     if fd < 0 { return false; }
@@ -382,8 +380,8 @@ unsafe fn icon_file_ok(slot: usize) -> bool {
     true
 }
 
-/// 第 pack 包在不在位(只查第一张 activities.bin)。界面用它把整包没投递的项标成 `(?)`,
-/// 每页只多做 3 次 open/close —— 38 张 x 8 包全查一遍在 UI 线程是不合适的。
+/// 第 pack 包在不在位(只查第一张 activities.bin)。界面用它把整包没投递的项在副标签上
+/// 标出来, 每页只多做 3 次 open/close —— 38 张 x 8 包全查一遍在 UI 线程是不合适的。
 unsafe fn pack_present(pack: u32) -> bool {
     if pack < 1 || pack > IC_PACK_MAX as u32 { return false; }
     let mut p = [0u8; ICON_SLOT];
@@ -483,7 +481,7 @@ unsafe fn plan_apply() {
     while k < ICON_STEMS.len() {
         let (node, id, _) = icon_find(k);
         // 注册表里没有这个应用(无表) / 我们的文件不在位(缺件) => 都不动它。
-        // 两类原因不再分开计数(判据行已删), 但**都必须跳过**, 不能去指一个打不开的路径。
+        // 两类原因不分开计数, 但**都必须跳过**, 不能去指一个打不开的路径。
         if node != 0 && icon_file_ok(k) {
             st_wr!(IC_PLAN[n], k as u32);
             st_wr!(IC_PLAN_ID[n], id);
@@ -496,7 +494,7 @@ unsafe fn plan_apply() {
     // 就把状态报成"已应用", 而注册表其实一个字节都没动 —— 界面会自己说谎。
     st_wr!(IC_STATE, if n > 0 { 2 } else { 0 });
     // 这里不再重建本页: 勾选态在 click_entry 里已经原地写过了, 跑批期间界面不需要动
-    // (重建式渲染会顺手把整页的字体样式重抄一遍, 那一下页面字体会变, 很难看)。
+    // (重建式渲染会顺手把整页的字体样式重抄一遍, 那一下整页字体会跳变)。
 }
 
 unsafe fn step_apply() {
@@ -544,7 +542,7 @@ unsafe fn point_to_ours(slot: usize) -> bool {
         return false;
     }
     // 桌面记录不在位时不假装刷新成功: 指针已经换了(下次进桌面会重建记录读到新路径),
-    // 只是当前界面不会变 —— 这正是"有时候点了没反应"的真身(56 轮), 不再计数。
+    // 只是当前界面不会变 —— 这就是"有时候点了没反应"的成因。
     if desktop_live() { fw_api::launcher_refresh_app(id); }
     // 回收上一包留下的堆串: 顺序必须在 refresh **之后** —— 在那之前桌面记录
     // (+0x0C)还引用着它(与 step_restore 同一条顺序)。
@@ -614,7 +612,7 @@ pub(crate) unsafe fn request_delete(pack: u32) {
 ///   2 等恢复跑完(38 拍);
 ///   3 清单里去掉这一行, 整块写回 —— **写失败就中止**, 不能出现"清单里没了、文件还在"
 ///     或反过来"文件删了、清单还列着"的半截状态;
-///   4 逐拍删 38 个文件, 最后删只剩空壳的目录(rename 不需要, 真机不需要留 del_ 目录)。
+///   4 逐拍删 38 个文件, 最后删只剩空壳的目录(不需要改名腾位置, 直接 remove 空目录)。
 unsafe fn delete_tick() {
     match st_rd!(IC_DEL_ST) {
         1 => {
@@ -752,7 +750,7 @@ pub(crate) unsafe fn lines_fill() {
             w.s("包 ".as_bytes());
             w.c(b'0' + ((pack / 10) % 10) as u8);
             w.c(b'0' + (pack % 10) as u8);
-            // 整包没投递时直接在副标签上说清楚(点下去不会有反应, 但不能让用户猜)
+            // 整包没投递时直接在副标签上说清楚(点下去不会有反应, 但这个状态必须写在界面上)
             if !pack_present(pack) { w.s(" 未投递".as_bytes()); }
         }
         w.end();
@@ -771,7 +769,7 @@ pub(crate) unsafe fn line_secondary(row: usize) -> *const u8 {
 }
 
 /// render 建完行之后把行句柄数组交给本模块(原地刷新要用)。
-/// 只在页面上下文里调用 —— 页面被销毁后这些句柄就作废了(陷阱 7)。
+/// 只在页面上下文里调用 —— 页面被销毁后这些行句柄就作废了(碰对象前先过 page_is_live)。
 pub(crate) unsafe fn bind_rows(rows: *mut u32, base: usize, n: usize) {
     st_wr!(IC_ROWS, rows);
     st_wr!(IC_ROWS_BASE, base);
@@ -825,7 +823,7 @@ unsafe fn popup_ask(pack: u32) {
 }
 
 /// 叉/勾共同的处理: 关框交给 `confirm_pop`(它按页根子对象表判框还在不在, 门没过转兜底)。
-/// 非 0 结局都要清确认态 + **排一次整页重建**(§46.1: 只 obj_delete 不重建, 被全屏框盖住的
+/// 非 0 结局都要清确认态 + **排一次整页重建**(只 obj_delete 不重建, 被全屏框盖住的
 /// 标题栏那一层就冻着不动), 勾才进删除流水线。行上的勾选态/确认态仍然原地跟上。
 unsafe fn popup_clicked(event: u32, ok: bool) {
     if confirm_pop::click(confirm_pop::SLOT_ICON, event) == 0 { return; }
@@ -842,13 +840,14 @@ pub(crate) unsafe extern "C" fn chaos_ipop_ok(event: u32) -> u32 { popup_clicked
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_ipop_no(event: u32) -> u32 { popup_clicked(event, false); 0 }
 
-/// 建页开头(render 开头)调用: 兜掉上一轮漏删的框 + 状态归零(confirm_pop 的规矩 3)。
+/// 建页开头(render 开头)调用: 兜掉上一次建页时漏删的框 + 状态归零(confirm_pop 的约定之一)。
 pub(crate) unsafe fn popup_reset() {
     confirm_pop::reset(confirm_pop::SLOT_ICON);
     st_wr!(IP_POP_DIRT, 0);
 }
 
-/// 新页实例边界(ui.rs 的 on_create)调用: 只丢状态不碰对象(陷阱 6)。
+/// 新页实例边界(ui.rs 的 on_create)调用: 只丢状态不碰对象 —— 息屏时 on_destroy 也会被
+/// 走到, 那里对象树还在但状态不该动, 句柄作废一律登记在这个边界上。
 pub(crate) unsafe fn popup_forget(pid: usize) {
     if pid != ICON_PID as usize { return; }
     confirm_pop::forget(confirm_pop::SLOT_ICON);
@@ -857,7 +856,7 @@ pub(crate) unsafe fn popup_forget(pid: usize) {
 
 /// 点某一条目。语义(与行上的文字一致):
 ///   未选中的项   -> 切过去(应用这一包 / 回系统原图标)
-///   已选中的包   -> 第一次点变成"再点一次删除", 第二次点弹真系统确认框(§46), 勾才删
+///   已选中的包   -> 第一次点变成"再点一次删除", 第二次点弹真系统确认框, 勾才删
 ///   系统原图标   -> 已经是它, 无事可做
 /// 跑批期间不接受换方向(半途换会留下"部分换部分没换"), 只把确认态清掉。
 unsafe fn click_entry(e: u32) {
@@ -866,7 +865,7 @@ unsafe fn click_entry(e: u32) {
     if entry_selected(e) {
         if pack == 0 { return; }
         if st_rd!(IC_DELCONF) == pack {
-            // 第二次点已选中的包 = 当场弹真系统确认框(§46), 勾才进删除流水线。
+            // 第二次点已选中的包 = 当场弹真系统确认框, 勾才进删除流水线。
             popup_ask(pack);
         } else {
             st_wr!(IC_DELCONF, pack);
@@ -902,7 +901,7 @@ pub(crate) unsafe fn tick() {
     // 而界面只显示一个勾选态。click_entry 在跑批期间也会吞掉切换。
     let running = st_rd!(IC_STATE) == 2 || st_rd!(IC_STATE) == 3;
     if running && st_rd!(IC_REQ) != 0 { st_wr!(IC_REQ, 0); }
-    // §46 兜底销毁: 关框那一下现场门没过才会转到这里。跑批(38 张逐拍换)期间不碰对象,
+    // 框的兜底销毁: 关框那一下现场门没过才会转到这里。跑批(38 张逐拍换)期间不碰对象,
     // 亮屏 + 没跑批的拍上补一刀; 补完照样要排那一次整页重建。
     if !running && page_is_live(ICON_PID as usize)
         && confirm_pop::close_deferred(confirm_pop::SLOT_ICON) {
