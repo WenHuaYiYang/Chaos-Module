@@ -877,12 +877,8 @@ pub(crate) struct FontListPage;
 /// 字体条目行的起始槽位(与 action/返回 隔开: 8 条占 0..7)
 const FONT_ROW0: usize = 0;
 /// "重新应用字体"那一行的槽位
-const FONT_ROW_REAPPLY: usize = 8;
-/// "补写一遍"那一行的槽位。逐对象补写(font_tree)是一次性任务: 点一下排一趟, 再点 = 中断。
-/// 样式级写回盖不到的对象(小部件屏 / 桌面"布局切换"的旧脸对象)只有这条路够得到。
-const FONT_ROW_BFILL: usize = 9;
-/// 行9 副标签的静态文本缓冲(行控件一直读这些指针, 必须是 static)
-static mut FT_BFILL_SUB: [u8; 48] = [0; 48];
+/// 行 0..7 = 字体条目槽位(FONT_ROW0 起); (v3.6) 原"重新应用字体"(行8)与
+/// "补写一遍"(行9)退役: 热替换接管后重应用冗余、逐对象补写不再需要。
 
 impl Page for FontListPage {
     fn fill_title(&self, buf: *mut u8) {
@@ -916,35 +912,8 @@ impl Page for FontListPage {
                     "还没有投递过字体\0".as_bytes(), FONT_EMPTY_SUB.as_ptr()));
                 if r != 0 { last = r; }
             }
-            let bf_on = font_tree::enabled();
-            // 行9 副标签 = 任务读数(跑: 进度; 完: 生效/没生效/导航中断/树变丢弃四个数)。
-            // 判据可分辨: 每种结局一个独立计数, 一次读数就能区分全部结局。
-            {
-                let (ok, nw, nav, ch, rounds, pages) = font_tree::backfill_stats();
-                let mut w = W::new(FT_BFILL_SUB.as_mut_ptr(), FT_BFILL_SUB.len());
-                if bf_on {
-                    w.s("跑到第 ".as_bytes()); w.n(rounds);
-                    w.s("/".as_bytes()); w.n(pages); w.s(" 页".as_bytes());
-                } else if ok != 0 || nw != 0 || nav != 0 || ch != 0 {
-                    w.s("补 ".as_bytes()); w.n(ok); w.s(" 处".as_bytes());
-                    if nw != 0 { w.s(" 败 ".as_bytes()); w.n(nw); }
-                    if ch != 0 { w.s(" 树变 ".as_bytes()); w.n(ch); }
-                    if nav != 0 { w.s(" 断 ".as_bytes()); w.n(nav); }
-                } else {
-                    w.s("按一次, 全页栈补一遍".as_bytes());
-                }
-                w.end();
-            }
             build_rows(ctx, last, &[
-                (FONT_ROW_REAPPLY, RowSpec::clickable("重新应用字体\0".as_bytes())),
-                // 样式级写回(含 23 条派生样式)盖不住小部件屏与桌面"布局切换"的旧脸
-                // 对象 —— 它们的 face 不经过样式级写回触及的任何样式。
-                // 逐对象直写是唯一够得到的路, 所以做成带门控的一次性任务(见 font_tree)。
-                // 这一行用 tap 而不是 switch/check: 点它只是排一趟任务或中断, 行右端不放部件。
-                (FONT_ROW_BFILL, RowSpec::tap(if bf_on {
-                    "补写中, 再点中断\0".as_bytes() } else { "补写一遍(修小部件/桌面)\0".as_bytes() },
-                    FT_BFILL_SUB.as_ptr())),
-                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
+                (8, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 建完行立刻原地补写勾选态, 并把行句柄交给 font_list: 切换与两步删除
             // 的反馈都走原地刷新(不重建整页 —— 重建会把整页字体样式重抄一遍)。
             font_list::bind_rows(ctx.rows, FONT_ROW0, ent as usize);
@@ -960,13 +929,7 @@ impl Page for FontListPage {
                 // 点未选中的 = 切过去; 点已选中的 = 第一次变"再点一次删除", 再点才删;
                 // 点当前在用的 = 提示"先切走"(在用的那份绝不删)。
                 0..=7 => font_list::click_row(idx),
-                // 8 = 请求重跑样式级写回。不在这里直接跑: 点击回调是固件的事件派发
-                //     上下文, 建 132 张 face 是秒级重活, 交给 UI tick 消费(见 font_apply::tick)。
-                8 => font_apply::request(),
-                // 9 = 一次性补写任务: 只翻静态量, 遍历与写入分拍在常驻 tick 里跑。
-                //     任务在跑时再点 = 中断(见 font_tree::toggle)。
-                9 => font_tree::toggle(),
-                11 => nav_back(),
+                8 => nav_back(),
                 _ => {}
             }
         }

@@ -319,8 +319,8 @@ unsafe fn tick_busy() -> bool {
     || st_rd!(SHAKE_COOL) != 0                    // 摇一摇冷却按拍计
     || st_rd!(HEAL_TRYS) != 0                     // 自愈重试的痕迹: 保持快节拍到本轮结束
     || font_apply::pending()
-    || font_tree::backfill_running()
     || icon_apply::pending()
+    || res_hook::pending()
     || font_list::pending()
     || confirm_pop::pending()
 }
@@ -379,14 +379,18 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
         st_wr!(RENDER_REQ, RENDER_NONE);
         if page_is_live(rq as usize) { render_page(rq as usize); }
     }
-    // 4. 字体: 先消费样式级写回请求(含开机自动应用), 再跑逐对象补写。
+    // 4. 字体: 先消费样式级写回请求(含开机自动应用)。
     //    放定时器而不是页面渲染路径, 是因为**目标页不是我们的页** —— 系统页
     //    没有任何我们能挂的渲染钩子(生命周期槽位只属于我们注册的页, eventbus 也
-    //    没有"页面切换"主题)。逐对象补写那条的风险由三条消解: 句柄不缓存(每轮现取
-    //    页根)、指针全过门、息屏直接跳过。详见 font_tree.rs 头部纪律。
+    //    没有"页面切换"主题)。
     font_apply::tick();
-    font_tree::tick();
+    // wrapper 原地热替换(融合 Corona 的核心一招): 20 拍一轮 + quiet 门,
+    // fail-closed(结构校验任一不过一个字节都不写)。详见 font_hot.rs 头部。
+    // (v3.6) 原 font_tree::tick 逐对象补写退役 —— 热替换全面接管, 不再需要。
+    font_hot::tick();
     icon_apply::tick();
+    // 系统资源缓存逐拍退役，与文件回调安装共用现有节拍。
+    res_hook::tick();
     // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面几项跑批同一个位置:
     // 快节拍 50ms 一拍, 息屏空闲时降到 1000ms(页面不在前台时 render_req 也只是置位, 由存活门挡住)。
     font_list::tick();

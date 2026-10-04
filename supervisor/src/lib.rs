@@ -10,8 +10,9 @@ pub(crate) use state::*;
 
 mod font_apply;
 mod font_list;
-mod font_tree;
+mod font_hot;
 mod icon_apply;
+mod res_hook;
 mod confirm_pop;
 
 mod text;

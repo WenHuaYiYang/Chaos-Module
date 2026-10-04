@@ -1,226 +1,343 @@
-# Chaos
+# Chaos — 小米手环 10 Pro 自研平台
 
-在小米手环 10 Pro 上跑自己写的原生应用。一个 `no_std` 的 Rust 内核模块，配一段 Lua 安装器，
-装完之后桌面多出一枚 Chaos，点进去的页面、控件、转场动画跟系统自带的一模一样。
-不联网，不依赖手机，不碰固件分区。
+一个内核模块加一个 Lua 安装器，借固件自己的注册链把**原生应用**装进手环桌面：
+图标出现在 launcher 里，点进去是固件原生的页面与转场动画。全程不联网、不依赖手机、
+不改动固件分区。
 
-- 设备：小米手环 10 Pro（p67），固件 **3.101.043**。地址是这一版逐条核出来的，别的固件别用。
-- 设备侧零第三方依赖，只用 Rust 核心库和固件自带 API。
-- 许可：AGPL-3.0，全文见 `LICENSE`。
+- 目标设备：小米手环 10 Pro（p67）
+- 目标固件：**3.101.043**。036 时代的地址与产物已全部失效，别拿这套代码去跑 036。
+- 产物：`chaos-installer-10p-043-v1.bin`（170,258 字节）—— 模块、安装器、应用图标打进一个容器。
 
-## 为什么做这个
+这份 README 面向项目内部（接手的人、下一个 agent），所以里面直接写主工程路径与完整坑清单。
+对外发布的是 `github.com/WenHuaYiYang/Chaos-Module` 那份，203 行，差异是明确的：
 
-手环允许你自己写表盘，走的是一条 Lua 运行时。那条路能画东西，但也就能画东西 —— 想换系统
-字体、换桌面图标、看看 `/proc` 里有什么，Lua 层一概够不着。再往里一层只有内核模块这条路。
-固件没给用户装原生应用的入口，可它注册表盘应用的那条链是敞开的：落地文件、`insmod`、
-告诉固件"这里有个应用"。这个项目就是从那条链进去，把注册出来的应用换成我自己的。
+- 对外那份第一人称，不写内部历史、内部路径、日期与轮次
+- 对外那份只留 8 条最要紧的坑（下面这份是全集），不含"仓库不放哪些素材"那类清点，
+  也不含构建产物：`chaos_sup.ko`、`chaos_mod.ko`、`chaos_icon.bin` 都从远程跟踪里拿掉了，
+  `.gitignore` 挡 `*.ko *.bin *.a *.o *.elf`。本地这三个文件照旧留着，是工作产物。
 
-界面看起来那么"系统"，是因为那些页面真的是固件建的。我只管 `on_create` 里放什么行、
-`event` 里响应哪一格，排版、字体、按压反馈、进出动画全是固件自己的。
+技术事实（页面清单、容器格式、投递包规则、地址映射）两边必须一致，改一处要同步另一处。
 
-## 能干什么
+## 这个目录里有什么
 
-主页顶部三行是实时读数（存储、内存带进度条，CPU），下面四个入口：文件管理、表盘管理、
-亮度、系统美化。功能整个列一遍：
+```
+Chaos-Module/
+├── supervisor/            内核模块 chaos_sup（Rust, no_std，8,524 行）
+│   ├── chaos_sup.ko       构建产物（当前 84,972 B）
+│   └── src/
+│       ├── lib.rs         crate 根：导出与胶水
+│       ├── state.rs       全部状态与常量（页数、页名键、描述符缓冲）
+│       ├── page.rs        14 个页面的实现与 PAGE_TABLE
+│       ├── ui.rs          页面框架：建页 / 行 / 事件分发 / 生命周期
+│       ├── fw_api.rs      已验证固件 API 封装层（新界面一律走这里）
+│       │   └── gfx.rs / page.rs / fs.rs / sys.rs / event.rs
+│       ├── ipc.rs         安装协议：设备文件 IPC 与注册链
+│       ├── explorer.rs    文件管理器（目录遍历 / 查看 / strings 提取）
+│       ├── watchface.rs   表盘列表、选择、摇一摇轮换
+│       ├── font_apply.rs  免重启换字体：样式表分拍写回
+│       ├── font_list.rs   页5 字体清单与自由切换
+│       ├── font_tree.rs   逐对象补写（一次性任务，不是后台常驻）
+│       ├── icon_apply.rs  页6 桌面图标：读清单、跑批换图标、恢复
+│       ├── confirm_pop.rs 页5/页6 共用的删除确认框状态机
+│       ├── text.rs        文本缓冲与格式化
+│       └── mem.rs         st_rd! / st_wr! 与裸地址读写
+├── module/                chaos_mod：最小示例模块，只验"加载链 + exec 链"通不通
+├── installer/
+│   ├── chaos_installer.lua   主安装器（11 步，见下）
+│   ├── font_pack.lua         字体投递包的安装侧
+│   ├── icon_pack.lua         图标投递包的安装侧
+│   └── font_moved.txt        容器第 4 槽的占位文件（字体已移出主包，槽不能少）
+├── fonts/                字体源文件 + 霞鹜文楷的 OFL.txt —— **另三份未核授权，发布前要剔除**
+│                         见"许可与合规"
+└── chaos_icon.bin        应用图标（112x112 ARGB8888，由 scripts/gen_chaos_icon.py 生成）
+```
 
-| 功能 | 说明 |
+## 功能
+
+注册 **14 个固件页**（这是真机定案的硬上限，见"硬约束"）。页名键是 `page_goto` 的解析用名，
+与界面显示无关；显示标题走的是"进入时点的那一行"的名字。
+
+| page_id | 页名键 | 界面 | 干什么 |
+|---|---|---|---|
+| 0 | `main` | Chaos | 存储 / 内存 / CPU 实时读数，四个入口 |
+| 1-4 | `files` `files1` `files2` `files3` | 文件管理 | 目录 1 到 4 级，条目 + 更多 + 返回 |
+| 5 | `textsub` | 系统美化 · 更换字体 | 已投递字体的复选框清单、切换、两步删除 |
+| 6 | `iconsub` | 系统美化 · 桌面图标 | 图标包列表、应用、恢复系统原图标 |
+| 7 | `viewer` | 文件查看 | 文本分段读；二进制按 strings 提取 |
+| 8 | `wfaces` | 表盘切换 | 列出内置 + 市场表盘，点选即切 |
+| 9 | `wfshake` | 摇一摇轮换 | 勾选哪些表盘参与摇一摇轮换 |
+| 10 | `wfmgmt` | 表盘管理 | 摇一摇开关 + 进 8 / 9 两个二级页 |
+| 11 | `bright` | 亮度控制 | 当前亮度、自动亮度开关 |
+| 12 | `cache` | 缓存清理 | 统计并清理可清理项 |
+| 13 | `fontd` | 系统美化（菜单） | 行0 更换字体、行1 桌面图标、行2 返回 |
+
+主界面的行分配：0 存储（带进度条）、1 内存（带进度条）、2 CPU、3 文件管理、
+4 表盘管理、5 亮度控制、6 系统美化。展示顺序把 CPU 放在最前，但句柄槽位不变。
+
+## 构建
+
+```bash
+# 1. 编译内核模块 -> Chaos-Module/supervisor/chaos_sup.ko
+powershell -ExecutionPolicy Bypass -File scripts/build_chaos.ps1
+
+# 2. 打包容器 -> chaos-installer-10p-043-v1.bin
+python scripts/build_chaos_installer_043.py
+
+# 3. 字体投递包（吃主包当模板，所以必须在第 2 步之后）
+python scripts/build_font_pack.py [--src <你的.ttf>] [--name <12字节内短名>] [--pkg <12位数字>]
+python scripts/test_font_pack_lua.py        # 离线冒烟，当前 229 项
+
+# 4. 图标投递包（同样吃主包当模板）
+python scripts/build_icon_pack.py --src <素材目录>
+python scripts/test_icon_pack_lua.py        # 离线冒烟，当前 53 项
+
+# 单独校验 ko（未定义符号必须为 0）
+python scripts/verify_chaos_ko.py Chaos-Module/supervisor/chaos_sup.ko
+```
+
+注意：编译失败时第 2 步**不会报错**，会拿旧 ko 重新打包。看到 bin 体积没变就要当心。
+
+重要：第 2 步在公开仓库里跑不通，原因**不是**缺模板 —— 壳与缩略图块都已自产（见"容器格式"
+一节）。跑不通是因为打包链本身（`scripts/build_chaos_installer_043.py` 等）不对外：它写死了
+本地工程路径。对外给的是格式实现 `tools/container_shell.py`，项目侧那点 glue 由使用者自己接。
+
+### 编译链
+
+```
+lib.rs + 各模块
+   |  cargo +nightly build --release --target thumbv8m.main-none-eabi
+   |    -Z build-std=core,compiler_builtins
+   |    -C target-cpu=cortex-m33 -C target-feature=-fpregs
+   v  （软浮点、禁浮点寄存器，匹配手环 SoC）
+libchaos_sup.a
+   |  rust-lld -flavor gnu -r --gc-sections
+   |           -u module_main -u chaos_ctor -T merge_sections.ld
+   v
+chaos_sup.ko（relocatable ELF）
+   |  python scripts/fix_ko_layout.py     重写节区 sh_addr 为连续布局
+   |  python scripts/verify_chaos_ko.py   未定义符号必须为 0
+   v
+chaos_sup.ko（可被 Vela 模块加载器识别）
+```
+
+| 组件 | 说明 |
 |---|---|
-| 文件管理 | 逛设备文件系统到四级目录；文本分段读，二进制按 strings 抠可打印串 |
-| 表盘 | 内置与市场表盘点选即切；勾选哪些参与摇一摇轮换；摇一摇总开关 |
-| 亮度 / 缓存 | 手动加自动亮度；统计并清理可清理项 |
-| 更换字体 | 投进设备的字体列成复选框清单，点一下就换不用重启，支持两步删除 |
-| 桌面图标 | 换桌面 38 个应用位的图标（这版固件实际存在 35 个），可一键还原 |
+| Rust nightly | 需要 `-Z build-std` |
+| `rust-src` 组件 | `rustup component add rust-src` |
+| `thumbv8m.main-none-eabi` | Cortex-M33，软浮点 |
+| `rust-lld` | nightly 自带 |
+| Python 3 + Pillow | 后处理、打包、素材转换、离线冒烟 |
+| lupa（Lua 桥） | 只跑离线冒烟用的 lvgl mock，非必需依赖 |
 
-## 快速开始
+关键参数：`-r` 产出可重定位 ELF；`--gc-sections` 控体积；`-u module_main -u chaos_ctor`
+强制保留入口；`-T merge_sections.ld` 合并 `.text.*` —— `rust-lld -r` 不会自动合并，
+漏了它 `.text` 大小为 0，模块不加载代码。
 
-```bash
-rustup toolchain install nightly
-rustup component add rust-src --toolchain nightly
-rustup target add thumbv8m.main-none-eabi
-```
+### 容器格式与安装步骤
 
-```bash
-cd supervisor
-RUSTFLAGS="-C target-cpu=cortex-m33 -C target-feature=-fpregs" \
-  cargo +nightly build --release --target thumbv8m.main-none-eabi \
-    -Z build-std=core,compiler_builtins
-```
-
-产物 `target/thumbv8m.main-none-eabi/release/libchaos_sup.a`。那两个 flag 别省：手环这颗 SoC
-没有浮点寄存器，硬浮点编出来的 ELF 属性跟固件自带模块不一致，加载器不认 —— 要盯的是
-`e_flags` 与 `.ARM.attributes`。
-
-再往合成可加载 `.ko` 一步：
-
-```bash
-rust-lld -flavor gnu -r --gc-sections \
-         -u module_main -u chaos_ctor \
-         -T merge_sections.ld \
-         -o chaos_sup.ko libchaos_sup.a
-```
-
-四条参数各在救一个坑。`-r` 出可重定位 ELF，加载器只吃这种。`--gc-sections` 控体积，
-不 GC 会把 `core` 的整个 `.text` 拖进来，实测 550 KB 上下，而 `insmod` 上限是 256 KB。
-`-u` 保住两个没有调用方的入口，不然一起被回收。`-T merge_sections.ld` 把 `.text.*` 合成
-连续一段并丢掉 `.llvmbc`；`rust-lld -r` 不会自己合，少了它 `.text` 大小是 0，而加载器
-一声不吭 —— 模块照样"装成功"，里面一条指令都没有。这个脚本得自己写，就干那两件事。
-
-链完还要把各节 `sh_addr` 从全 0 重排成连续布局，否则 `.rodata` 压在 `.text` 上，切表盘就崩。
-最后校验未定义符号必须为 0：这个模块没有解析外部符号的阶段，留一个就是运行时跳飞。
-
-## 产出 ko 与应用图标
-
-上面那几步是小手工程;仓库里带了脚本,一次跑完:
-
-```bash
-sh tools/build_ko.sh              # -> supervisor/chaos_sup.ko   (也可以传目录/输出路径)
-python3 tools/gen_chaos_icon.py   # -> chaos_icon.bin            (读 tools/chaos.png, 需 Pillow)
-```
-
-`tools/build_ko.sh`(`tools/build_ko.ps1` 是同一件事的 Windows 版)干四件事:cargo 编静态库、
-`rust-lld` 链成可重定位 ELF、`fix_ko_layout.py` 把各节 `sh_addr` 从全 0 重排成连续布局、
-`verify_chaos_ko.py` 要求未定义符号为 0。每一步在救哪个坑写在脚本头部。
-
-这两个产物**不入库**(构建产物),但它们是手机端那个制作 App 的构建前提:App 打出投递包需要
-内核模块与应用图标,所以 App 的构建会来这个仓库取(见 App 仓库 README 的"构建前提")。
-
-## 手机端配套工具
-
-不想开电脑的话,手机端有个同许可(AGPL-3.0)的制作 App:
-<https://github.com/WenHuaYiYang/chaos-bandpack> —— 在手机上选字体或图标、本地打包成
-投递 .bin,再走官方的表盘侧载通道投进去。它打出的包与这边的 PC 脚本**逐字节一致**,
-构建时来这个仓库取内核模块与应用图标(见上一节)。
-
-## 装到手环
-
-模块、安装器 Lua、应用图标打进一个表盘容器 `.bin`，手环把它当一枚第三方表盘收下来
-（跟自己装表盘同一条路）。配对端投递过去，在表盘管理里切到它，安装器界面点 Run，11 步
-走完桌面上就出现图标。
-
-第二次点 Run 会在"加载模块"那一步失败并要求先关机再开机 —— 这是故意的。注册链表的条目
-在模块被卸载后悬空，launcher 下一轮回巡碰到就崩，所以这套流程从不 `rmmod`。
-
-## 它是怎么跑起来的
+安装容器 magic `0x1234A55A`：
 
 ```
-Lua 安装器 -> 落地文件到 /data/chaos -> insmod chaos_sup.ko
-   -> chaos_sup 常驻内核模块，持有设备节点 /dev/chaos
-   -> 从设备文件收命令，调固件注册链
-   -> 注册应用 com.chaos.manager -> launcher 出图标 -> 点图标进页 0
-   -> 14 个页面的 on_create / on_destroy / event 都在模块的 PAGE_TABLE 里
+[0x000 头部] [0x028 包名 12B] [0x068 显示名 64B] [0x0A8 主题表]
+[0x148 记录表] [预览块 12B 头 + 数据] [文件区]
+每个文件 = [u32(内容长度 | 路径长度 << 24)] + [16B 零] + [路径] + [内容]
 ```
 
-安装器每走一步让出一个 `lv_timer` 拍，让固件事件循环转一圈。注册链的中间态在同一拍里被
-读到会出错。
+记录表每条 16 字节 `(0x05000000|槽号, 0, 偏移, 长度)`，尾标记 `(0x05000000, 0, 0, 0)`。
+**槽数可以增减**：条数直接决定记录表结束地址（`0x20` 与 `0xAC` 存的就是它）、首记录的第三个
+字段、以及 `0xD8` 的文件条数，全部能派生（别人的容器实测有 10 条）。主包第 4 槽那个占位文件
+（`installer/font_moved.txt`）现在留下的唯一理由是让重建产物跟真机验证过的那份逐字节相同；
+要减槽得先真机复核安装链。整份壳由 `scripts/container_shell.py` 自建，不吃外部模板；
+判据是"解析 → 重建 → 逐字节相同"跑过 5 个来源不同的容器（两个外部作者的容器是产物、
+不入库，缺失时脚本打印跳过）。缩略图块（预览块）同样自产：`scripts/gen_preview.py` 按固件
+解压函数 `0x0CA91EC4` 的格式自己编码，PC 与安卓 App 两端各一份实现，见
+`../docs/Chaos_预览块自产_20261001.md`。
 
-## 代码放在哪
-
-| 路径 | 内容 |
+| 源 | 容器内路径 |
 |---|---|
-| `supervisor/src/` | 内核模块 chaos_sup，Rust `no_std`，8,524 行 |
-| `supervisor/src/fw_api.rs` 与同名目录 | 固件 API 封装层，所有固件调用只能走这里 |
-| `supervisor/src/state.rs` `page.rs` `ui.rs` | 状态与常量 / 14 个页面与 `PAGE_TABLE` / 页面框架 |
-| `supervisor/src/ipc.rs` | 设备文件 IPC 与注册链 |
-| `supervisor/src/font_*.rs` `icon_apply.rs` `confirm_pop.rs` | 换字体、换桌面图标、两个美化页共用的确认框 |
-| `supervisor/src/explorer.rs` `watchface.rs` `text.rs` `mem.rs` | 文件管理器、表盘列表、文本缓冲、裸地址读写 |
-| `installer/*.lua` | 主安装器（11 步）与字体、图标投递包的设备侧 |
-| `tools/container_shell.py` | 容器壳的生成与反解，格式规则全在这一个文件里；`python container_shell.py <容器.bin>` 会做"解析 → 重建 → 逐字节相同" |
-| `module/` | 最小示例模块，只验"加载链 + exec 链"通不通 |
+| `installer/chaos_installer.lua` | `_lua/chaos-installer/main.lua` |
+| `supervisor/chaos_sup.ko` | `_lua/chaos-installer/chaos_sup.ko` |
+| `chaos_icon.bin` | `_lua/chaos-installer/chaos_icon.bin` |
+| `installer/font_moved.txt` | `_lua/chaos-installer/lxgw.ttf`（占位） |
 
-构建产物不入库（`.gitignore` 挡 `*.ko` `*.bin` `*.a`）。`fonts/` 也不在仓库里 —— 字体文件
-能不能分发由原作者条款决定，不取决于我。
-
-## 十四个页面
-
-14 页是上限。我把 `PAGE_COUNT` 抬到 15、第 15 页借用现成页面实现、里面一行新代码都没有，
-安装到第 4.5 步就黑屏自重启。机制没查清，所以按硬上限处理，要加界面只能重新分配已有
-page_id。页名键只是 `page_goto` 的解析用名，标题栏显示的是"你点哪一行进来的"那行文字。
-
-| page_id | 页名键 | 界面 |
-|---|---|---|
-| 0 | `main` | Chaos 主页（读数与四个入口） |
-| 1-4 | `files` `files1` `files2` `files3` | 文件管理 1 到 4 级 |
-| 5 / 6 | `textsub` / `iconsub` | 更换字体 / 桌面图标 |
-| 7 | `viewer` | 文件查看 |
-| 8 / 9 / 10 | `wfaces` / `wfshake` / `wfmgmt` | 表盘切换 / 摇一摇轮换 / 表盘管理 |
-| 11 / 12 | `bright` / `cache` | 亮度 / 缓存清理 |
-| 13 | `fontd` | 系统美化菜单 |
-
-## 容器格式与投递包
-
-容器 magic `0x1234A55A`：`[头部] [包名 12 字节] [显示名 64 字节] [主题表] [记录表] [缩略图块]
-[文件区]`。记录表一条 16 字节 `(0x05000000|槽号, 0, 偏移, 长度)`，末尾跟一条同样的尾标记；
-文件区里每个文件前面 20 字节小头（u32 装内容长度和路径长度左移 24 位，再加 16 字节零），
-然后路径、内容。槽数想加就加 —— 条数决定记录表结束地址和主题表里的文件条数字段，都能算出来，
-别人的容器实测有 10 条。整份壳由 `container_shell.py` 自己生成，不靠任何外部模板；它的判据是
-"解析 → 重建 → 逐字节相同"跑过五个来源不同的容器。
-
-**缩略图块**（表盘列表里显示的那张预览图）不在这份代码里：`container_shell.py` 把它当参数收，
-从任一现成容器里抠一块出来就能用 ——
-`python container_shell.py extract <带缩略图的容器.bin> preview.bin`。它的编码是固件自己的 RLE：
-块头 12 字节是 `cf=0x10`、`flags=0x04`、宽、高、数据长；数据区是魔数 `0x5AA521E0` 加一个 u32
-（低 4 位是 RLE 单元字节数，高 24 位是解压总长 `1024 + 宽*高`），再往后是 RLE 流（控制字节
-小于 `0x80` 表示重复、不小于则字面拷贝），解出来是 1024 字节调色板（每条 B G R A）加 `宽*高`
-个索引。照这个格式就能自己画一张预览图。
-
-11 步安装，每步一拍：
+安装器步骤，每步占一个 `lv_timer` 拍（让固件事件循环转一圈再走下一步）：
 
 ```
-1 部署模块 -> 2 部署应用图标 -> 2.5 部署字体 -> 3 加载模块 -> 4 检查设备
+1 部署模块 -> 2 部署应用图标 -> 2.5 部署字体 -> 3 加载模块(insmod) -> 4 检查设备
 -> 4.5 设置语言 -> 5 恢复占位 -> 6 注册应用 -> 6.5 通知系统 -> 7 发布应用 -> 8 发布桌面条目
 ```
 
-字体与图标不在主包里，各打一个 `.bin`，同一套容器格式、不同的一组槽。身份键是容器头
-`0x28` 那 12 字节 `pkgName`，不是 `0x68` 的显示名 —— 两个包 pkgName 相同，固件就认为是同一个
-包，互相覆盖。投递包落盘位置与清单：
+第 3 步在检测到旧模块还活着时会主动失败，提示先关机再开机 —— 这是设计，不是 bug。
 
-- 图标按包存 `/data/chaos/icons/<包号>/<stem>.bin`；字体按槽存 `/data/chaos/font/st<槽号>.ttf`，
-  槽 1 到 8 可投，槽 0 是安装器自带那份
-- 两份 `index.txt` 逐字节同一套格式：定长 128 字节、8 行、每行 16 字节，写法是"两位包号或
-  槽号、一个空格、12 字节短名、换行"，空槽填 16 个空格。这段读写在模块和投递脚本里各一份
-  （图标那条链真机跑通了不想动），所以**改格式得同时改所有写它的地方**
-- 设备上**不遍历目录**，清单是唯一来源（遍历在真机死锁过）；LVGL 图像缓存按路径常驻，
-  重投同名包要切走再切回来才看得到新内容
-- 图标素材：画布 112×112，内容外沿不超过 100×100，四边各留 6 px 以上透明，BGRA8888 加
-  12 字节头，单文件 50,188 字节。这几个数字是量固件自带图标得来的，留白被桌面当磁贴间距用
+### 投递包
 
-## 改之前要知道的几件事
+字体与图标**不在主包里**（2026-09-26 起移出），各自一个 `.bin`，与主包同一个容器壳、
+不同的一组槽。包号是表盘容器的身份键（`0x28` 处 12 字节 `pkgName`）：主包固定，
+字体包与图标包的号由内容哈希推导，所以同一份内容幂等、不同内容自动分开、多包可并存。
 
-- 固件调用一律走 `src/fw_api.rs`，业务代码里不出现裸 `transmute(0x0C...)`。
-- 函数指针地址 bit0 必须是 1（Thumb 态）。Cortex-M33 没有 ARM 态，偶数地址一调就硬 fault。
-- 空串指针不等于 NULL：副标签传只含 `\0` 的缓冲会真建出一个标签，界面凭空多一行空白。
-- 碰 LVGL 对象先过存活门 `page_is_live(pid)`；句柄作废放 `on_create`，`on_destroy` 不碰状态
-  （息屏也走 `on_destroy`，在那儿清句柄会让实时刷新永久停摆）。
-- 常驻 `lv_timer` 不能用固定频率：息屏不干活、值不变不写、忙 50 ms 闲 1000 ms，
-  改周期写完必须读回核对。破了这条的直接后果是装完后续航雪崩。
-- 别在 UI 线程 read 设备节点（会阻塞到看门狗复位）；表盘 Lua 回调里别做需要内核调度锁的事。
-- 页名、注册、页表三处同步：`state.rs`、`ipc.rs`、`page.rs`。
-- 地址映射：运行地址 `R = 文件偏移 F + 0x0C0C0000`；字符串常量还要多扫 0x2C 别名域。
+- 设备上落地：图标**按包存** `/data/chaos/icons/<包号>/<stem>.bin`；字体**按槽存**
+  `/data/chaos/font/st<槽号>.ttf`，可投递槽位 1 到 8（槽 0 是安装器自带那份，不可投递）
+- 清单：`/data/chaos/icons/index.txt` 与 `/data/chaos/font/index.txt`，
+  两份**逐字节同一套格式** —— 定长 128 字节（8 行 × 16 字节），行是
+  `[2 位包号或槽号][空格][12 字节短名][换行]`，空槽是 16 个空格。
+  代码两侧各写一遍（图标那条链已在真机跑通，不抽公共模块），**改一处要全跟着改**
+- 设备上**刻意不遍历目录**（真机踩过 procfs 遍历死锁），清单是唯一来源
+- 图标素材规格：画布 112×112，内容上限 100×100，四边至少 6px 透明留白 —— 量固件自带
+  `more.bin` 得到的，留白是桌面拿去做磁贴间距的，少了会看着比系统图标大一圈
 
-## 已知限制
+## 硬约束（改代码前必读）
 
-- 只适配 3.101.043。换固件要重做地址表，不是改几个常量的事。
-- 原生页面 14 页硬上限；文件管理只到四级目录（`/data/chaos/icons/01` 进不去）。
-- 桌面图标换不到"日程"那一格：那格的图是固件现场画的（白色圆盘底加两枚日期文字），
-  底图路径写死在代码里、在只读 romfs 上，不走注册表的图标指针。两枚文字按白底配的深色，
-  所以就算换底图，深色素材也会让日期读不出来。
+这几条每一条都是真机踩出来的，违反的后果是黑屏重启或功能静默失效。
 
-## 许可、隐私与风险
+- **固件调用一律走 `src/fw_api.rs`**，业务代码里不许出现裸 `transmute(0x0C...)`。
+- **函数指针地址必须 bit0 为 1**（Thumb 态）。Cortex-M33 没有 ARM 态，偶数地址一调就
+  INVSTATE 硬 fault。逆向工具给的是偶数 entry，当指针用之前必须 `|1`。
+- **空串指针不等于 NULL**。副标签传 `b"\0".as_ptr()` 会触发惰性创建，界面凭空多一行空白。
+- **碰任何 LVGL 对象前先过存活门 `page_is_live(pid)`**。定时器比页面活得久，缺这道门
+  在退出应用时必崩。句柄作废放在 `on_create`，`on_destroy` 不碰状态 —— 息屏也会走
+  `on_destroy` 但对象树还在，在那里清句柄会让实时刷新永久停摆。
+- **常驻 `lv_timer` 不许按固定频率跑**。三条规则一起成立：屏幕门（`fw_api::screen_is_on()`）、
+  值不变不写（影子比对）、按忙闲调频（忙 50ms，息屏全空闲 1000ms）。改周期用
+  `timer_set_period` 且**写后必读回**，对不上就永久退回原频率。
+  违反的直接后果是装完后续航雪崩。
+- **`lv_timer` 只建一次**，句柄建立后永不丢弃。清句柄不等于释放对象（定时器挂在内部链表上），
+  "疑似失效就重建"会让旧实例继续跑并逐轮累积。
+- **不要在 UI 线程 read 设备节点**。`/dev` 下字符/块设备的驱动 `read()` 会阻塞到看门狗复位；
+  只有 `DT_REG` 才允许 open/read。目录用 `opendir`/`readdir`/`closedir`，内核 open 不是 POSIX
+  （只读标志是 1，不是 0）。
+- **槽号到回调禁止 catch-all**。`match` 里写 `_ => ev9` 会让新增槽位静默错配。
+- **容量常量一旦改，所有清理循环要同步**，否则留悬空句柄，后果是 use-after-free。
+- **原生应用最多注册 14 页**（真机定案：把 `PAGE_COUNT` 抬到 15、第 15 页借用现成页、
+  不含任何新代码，安装到第 4.5 步就黑屏自重启）。要加界面就重新分配已有 page_id。
+  二级界面必须有独立 page_id —— 只有真 `page_goto`/`page_back` 才有固件的压栈转场动画。
+  页名在 `state.rs`、注册在 `ipc.rs`、页表在 `page.rs`，**三处必须同步**。
+- **不要在表盘 Lua 回调里做需要内核调度锁的操作**（`os.execute`、procfs 目录遍历必死锁）。
+- 固件映射：运行地址 `R` 对应文件偏移 `F` 的关系是 `R = F + 0x0C0C0000`；字符串常量还要
+  搜 0x2C 别名域（偏移 `+0x2C0C0000`），xref 两个域都得扫。
 
-源码按 **AGPL-3.0** 提供（`LICENSE`，GNU 官方文本逐字未改）。这个项目早期有一部分逻辑表达与
-容器实现派生自上游项目 Canopus（它同样是 AGPL-3.0），那些派生点现在已逐文件重写：留下来的
-只有固件地址、结构偏移、协议字节格式这类逆向得到的事实 —— 事实不受版权保护。容器壳那一层是
-本项目自己实现的（见上一节的 `container_shell.py`）。
+## 验证
 
-许可仍按 **AGPL-3.0** 发布，这是明确的选择，不是继承来的约束：AGPL 允许你再分发、也允许商用，
-条件只有一个 —— 发二进制就得同时给源码，下游继续用同一份许可。
+本项目**没有针对固件行为的单元测试** —— 一切最终判据是真机读数。能离线做的先离线做：
 
-字体和图标的素材不在这个仓库里，各自授权不同，要用请自己核对。字体那条线里我们改作过一份
-霞鹜文楷（子集化加度量归一化，属 SIL OFL-1.1 意义上的改作物）：按许可要求，改作物的字体名
-换掉了上游声明的保留字体名，署名、版权声明和许可文本原样随字体走，全文就是那份 OFL-1.1。
+- 构建通过 + `verify_chaos_ko.py` 未定义符号为 0
+- 字体投递链离线冒烟 229 项、图标投递链 53 项（lupa 加 lvgl mock，把"表盘 Lua 语法或
+  逻辑错"这类在真机上直接表现为黑屏的问题先钉死）
+- 真机验证前判据必须**可分辨**：不同失败模式对应不同读数
+- 证据等级从高到低：`DEVICE_PROVEN` > `DEVICE_PROBED` > `STATIC_CONFIRMED` > `STATIC_RECOVERED`。
+  **编译通过不等于设备可用**
+- 探针读数一律用二维码或界面显示，不写文件（设备上读不了文件）；探针达到目的后
+  下一次改动时顺手删掉
 
-隐私：模块只在设备本地读 `/proc` 与固件状态，结果显示在手环屏幕上。不联网、不上传、不采集、
-不落盘任何用户数据。设备有蓝牙，但本模块不用它。
+## 配套安卓 App
 
-风险：这套代码走固件注册链把应用塞进手环，属于非授权修改 —— 可能失去保修、可能变砖、可能
-随固件升级失效。只在你自己拥有的设备上弄，风险自己担。
+`../android/` 是手机侧的制作工具：选字体做子集化与度量归一化、选图片转图标、
+在本地生成与 PC 脚本**逐字节等价**的投递包，再传到手环。投递包的缩略图（预览块）也在
+App 内按同一套格式生成，与 PC 侧同口径但各自渲染像素（不比字节）。当前 1.0.0，
+包名 `com.chaos.bandpack`，自签发布。它内嵌主包壳与固件解出的系统原图标，
+所以那个 APK 是自用件，不是外发件。
+
+## 许可与合规
+
+### 代码
+
+本目录的源码（Rust 模块、Lua 安装器、`../scripts/` 的 Python）的许可见
+`Chaos-Module/LICENSE`。
+
+历史与现状：早期版本（前身 self_canopus 时代）的 supervisor 部分逻辑与容器壳
+**曾经**派生自第三方项目 canopus（AGPL-3.0），因此整包一直按 AGPL-3.0 分发。
+2026-10-01 的派生审计（`../docs/Chaos_派生审计_20261001.md`）逐文件核对了全部
+派生点并已清理完毕：
+
+- supervisor 的协议骨架表达（ipc.rs/lib.rs）已重写，设备行为字节不变；
+- 安装器三份 Lua 中与 canopus 逐字对应的段落已全部重写表达；
+- 容器壳由 `../scripts/container_shell.py` 从零生成（多独立样本往返逐字节验证），
+  预览缩略图由 `../scripts/gen_preview.py` 自产（压缩格式从固件解码器逆向定案）；
+- 固件地址、结构偏移、协议字节格式是**逆向得到的事实**，不受版权保护，
+  与 canopus 的重合属于事实重合，不构成派生。
+
+清理后本目录代码为本项目自有版权，许可条款以 `LICENSE` 为准。
+审计口径说明：审计基于 2026-10-01 工作区快照，之后新增的代码必须保持自写。
+
+### 不许随源码分发的东西
+
+以下是**版权与授权问题**，与开源许可无关，发布仓库前必须剔除。仓库根 `.gitignore`
+已经挡住了 `*.bin` 与 `*.apk`，但下面这些要手工确认：
+
+| 路径 | 为什么不能发 |
+|---|---|
+| `fw_pkg_043/`、`ota_extract*/`、`*.bin` 固件镜像 | 小米的固件与资源包，无任何授权 |
+| `sys_icons/` | 从固件资源包解出的系统原图标，同上 |
+| `canopus_src/` | 第三方项目（AGPL-3.0），已无派生关系但也不该镜像进发布仓库 |
+| `Chaos-Module/fonts/HYWenHei-85W*.ttf`、`SanJiHuaChaoTi-*.ttf`、`YSHaoShenTi*.ttf` | **仓库里没有它们的授权文本，也没核到上游条款**。商业字库对"分发字体文件"通常是有专门授权的，别按网传免费商用办（这条是待办，不是结论） |
+| `assets/delta_lvgl/` | Delta-Icons 是 CC BY-NC-ND 4.0；我们裁过尺寸就已构成改作，ND 这一条过不了 |
+| `assets/pure_lvgl/`、`assets/_src_pure/` | PureIconPack 的 APK 内没有任何授权声明，默认保留所有权利 |
+| `android/keystore/`、`android/keystore.properties` | 签名私钥与口令，任何时候都不进仓库 |
+
+`assets/fluent_lvgl/` 是 GPL-3.0，**可以**随分发走，但要同时附许可证文本与上游出处，
+且微信、亚马逊这类品牌 logo 的商标权独立于主题许可证。
+
+### 字体（可分发，但要带东西）
+
+`Chaos-Module/fonts/lxgw-wenkai-band.ttf` 是霞鹜文楷的子集化改作，`fonts/OFL.txt` 是上游
+许可文本逐字落盘（5,171 字节，含保留字体名声明与 ADDITIONAL PERMISSION 那段）。OFL 允许
+自由再分发与改作，条件有两个：随附许可文本，且改作物不得沿用保留字体名。子集化与垂直度量
+归一化都属改作 —— 所以 `scripts/build_font_subset.py` 把家族名换成 `ChaosKai`（含 nameID 10
+说明这是改作物），脚本自带校验（改作名字段里保留字体名必须 0 处），署名与许可字段原样不动。
+
+仍欠一条：投递包（`.bin`）里只有 `ttf`，没把 `OFL.txt` 一起打进去。装到自己的设备上不涉及
+再分发，但要把包发给别人，就得同时给许可文本。
+
+### 图标（安卓 App 内）
+
+App 界面图标来自 MingCute（Apache-2.0）。这条已经做对了：APK 内带
+`assets/licenses/mingcute-LICENSE.txt` 与 `mingcute-NOTICE.txt`，NOTICE 里写明了改动内容
+（只取子集、去掉不渲染的水印路径、填充色归一）。
+
+### 隐私
+
+模块只在设备本地读 `/proc` 与固件状态，把结果显示在手环屏幕上：不联网、不上传、
+不采集也不落盘任何用户数据。设备本身有蓝牙，但本模块不使用它 —— 蓝牙数据传输那条线
+做过探索，最终整体删除（`state.rs:37` 还留着一行过时注释提到它，代码里没有通路）。
+
+### 免责声明
+
+这套代码通过固件的注册链把原生应用装进你的手环，属于对设备的非授权修改：
+可能失去保修、可能变砖、可能随固件升级失效。请在自己的设备上、自担风险地使用。
+不要把它刷进任何你不拥有的设备。
+
+### 发布前检查清单（还没做完）
+
+本节描述的是**目标状态**，不是当前仓库状态。四项里两项已结清：
+
+1. 已做：`Chaos-Module/LICENSE` 放入 AGPL-3.0 全文，GNU 官方文本逐字未改
+   （34,523 字节，sha256 前缀 `0d96a4ff`）。主工程根目录仍没有 LICENSE，那是另一码事
+   —— 只有本目录这套代码已经明确挂上许可。
+2. 已做：容器壳自建 + 缩略图块自产（`scripts/container_shell.py`、`scripts/gen_preview.py`），
+   对外发布的是前者那份 `tools/container_shell.py`。打包链本身仍不对外（写死本地路径），
+   所以使用者拿到源码得自己接这一步 glue。
+3. 未做：`Chaos-Module/fonts/OFL.txt` 与安卓 App 的 `assets/licenses/` 那套第三方声明
+   合并成一份 `THIRD_PARTY_NOTICES.md`，逐条列许可、上游出处、我们改了什么。
+4. 未做（但影响已被绕开）：按上面那张表把不可分发的素材从发布分支剔掉。对外仓库现在只放
+   设备侧源码加 `tools/`，`fonts/`、`assets/`、固件解包与第三方素材都没进去 ——
+   等于用"不放"代替了"逐项办授权"。真要把素材也发出去才需要办。
+
+## 相关文档
+
+- `../AGENTS.md` — 项目操作手册（命令、约定、边界、陷阱清单）
+- `../docs/README.md` — 文档索引
+- `../docs/Chaos_043平台适配与能力探索_20260905.md` — 平台适配与历次迭代
+- `../docs/Chaos_字体投递_20260926.md` — 投递包线（字体与图标）的定案与落地
+- `../docs/Chaos_预览块自产_20261001.md` — 容器缩略图的格式定案与两端编码器
+- `../docs/Chaos_Android制作App_20260930.md` — 手机侧工具
+- `../docs/Chaos_图标包pure_20261001.md` — 从第三方图标包 APK 提取素材的做法与授权清点
+- `../docs/fw_address_table_043.csv` — 固件地址表（改 `fw_api.rs` 必须同步这张表）
+- `../docs/icon_reverse_work/图标格式与最终方案定案.md` — 图标格式逆向定案
+
+## 术语
+
+- **ko**：可重定位 ELF 内核模块，被固件的模块加载器 insmod
+- **supervisor**：本项目的常驻模块，持有设备节点 `/dev/chaos`
+- **容器 / 投递包**：magic `0x1234A55A` 的 `.bin`，主包与字体包、图标包同壳不同槽
+- **page_id**：固件在 `on_create` 时传给页面的页号，0 到 13
+- **CIPK**：图标包容器（magic 四个字节 `CIPK`），装 N 条 `[stem].bin`
+- **app_id**：注册后固件分配的应用号，运行时取白名单空槽，**不是常数**

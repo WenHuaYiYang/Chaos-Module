@@ -321,6 +321,18 @@ pub unsafe extern "C" fn obj_set_local_style_prop(obj: u32, prop: u32, val: u32,
 /// 本常量是固件自己用过的号, 属实证。
 pub const LV_STYLE_TEXT_FONT: u32 = 0x5A;
 
+/// `0x0C588BB8(style, prop, &out)` lv_style_t **结构体**属性读取(只读)。
+/// 依据(字节级): 固件 style_get_text_font(0x0C4BF87C, 全固件 1265 处调用)体内就是
+/// `movs r1,#0x5A; bl 0x0C588BB8(style, 0x5A, &out)` —— 同型调用、同样这批开机
+/// lv_style_t 实证。返回值按 bool 用(命中非 0); 即便语义有出入, out 初值 0 +
+/// 调用方 plausible/safe 门兜底, 读不到就当没读到, 不会写任何东西。
+/// 用途: 曾服务 v3 捕获(已退役), 留作样式诊断工具。
+#[allow(dead_code)]
+pub unsafe extern "C" fn fw_style_get(style: u32, prop: u32, out: *mut u32) -> u32 {
+    let f: unsafe extern "C" fn(u32, u32, *mut u32) -> u32 = transmute(0x0C58_8BB9usize);
+    f(style, prop, out)
+}
+
 /// `0x0C5881D8(obj) -> i32` 子对象数。依据(字节级):
 /// get_unhidden_child_count(0x0C599394) 体内 `bl 0xc5881d8` 取循环上界。
 /// 静态核对(固件自身用法实证)

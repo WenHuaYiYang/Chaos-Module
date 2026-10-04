@@ -42,12 +42,12 @@ use crate::*;
 /// 在位素材来自哪个包由投递包决定: 素材池 assets/delta_lvgl 是 38 张全在位的那一套,
 /// assets/fluent_lvgl 是存档(33 张, 该池没有运动/血氧/女性健康/米家 的图形
 /// => 换过去会有 5 张读不到)。每张 112x112、cf=0x10、50188B。
-/// 日历是**已知不覆盖**的一张, 不是漏配: 它的磁贴 = 固件自绘日期 + 一张**白色圆盘底**
-/// (`/resource/app/perpetual_calendar/calendar_background_icon.bin`; 实测均值
-/// R236 G241 B245、逐行不透明宽度 35..101..29 对称 => 圆盘, 内容框 101x100 四边 6px),
-/// 而这条路径是 launcher 代码里的 flash 字面量(0x0CB941A4), **不走注册表节点 +0x0C**
-/// => 本机制改不到它。曾按别名补过第 39 张试, 实测日历仍没换, 已撤。
-/// 注意: 日期两枚文字是画在这张白底上的(所以字色按浅底配), 换深色底图会让日期读不出来。
+/// 注意 `perpetual_calendar`(槽 20): 这一格的节点 +0x0C 平时被固件自己的 signal=6
+/// 回调(0x0C4EFDE8)写成**RAM 图像描述符指针**(底图+日期光栅化成的一块 112x112
+/// 缓冲, 见 res_hook.rs"日历"一节), 不是路径串 —— icon_stem_eq 的"可打印 ASCII"
+/// 检查认不出它, 所以本表按 stem 找节点的方法对它失效, 必须按 app_id=69 找
+/// (见 plan_apply 的 IC_CAL_SLOT 特例)。换成我们的路径后, 桌面画的就是整张素材,
+/// 固件光栅化进去的日期文字不再显示(那两枚文字本来是烤在缓冲里的)。
 const ICON_STEMS: [&[u8]; IC_STEM_N] = [
     b"activities", b"aivs", b"alarm", b"alipay",
     b"breath", b"calendar", b"camera", b"card",
@@ -63,6 +63,17 @@ const ICON_STEMS: [&[u8]; IC_STEM_N] = [
 
 /// 素材条数(= 固件桌面 launcher 应用图标全集)
 const IC_STEM_N: usize = 38;
+
+/// 日历(perpetual_calendar)在 ICON_STEMS 里的槽位。编译期钉死: 表错位就直接构不过,
+/// 不许悄悄换错应用。
+const IC_CAL_SLOT: usize = 20;
+const _: () = assert!(ICON_STEMS[IC_CAL_SLOT][0] == b'p'
+    && ICON_STEMS[IC_CAL_SLOT][1] == b'e'
+    && ICON_STEMS[IC_CAL_SLOT][2] == b'r');
+/// 日历的注册表 app_id。来源: notify 链按包名查表(0x0CA69934 按 id)与 Corona 对
+/// 043 的 ABI 探针两路互证 —— id 69 的节点 +8 是包名
+/// com.xiaomi.miwear.perpetual_calendar、+0x38 是 signal=6 回调 0x0C4EFDE9。
+const CAL_APP_ID: u32 = 69;
 
 /// 图标投递根目录(**不带**结尾斜杠: 目录名与路径前缀两种拼法都要用)
 const ICON_DIR: &[u8] = b"/data/chaos/icons";
@@ -103,9 +114,25 @@ static mut IC_REQ: u32 = 0;         // 0=无 1=应用 IC_PACK 2=恢复原图标
 static mut IC_STATE: u32 = 0;
 static mut IC_PLAN: [u32; IC_STEM_N] = [0; IC_STEM_N];      // 待处理 stem 槽号
 static mut IC_PLAN_ID: [u32; IC_STEM_N] = [0; IC_STEM_N];   // 对应的 app_id
+static mut IC_PLAN_RESTORE: [bool; IC_STEM_N] = [false; IC_STEM_N]; // 缺件时恢复原图标
 static mut IC_N: u32 = 0;
 static mut IC_CURSOR: u32 = 0;
 static mut IC_SAVED: [u32; IC_STEM_N] = [0; IC_STEM_N];     // 原路径指针(本次开机内可恢复)
+
+// ===== 日历看门 =====
+// 日历节点的 +0x0C 是"谁最后写谁算数"的单字段: 固件 signal=6 回调写缓冲指针,
+// 我们写素材路径。固件哪天再发 signal=6(桌面重建/系统主动刷图标), 我们的路径就
+// 被冲回缓冲指针 —— 和桌面 38 张"改节点就是持久"不同, 这一格需要补写。
+// 做法与本项目其它看门同款: 周期性读回 + 影子比对, 只在"确实被冲回"时才动笔,
+// 空闲态低频(约 2 秒一查, 一次注册表遍历 + 一次字节比对)。
+static mut IC_CALT: u32 = 0;        // 看门节拍计数
+static mut IC_LATCH: u32 = 0;       // 真正补写成功的次数(界面读数用)
+/// 已核对日历整图素材的包号，0 表示保留系统日历。
+static mut IC_CAL_PACK: u32 = 0;
+/// 桌面记录不在位时按槽登记补刷，回到桌面后每拍刷新一个应用。
+static mut IC_RB_IDS: [u32; IC_STEM_N] = [0; IC_STEM_N];
+static mut IC_RB_DIRTY: [bool; IC_STEM_N] = [false; IC_STEM_N];
+static mut IC_RB_N: u32 = 0;
 
 // ===== 删除流水线(每拍一步, 删当前包前先把注册表放回系统原图标) =====
 static mut IC_DEL: u32 = 0;         // 待删除的包号, 0 = 无
@@ -146,6 +173,16 @@ static mut IC_ROWS_N: usize = 0;
 /// 注册表遍历上限(内置应用几十个，留足余量；触顶即停，绝不无界走)。
 const IC_WALK_MAX: u32 = 512;
 
+
+/// 当前选中的包号(0 = 系统原图标)。系统 UI 图标那条线(res_hook)要跟着同一个包走,
+/// 所以包号在这里只有一个来源, 那边只读不写。
+pub(crate) unsafe fn cur_pack() -> u32 { st_rd!(IC_PACK) }
+
+/// 当前包有日历整图素材才接管日历，缺件时保留系统原样。
+pub(crate) unsafe fn calendar_available() -> bool {
+    let pack = st_rd!(IC_PACK);
+    pack != 0 && st_rd!(IC_CAL_PACK) == pack
+}
 
 /// 桌面记录链此刻在不在位。不在位时 `launcher_refresh_app` 会静默早退(0x0C513BD0),
 /// 所以我们照样换指针、但不假装刷新成功: 指针已经换到我们的素材, 下一次进桌面重建
@@ -317,8 +354,12 @@ unsafe fn icon_dir_of(dst: *mut u8, pack: u32, slash: bool) -> usize {
 
 /// 拼 `/data/chaos/icons/<NN>/<stem>.bin` 到 dst(dst 至少 ICON_SLOT 字节)
 unsafe fn path_build(dst: *mut u8, pack: u32, slot: usize) {
+    path_build_named(dst, pack, ICON_STEMS[slot]);
+}
+
+/// 同上, 但 stem 由调用方给(删除流水线清系统 UI 图标那一半时用 res_hook 的表)
+unsafe fn path_build_named(dst: *mut u8, pack: u32, s: &[u8]) {
     let mut o = icon_dir_of(dst, pack, true);
-    let s = ICON_STEMS[slot];
     let mut i = 0usize;
     while i < s.len() { write_volatile(dst.add(o), s[i]); o += 1; i += 1; }
     for c in b".bin" {
@@ -449,6 +490,12 @@ fn icon_seg_is(buf: *const u8, off: usize, len: usize, want: &[u8]) -> bool {
 /// 遍历注册表找第 slot 个 stem 对应的节点，返回 (节点, app_id, 当前路径指针)。
 /// 每次从头走，不缓存节点地址(文件头约束 C)。
 unsafe fn icon_find(slot: usize) -> (u32, u32, u32) {
+    // 日历字段也可能是图像描述符，查找不能依赖路径形态。
+    if slot == IC_CAL_SLOT {
+        let node = cal_find_by_id(CAL_APP_ID);
+        if node == 0 { return (0, 0, 0); }
+        return (node, CAL_APP_ID, rd32((node + fw_api::APPN_ICON) as *const u32));
+    }
     let head = rd32(fw_api::APP_REGISTRY as *const u32);
     if !safe_ptr(head) { return (0, 0, 0); }
     let mut node = rd32((head + 4) as *const u32);
@@ -465,12 +512,59 @@ unsafe fn icon_find(slot: usize) -> (u32, u32, u32) {
     (0, 0, 0)
 }
 
+/// 按 app_id 找注册表节点(与 app_lookup 0x0CA69934 同一条链、同一个判据:
+/// 节点 +0x10 的 u16 == id)。日历格专用 —— 它的 +0x0C 是固件写的图像描述符
+/// 指针, 按 stem 找不到(见 ICON_STEMS 槽 20 的说明)。
+/// 返回节点地址, 0 = 没找到。同样不缓存节点指针(文件头约束 C)。
+unsafe fn cal_find_by_id(id: u32) -> u32 {
+    let head = rd32(fw_api::APP_REGISTRY as *const u32);
+    if !safe_ptr(head) { return 0; }
+    let mut node = rd32((head + 4) as *const u32);
+    let mut guard = 0u32;
+    while safe_ptr(node) && node != head && guard < IC_WALK_MAX {
+        guard += 1;
+        if rd16((node + fw_api::APPN_ID) as *const u16) as u32 == id {
+            return node;
+        }
+        node = rd32((node + 4) as *const u32);
+    }
+    0
+}
+
+/// 日历格取证读数: 桌面日历格节点 +0x0C 此刻的**真实形态**(切包/重光栅化/
+/// 失败回退三种世界一眼分流)。返回 (节点+0x0C 值, 类型字符, 缓冲单例槽值)。
+///   'P'(0x2F '/') = 路径串 —— 我们的切包生效态
+///   'D'(0x19)     = 图像描述符指针 —— 固件缓冲(0x0C4EFDE8 的单例)
+///   'L'('l')      = launcher.bin 回退路径 —— 固件光栅化失败分支写的
+///   '0'           = 空   '?' = 指针不可信
+pub(crate) unsafe fn cal_dbg() -> (u32, u32, u32) {
+    let node = cal_find_by_id(CAL_APP_ID);
+    if node == 0 { return (0, b'?' as u32, 0); }
+    let v = rd32((node + fw_api::APPN_ICON) as *const u32);
+    let t = if v == 0 {
+        b'0' as u32
+    } else if plausible_ptr(v) {
+        match rd8(v as *const u8) {
+            b'/' => b'P' as u32,
+            0x19 => b'D' as u32,
+            b'l' => b'L' as u32,
+            other => other as u32,
+        }
+    } else {
+        b'?' as u32
+    };
+    // 0x2010F05C = 固件日历缓冲单例槽(0x0C4EFDE8 分配一次永久复用, 见 res_hook"日历")
+    let slot = rd32(0x2010_F05C as *const u32);
+    (v, t, slot)
+}
+
 // ---------------------------------------------------------------------------
 // 计划与执行(每 tick 推进一个应用：refresh 内部会 rebuild 桌面，不能连做)
 // ---------------------------------------------------------------------------
 
 unsafe fn plan_apply() {
-    // 没选包(系统原图标)时没有可应用的素材: 状态留 0, 一个字节都不动
+    res_hook::refresh_cache();
+    st_wr!(IC_CAL_PACK, 0);
     if st_rd!(IC_PACK) == 0 {
         st_wr!(IC_STATE, 0);
         return;
@@ -481,20 +575,24 @@ unsafe fn plan_apply() {
     let mut k = 0usize;
     let mut n = 0usize;
     while k < ICON_STEMS.len() {
+        let present = icon_file_ok(k);
+        if k == IC_CAL_SLOT && present { st_wr!(IC_CAL_PACK, st_rd!(IC_PACK)); }
         let (node, id, _) = icon_find(k);
-        // 注册表里没有这个应用(无表) / 我们的文件不在位(缺件) => 都不动它。
-        // 两类原因不分开计数, 但**都必须跳过**, 不能去指一个打不开的路径。
-        if node != 0 && icon_file_ok(k) {
+        let saved = st_rd!(IC_SAVED[k]);
+        // 有素材才应用，缺件且以前替换过则逐拍恢复系统原值。
+        if node != 0 && (present || saved != 0) {
             st_wr!(IC_PLAN[n], k as u32);
             st_wr!(IC_PLAN_ID[n], id);
+            st_wr!(IC_PLAN_RESTORE[n], !present);
             n += 1;
+        } else if node == 0 {
+            st_wr!(IC_SAVED[k], 0);
         }
         k += 1;
     }
     st_wr!(IC_N, n as u32);
-    // 重要: 一个都没排上(素材没投递, 38 条全跳过)时状态必须留在 0, 否则空跑一遍
-    // 就把状态报成"已应用", 而注册表其实一个字节都没动 —— 界面会自己说谎。
-    st_wr!(IC_STATE, if n > 0 { 2 } else { 0 });
+    // 没有应用或恢复任务时保持原图标状态。
+    st_wr!(IC_STATE, 2);
     // 这里不再重建本页: 勾选态在 click_entry 里已经原地写过了, 跑批期间界面不需要动
     // (重建式渲染会顺手把整页的字体样式重抄一遍, 那一下整页字体会跳变)。
 }
@@ -502,33 +600,86 @@ unsafe fn plan_apply() {
 unsafe fn step_apply() {
     let c = st_rd!(IC_CURSOR) as usize;
     if c >= st_rd!(IC_N) as usize {
+        if res_hook::pending() { return; }
         st_wr!(IC_STATE, 1);
         return;
     }
     st_wr!(IC_CURSOR, (c + 1) as u32);
     let slot = st_rd!(IC_PLAN[c]) as usize;
-    let (node, id, _path) = icon_find(slot);
+    let (node, id, path) = icon_find(slot);
     // 二次核对：节点还在、app_id 还是计划里那个(路径可信性交给 point_to_ours 现查)
     if node == 0 || id != st_rd!(IC_PLAN_ID[c]) {
         return;
     }
-    point_to_ours(slot);
+    if st_rd!(IC_PLAN_RESTORE[c]) {
+        restore_node(slot, node, id, path);
+    } else {
+        point_to_ours(slot);
+    }
+}
+
+/// 桌面已有记录时先刷新，再允许调用方回收旧路径；无记录时登记补刷。
+unsafe fn refresh_icon(slot: usize, id: u32) {
+    if desktop_live() {
+        fw_api::launcher_refresh_app(id);
+        if st_rd!(IC_RB_DIRTY[slot]) {
+            st_wr!(IC_RB_DIRTY[slot], false);
+            st_wr!(IC_RB_N, st_rd!(IC_RB_N) - 1);
+        }
+    } else {
+        if !st_rd!(IC_RB_DIRTY[slot]) { st_wr!(IC_RB_N, st_rd!(IC_RB_N) + 1); }
+        st_wr!(IC_RB_IDS[slot], id);
+        st_wr!(IC_RB_DIRTY[slot], true);
+    }
+}
+
+/// 桌面回位后每拍只刷新一个应用，应用态与恢复态都能消费补刷。
+unsafe fn refresh_pending() -> bool {
+    if st_rd!(IC_RB_N) == 0 || !desktop_live() { return false; }
+    let mut k = 0usize;
+    while k < IC_STEM_N {
+        if st_rd!(IC_RB_DIRTY[k]) {
+            refresh_icon(k, st_rd!(IC_RB_IDS[k]));
+            return true;
+        }
+        k += 1;
+    }
+    false
 }
 
 /// 把第 slot 个 stem 的注册表节点指向我们这一包的素材文件, 并让桌面立刻重读。
 /// 幂等: 已经指向我们这一份就什么都不做(也不 strdup, 否则每次点都慢性漏一块堆)。
 /// 返回 true = 这一次真换了指针。
 unsafe fn point_to_ours(slot: usize) -> bool {
-    let (node, id, path) = icon_find(slot);
-    if node == 0 || path == 0 { return false; }
-    if icon_path_is_ours(path, slot) { return false; }       // 已是这一包(幂等)
+    let (node, id, _path) = icon_find(slot);
+    if node == 0 { return false; }
+    point_to_ours_node(slot, node, id)
+}
+
+/// 同上, 但节点由调用方给(日历格按 id 找, 见 cal_find_by_id)。
+/// 日历的节点 +0x0C 平时是固件写的**图像描述符指针**而不是路径串, 所以这里
+/// 有三处与普通格不同的门:
+///   * path == 0 时等待固件生成原图标，保留可逆的恢复依据;
+///   * 约束 B 的"先释放旧路径缓存"只对**真路径**(首字节 '/')做 —— 描述符指针
+///     不是路径, 拿它查图像缓存没有意义, 更不能交给固件当字符串读;
+///   * IC_SAVED 记下描述符指针时, 恢复按原值写回即可: 那块缓冲归固件的
+///     0x2010F05C 持有, 生命周期与磁贴一致, 不归我们管。
+unsafe fn point_to_ours_node(slot: usize, node: u32, id: u32) -> bool {
+    // 计划与维护共用写入门，文件缺失时不能发布打不开的路径。
+    if !icon_file_ok(slot) { return false; }
+    let path = rd32((node + fw_api::APPN_ICON) as *const u32);
+    if path == 0 { return false; }
+    if path != 0 {
+        if !plausible_ptr(path) { return false; }
+        if icon_path_is_ours(path, slot) { return false; }   // 已是这一包(幂等)
+    }
     let saved = st_rd!(IC_SAVED[slot]);
-    let old_ours = icon_path_is_any_ours(path);
+    let old_ours = path != 0 && icon_path_is_any_ours(path);
     if saved == 0 {
         // 节点指着我们的目录、却没有原路径记录 => 状态不可信(改回原路径也没得改)。
         // 正常流程不可能走到这里: 换指针时一定同时记下原路径。
         if old_ours { return false; }
-        st_wr!(IC_SAVED[slot], path);       // 原路径只在第一次记(约束 D)
+        if path != 0 { st_wr!(IC_SAVED[slot], path); }   // 原路径只在第一次记(约束 D)
     }
     let ours = core::ptr::addr_of!(ICON_FILES[slot]) as u32;
     let newp = fw_api::fw_str_dup(ours as *const u8);
@@ -536,16 +687,23 @@ unsafe fn point_to_ours(slot: usize) -> bool {
         if saved == 0 { st_wr!(IC_SAVED[slot], 0); }
         return false;
     }
-    fw_api::fw_img_free_by_path(path);                // 约束 B：先释放旧路径缓存
+    // 约束 B：先释放旧路径缓存。**只对真路径做**: 日历节点上的描述符指针不是
+    // 路径(首字节是 magic 0x19, 不可能是 '/'), 交给固件当路径查缓存没有意义。
+    if path != 0 && rd8(path as *const u8) == b'/' {
+        fw_api::fw_img_free_by_path(path);
+    }
     write_volatile((node + fw_api::APPN_ICON) as *mut u32, newp);
     if rd32((node + fw_api::APPN_ICON) as *const u32) != newp {
         fw_api::fw_free(newp);
         if saved == 0 { st_wr!(IC_SAVED[slot], 0); }
         return false;
     }
+    if slot == IC_CAL_SLOT {
+        st_wr!(IC_LATCH, st_rd!(IC_LATCH).wrapping_add(1));
+    }
     // 桌面记录不在位时不假装刷新成功: 指针已经换了(下次进桌面会重建记录读到新路径),
     // 只是当前界面不会变 —— 这就是"有时候点了没反应"的成因。
-    if desktop_live() { fw_api::launcher_refresh_app(id); }
+    refresh_icon(slot, id);
     // 回收上一包留下的堆串: 顺序必须在 refresh **之后** —— 在那之前桌面记录
     // (+0x0C)还引用着它(与 step_restore 同一条顺序)。
     if old_ours && path != st_rd!(IC_SAVED[slot]) { fw_api::fw_free(path); }
@@ -553,6 +711,8 @@ unsafe fn point_to_ours(slot: usize) -> bool {
 }
 
 unsafe fn plan_restore() {
+    res_hook::refresh_cache();
+    st_wr!(IC_CAL_PACK, 0);
     st_wr!(IC_N, 0);
     st_wr!(IC_CURSOR, 0);
     let mut k = 0usize;
@@ -569,25 +729,32 @@ unsafe fn plan_restore() {
         k += 1;
     }
     st_wr!(IC_N, n as u32);
-    st_wr!(IC_STATE, if n > 0 { 3 } else { 0 });
+    st_wr!(IC_STATE, 3);
 }
 
 unsafe fn step_restore() {
     let c = st_rd!(IC_CURSOR) as usize;
     if c >= st_rd!(IC_N) as usize {
+        if res_hook::pending() { return; }
         st_wr!(IC_STATE, 0);
         return;
     }
     st_wr!(IC_CURSOR, (c + 1) as u32);
     let slot = st_rd!(IC_PLAN[c]) as usize;
-    let old = st_rd!(IC_SAVED[slot]);
     let (node, id, path) = icon_find(slot);
-    if node == 0 || id != st_rd!(IC_PLAN_ID[c]) || old == 0 { return; }
+    if node == 0 || id != st_rd!(IC_PLAN_ID[c]) { return; }
+    restore_node(slot, node, id, path);
+}
+
+/// 缺件回退与恢复系统图标共用同一条写回、刷新和回收顺序。
+unsafe fn restore_node(slot: usize, node: u32, id: u32, path: u32) {
+    let old = st_rd!(IC_SAVED[slot]);
+    if old == 0 { return; }
     write_volatile((node + fw_api::APPN_ICON) as *mut u32, old);
+    if rd32((node + fw_api::APPN_ICON) as *const u32) != old { return; }
     st_wr!(IC_SAVED[slot], 0);
-    // 先刷新再回收：refresh 会把节点当前值(已是原路径)抄进记录并重建桌面, 我们那份
-    // 到这一步才真正不被任何人引用 —— 顺序反过来会让桌面拿着已释放的字符串画图标。
-    if desktop_live() { fw_api::launcher_refresh_app(id); }
+    refresh_icon(slot, id);
+    // 桌面有记录时已刷新；无记录时下次进入会从注册表重建。
     // 判定用**前缀**而不是"等于当前包的路径": 恢复时 IC_PACK 已经被置 0, 路径槽是空的,
     // 按当前包比会把上一包的堆串判成"不是我们的" => 每次恢复都漏 38 块堆。
     if path != 0 && path != old && plausible_ptr(path) && icon_path_is_any_ours(path) {
@@ -616,7 +783,10 @@ pub(crate) unsafe fn request_delete(pack: u32) {
 ///     或反过来"文件删了、清单还列着"的半截状态;
 ///   4 逐拍删 38 个文件, 最后删只剩空壳的目录(不需要改名腾位置, 直接 remove 空目录)。
 unsafe fn delete_tick() {
-    match st_rd!(IC_DEL_ST) {
+    // 原图标先恢复，清单与文件删除等待桌面补刷完成。
+    let stage = st_rd!(IC_DEL_ST);
+    if stage >= 3 && (st_rd!(IC_RB_N) != 0 || res_hook::pending()) { return; }
+    match stage {
         1 => {
             if st_rd!(IC_PACK) == st_rd!(IC_DEL) {
                 st_wr!(IC_PACK, 0);
@@ -653,13 +823,22 @@ unsafe fn delete_tick() {
             let k = st_rd!(IC_DEL_K) as usize;
             let pack = st_rd!(IC_DEL);
             let mut p = [0u8; ICON_SLOT];
+            let sys_n = res_hook::RULE_N;
             if k < IC_STEM_N {
                 path_build(p.as_mut_ptr(), pack, k);
                 fw_api::fs_remove(p.as_ptr());
                 st_wr!(IC_DEL_K, (k + 1) as u32);
                 return;
             }
-            if k == IC_STEM_N {
+            // 系统 UI 图标那一半(控制中心/设置/日历底图): 与桌面素材同一个包目录,
+            // 不清的话最后那步"删空目录"会因目录非空而失败, 留下几十张死文件。
+            if k < IC_STEM_N + sys_n {
+                path_build_named(p.as_mut_ptr(), pack, res_hook::rule_stem(k - IC_STEM_N));
+                fw_api::fs_remove(p.as_ptr());
+                st_wr!(IC_DEL_K, (k + 1) as u32);
+                return;
+            }
+            if k == IC_STEM_N + sys_n {
                 let n = icon_dir_of(p.as_mut_ptr(), pack, false);
                 write_volatile(p.as_mut_ptr().add(n), 0);
                 fw_api::fs_remove(p.as_ptr());     // 目录: remove() 对空目录退到 rmdir
@@ -718,6 +897,16 @@ pub(crate) unsafe fn entry_shown() -> u32 {
     if total > IC_ENTRY_MAX as u32 { IC_ENTRY_MAX as u32 } else { total }
 }
 
+/// 写十进制数字(只到两位, 计数超 99 就截断 —— 副标签放不下更长的)
+unsafe fn wnum(w: &mut W, v: u32) {
+    if v >= 100 {
+        w.s("99".as_bytes());
+        return;
+    }
+    if v >= 10 { w.c(b'0' + (v / 10) as u8); }
+    w.c(b'0' + (v % 10) as u8);
+}
+
 /// 填条目行的两排文本。先整体清零再按需写(与 refresh_watchface_lines 同款):
 /// 上一屏的长名字不会被下一屏读出来。
 /// 主标签 = 包名(两步删除的确认态则是"再点一次删除 X"), 副标签 = 包号 + 是否已投递。
@@ -753,7 +942,28 @@ pub(crate) unsafe fn lines_fill() {
             w.c(b'0' + ((pack / 10) % 10) as u8);
             w.c(b'0' + (pack % 10) as u8);
             // 整包没投递时直接在副标签上说清楚(点下去不会有反应, 但这个状态必须写在界面上)
-            if !pack_present(pack) { w.s(" 未投递".as_bytes()); }
+            if !pack_present(pack) {
+                w.s(" 未投递".as_bytes());
+            } else {
+                // 读数一律压缩到最短, 因为这一列在真机上会被界面按宽度截断
+                // (上一版写"包 01 系统21/21 日C", 末尾根本显示不出来, 等于白加)。
+                //   L = 日历节点落到我们路径上的次数(0 = 一次都没写成)
+                //   H = 固件重读日历底图文件的次数(043 常态是 0, 见 res_hook"日历"一节)
+                //   G/H = 系统图标换成我们素材的次数 / 命中规则次数
+                //   t = 日历格 +0x0C 实时形态(P=我们路径生效 D=固件缓冲 L=失败回退)
+                let (hit, ok, _fb) = res_hook::sys_counters();
+                let (_cv, ct, _slot) = cal_dbg();
+                w.s("日".as_bytes());
+                wnum(&mut w, st_rd!(IC_LATCH));
+                w.c(b'.');
+                wnum(&mut w, res_hook::cal_hit());
+                w.c(b' ');
+                w.c(ct as u8);
+                w.s(" 系".as_bytes());
+                wnum(&mut w, ok);
+                w.c(b'/');
+                wnum(&mut w, hit);
+            }
         }
         w.end();
         row += 1;
@@ -877,7 +1087,7 @@ unsafe fn click_entry(e: u32) {
     }
     st_wr!(IC_DELCONF, 0);
     let s = st_rd!(IC_STATE);
-    if s == 2 || s == 3 { refresh_rows(); return; }
+    if s == 2 || s == 3 || res_hook::pending() { refresh_rows(); return; }
     st_wr!(IC_PACK, pack);
     st_wr!(IC_BUILT, 0);
     st_wr!(IC_REQ, if pack == 0 { 2 } else { 1 });
@@ -899,6 +1109,8 @@ pub(crate) unsafe fn tick() {
     // 息屏/AOD 不做：refresh 内部会 rebuild 整个桌面, 那时固件正在销毁/重建界面。
     // 删除流水线同样停在这里, 屏幕亮了自然接着跑(状态都在 RAM 里)。
     if !fw_api::screen_is_on() { return; }
+    // 每拍最多重建一次桌面，补刷完再继续跑批。
+    if refresh_pending() { return; }
     // 一批正在跑时不接受新请求: 半途换方向会留下"部分换部分没换"的状态,
     // 而界面只显示一个勾选态。click_entry 在跑批期间也会吞掉切换。
     let running = st_rd!(IC_STATE) == 2 || st_rd!(IC_STATE) == 3;
@@ -927,5 +1139,19 @@ pub(crate) unsafe fn tick() {
         3 => step_restore(),
         // 批量空闲才走删除流水线(它自己会在删当前包时先起一次恢复批次)
         _ => delete_tick(),
+    }
+    // 日历看门(见 IC_CALT 说明): 已应用某包且没在跑批/恢复时, 低频检查日历节点
+    // 有没有被固件的 signal=6 回调冲回缓冲指针, 是就补写。point_to_ours_node
+    // 自带幂等门(已是我们的路径就一个字节都不动), 所以这一拍多数时候是空查。
+    // 恢复态(state 0)绝不查 —— 否则"恢复系统原图标"会被看门立刻改回去。
+    st_wr!(IC_CALT, st_rd!(IC_CALT).wrapping_add(1));
+    if st_rd!(IC_CALT) >= 40 {
+        st_wr!(IC_CALT, 0);
+        if st_rd!(IC_STATE) == 1 && calendar_available() {
+            let node = cal_find_by_id(CAL_APP_ID);
+            if node != 0 {
+                point_to_ours_node(IC_CAL_SLOT, node, CAL_APP_ID);
+            }
+        }
     }
 }

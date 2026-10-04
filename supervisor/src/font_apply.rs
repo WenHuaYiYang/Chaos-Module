@@ -6,11 +6,9 @@
 //      行标签的字体是 row_init(0x0C4C8560) 建行时从样式抄下来的 local style 快照
 //      (0x0C4C86BC), 所以重新进页会自动跟上, 但常驻页与"此刻正在显示的那一页"
 //      不会变。
-//   2) font_tree 的**逐对象补写**: 对活对象直写 local style, 补第 1 层够不到的部分。
-//      代价是每写一次固件要做全子树失效 + 逐对象发样式变更事件, 所以那边全程门控,
-//      而且只在**我们的应用不在前台**时跑(见下面 FA_DEL_PEND 那条等窗口)。
-//      它只有"排一次补写"这一种用法: 在"正在写的那一刻"撞上引擎动树(反复后台重扫、
-//      在事件派发里原地改对象)实测都会崩, 所以那些形态都不保留。
+//   2) 【v3.6 退役】font_tree 的逐对象补写: 曾用于直写活对象 local style, 补第 1 层
+//      够不到的部分。font_hot 热替换(wrapper 原地改写, 不碰对象树)真机验证全覆盖
+//      后整体退役, 相关等窗口状态(FA_DEL_PEND/FA_DEL_WAIT)一并删除。
 //
 // 红线: 只往固件的样式里放**我们独占名字**(ChaosSans-*)的脸, 绝不把我们的
 // 字体对象交给固件缓存节点所有 —— 固件销毁面时会释放节点+0x00 的载荷并级联它的
@@ -694,39 +692,23 @@ unsafe fn boot_auto_tick() {
 /// 收尾重建那一刻的拍号(0 = 还没收尾)
 static mut FA_DONE_AT: u32 = 0;
 
-/// 补写任务的"等窗口"旗标(1 = 排着, 等应用退场 + 静置够拍数再 arm)。
-/// 为什么必须等: 逐对象补写要写活对象, 点完还停在页 5 的时候, 引擎正在重画我们
-/// 这一页 —— 实测的分界是"补写还在跑时操作 = 崩, 等它自停后再操作 = 不崩"。
-/// 退场 + 静置之后做 = 与投递包那条路同形(没有我们的页活着, 而且不在导航窗口里)。
-/// 它排的是**补写**(font_tree::arm), 不是逐条补差量。
-static mut FA_DEL_PEND: u32 = 0;
-/// 排上之后还要静置多少拍(50ms 一拍, 20 拍 = 1 秒)才开跑。
-/// 依据: "页栈变了(正在开/关页)就就地收工", 因为那正是引擎在动树的窗口。
-/// 应用刚退出 / 开机应用刚做完的那一刻就是这个窗口, 所以必须等它过去。
-const FA_DEL_SETTLE: u32 = 20;
-static mut FA_DEL_WAIT: u32 = 0;
-
 /// 收尾。
 ///
 /// **我们的页在前台时, 这一步一个对象都不碰**: 界面更新只排一次引擎重建
-/// (`mark_page_dirty`/`render_req`), 逐对象补写只登记等窗口的旗标(下面 FA_DEL_PEND)。
+/// (`mark_page_dirty`/`render_req`)。
 /// 为什么不能在点选那一拍原地改行 —— `row_update` 不是"只改文字", 它仍会 set_text +
 /// 给 trailing 做 set_state, 而 set_state 尾部走 `lv_obj_refresh_style`(全子树失效 +
 /// 逐对象发样式变更事件); 在分拍建脸正在动树的那几拍里做这件事就是崩溃轴。
 /// 逐字证据: 反汇编 row_update(0x0C4C8904) —— 标签已存在时它仍会 set_text(0x0C589490)
 /// + 给 trailing 做 set_state(0x0C589288), 后者尾部走 lv_obj_refresh_style(0x0C1070AC)。
 pub(crate) unsafe fn apply_finish() {
-    // 恢复模式收尾: 只清 FA_REVERT, 其余照常 —— 认脸表已把旧代脸映射到
-    // 恢复出来的系统脸, 补写必须排(它负责把补写过的对象从旧字体换成系统字体)。
+    // 恢复模式收尾: 只清 FA_REVERT, 其余照常。
     if st_rd!(FA_REVERT) != 0 {
         st_wr!(FA_REVERT, 0);
     }
-    // 逐对象补写一律走"等窗口"这条路(不在这里直接 arm):
-    //   收工条件是"正在开/关页 = 正在导航, 继续写就是同一崩法"。
-    //   应用刚退出 / 开机自动应用刚做完的那一刻, 恰好就是这种导航窗口。
-    //   这里排的是自动补写(font_tree::arm), 不是补差量 —— 见 tick 里的说明。
-    st_wr!(FA_DEL_PEND, 1);
-    st_wr!(FA_DEL_WAIT, FA_DEL_SETTLE);
+    // (v3.6) 逐对象补写已退役(font_hot 热替换全面接管): 原来这里排的
+    // "等窗口 + font_tree::arm" 整段删除 —— 换字体/重建脸后由热替 sweep
+    // 自动跟上, 不再需要退场补写。
     if st_rd!(APP_FG) == 0 {
         // 应用不在前台 = 没有我们的页活着, 与投递包那条路同形: 界面这边什么都不用做。
         return;
@@ -754,10 +736,10 @@ pub(crate) unsafe fn quiet() -> bool {
 pub(crate) unsafe fn busy() -> bool { st_rd!(FA_STAGE) != 0 }
 
 /// 有没有我们这一路的活在推进(供节拍自适应用): 分拍队列、待消费的请求、收尾留下的
-/// 重建、开机自动应用的等待/重试计数、"退场后补写"的等窗口。任何一条非 0 就别降频。
+/// 重建、开机自动应用的等待/重试计数。任何一条非 0 就别降频。
 pub(crate) unsafe fn pending() -> bool {
     st_rd!(FA_STAGE) != 0 || st_rd!(FA_REQ) != 0 || st_rd!(FA_QUEUED) != 0
-        || st_rd!(FA_DEL_PEND) != 0 || st_rd!(FA_WAIT) != 0
+        || st_rd!(FA_WAIT) != 0
 }
 
 /// 取(或首次建立)该 (名字,字号) 的 face, 带复用台账。0 = 建不出来。
@@ -805,6 +787,31 @@ unsafe fn fa_face_of(name: *const u8, size: u32) -> u32 {
     }
     if ok != 0 { st_wr!(FA_C_FACE, st_rd!(FA_C_FACE) + 1); }   // 只计新建, 复用不计
     ok
+}
+
+// ===== 台账访问器(font_hot 探针/热替换用) =====
+
+/// 台账条数
+pub(crate) unsafe fn cch_n() -> u32 { st_rd!(FA_CCH_N) }
+
+/// 第 i 条的记录指针(0 = 越界或该槽失败)。台账存的 face 就是管理器记录。
+pub(crate) unsafe fn cch_face_at(i: u32) -> u32 {
+    if i >= FA_CCH_CAP { return 0; }
+    st_rd!(FA_CCH_FACE[i as usize])
+}
+
+/// 按字号找我们已建好的记录(第一条非零命中; 没有 = 0)。
+pub(crate) unsafe fn cch_face_for_size(size: u32) -> u32 {
+    let n = st_rd!(FA_CCH_N) as usize;
+    let mut i = 0usize;
+    while i < n {
+        if st_rd!(FA_CCH_SZ[i]) == size {
+            let f = st_rd!(FA_CCH_FACE[i]);
+            if f != 0 { return f; }
+        }
+        i += 1;
+    }
+    0
 }
 
 // ===== 认脸表: 从固件字体缓存清单登记 =====
@@ -890,20 +897,15 @@ unsafe fn learn_from_cache() -> bool {
         } else {
             let name = &nm[..nl];
             if fc_has(name, b"Chaos") {
-                // 我们自己的脸(ChaosSans-*, **含旧代**)也登记: 旧代的脸 -> 当前代的脸
-                // (learn_owned 权威覆盖)。否则换字体/恢复之后, 补写过的对象
-                // 永远停在旧代(实测: 切换不跟、恢复也不跟)。当前代自己 repl==自己,
-                // learn_owned 覆盖为同值, 无害。仍不抢"第一个没登记上"的样本位。
+                // 我们自己的脸(ChaosSans-*): 建台账脸即可 —— 原来这里还会登记
+                // 补写认脸表(font_tree::learn_owned), v3.6 补写退役后只留建脸副作用。
                 let repl = fa_face_of(core::ptr::addr_of!(C_REG) as *const u8, sz);
                 if repl == 0 {
                     note_skip(b'X', name, sz);
                     st_wr!(FA_C_ID0, st_rd!(FA_C_ID0) + 1);
-                } else if !font_tree::learn_owned(payload, repl) {
-                    note_skip(b'T', name, sz);
-                    st_wr!(FA_C_ID0, st_rd!(FA_C_ID0) + 1);
                 }
             } else if fc_has(name, b"Sport") || fc_has(name, b"BaiJ") {
-                store_ident(payload, 0, name, sz);          // 认出来就是为了不动它
+                // 认出来就是为了不动它(运动/白晶组件用专属脸, 不换)。
             } else if !fc_has(name, b"MiSans") {
                 note_skip(b'F', name, sz);                  // 第三种族: 不在承诺范围内
                 st_wr!(FA_C_IDFAM, st_rd!(FA_C_IDFAM) + 1);
@@ -913,12 +915,14 @@ unsafe fn learn_from_cache() -> bool {
                 st_wr!(FA_C_IDBIG, st_rd!(FA_C_IDBIG) + 1);
                 st_wr!(FA_C_ID0, st_rd!(FA_C_ID0) + 1);
             } else {
+                // (v3.6) 原来还登记补写认脸表(store_ident/font_tree::learn), 已退役。
+                // 保留 fa_face_of 的预建台账脸副作用: 热替遇到这些字号直接有拷贝源。
                 let repl = fa_face_of(core::ptr::addr_of!(C_REG) as *const u8, sz);
                 if repl == 0 {
                     note_skip(b'X', name, sz);              // 我们的脸建不出来
                     st_wr!(FA_C_ID0, st_rd!(FA_C_ID0) + 1);
                 } else {
-                    store_ident(payload, repl, name, sz);
+                    st_wr!(FA_C_ID, st_rd!(FA_C_ID) + 1);
                 }
             }
         }
@@ -927,18 +931,8 @@ unsafe fn learn_from_cache() -> bool {
     true
 }
 
-/// 登记一条身份; 表满时不静默丢 —— 记 `T` 并计入跳过, 让"还差哪个字体"看得见。
-unsafe fn store_ident(payload: u32, repl: u32, name: &[u8], sz: u32) {
-    if font_tree::learn(payload, repl) {
-        st_wr!(FA_C_ID, st_rd!(FA_C_ID) + 1);
-    } else {
-        note_skip(b'T', name, sz);
-        st_wr!(FA_C_ID0, st_rd!(FA_C_ID0) + 1);
-    }
-}
-
 /// 诊断用: 记下**第一个**没登记上的字体(名字 + 字号 + 原因字母)。
-/// tag: F=第三种族 S=字号超出 8..120 B=名字或载荷读不出 X=我们的脸建不出来 T=认脸表满。
+/// tag: F=第三种族 S=字号超出 8..120 B=名字或载荷读不出 X=我们的脸建不出来。
 pub(crate) static mut SKIP_TAG: u8 = 0;
 pub(crate) static mut SKIP_SZ: u32 = 0;
 static mut SKIP_NAME: [u8; 24] = [0; 24];
@@ -988,6 +982,47 @@ pub(crate) unsafe fn request_revert() {
     st_wr!(FA_CCH_N, 0);
     request();
 }
+
+// ===== 原字体捕获(v3.2 退役, 代码留档) =====
+//
+// v3 方案: 写回点前一拍抓样式现值当热替目标集合(读口 fw_style_get =
+// style_get_text_font 0x0C4BF87C 体内同型的 0x0C588BB8)。真机 v3.1 判明局限:
+// 捕获只代表"开机时被引用"(C96 撞上限), 快应用运行期新建的 (MiSans, size)
+// 记录不在捕获表, 三向+同名扩展又被 M48 撞上限挤死 → 快应用永不跟随。
+// v3.2 font_hot 改用 wrapper 链回指的活实例精确集合, 捕获不再参与。
+// 读口 fw_style_get 本身是有效的固件只读样式接口, 留作后续诊断工具。
+
+// ===== 热替按需建脸(v3.2): 台账没有的字号现建一张 =====
+//
+// 快应用运行期会用到各种字号 (MiSans, size) —— swap_record 的字号门
+// (cch_face_for_size) 找不到台账脸就没有拷贝源, 只能不换 = 快应用永远不跟随。
+// 真机 v3.1 读数 M48 撞候选上限也压住了同名兄弟扩展(48 个三向命中先填满,
+// 同名字号的记录进不了候选)。两处一起修: font_hot 扩容 + 这里按需现建。
+//
+// 现建用**台账第一条的名字指针**(= 用户在用字体的名字, 静态区稳定) +
+// 目标字号调 fa_face_of —— 它自带 (名字,字号) 复用台账 / 失败不毒化 / 容量上限,
+// 每个新字号只建一次。预算每轮 sweep 由 font_hot::sweep 开头重置
+// (FA_HOT_BUDGET=2/轮, 与分拍建脸同量级), 防一轮建几十张 FreeType 脸卡顿。
+
+const FA_HOT_BUDGET: u32 = 2;
+static mut FA_HOT_BUILT: u32 = 0;
+
+/// 取(或现建)该字号的在用字体脸。0 = 台账空 / 预算尽 / 建失败。
+pub(crate) unsafe fn ensure_face_for_size(size: u32) -> u32 {
+    let hit = cch_face_for_size(size);
+    if hit != 0 { return hit; }
+    let n = st_rd!(FA_CCH_N);
+    if n == 0 { return 0; }                            // 没有在用字体(revert 后)
+    if st_rd!(FA_HOT_BUILT) >= FA_HOT_BUDGET { return 0; }
+    if n >= FA_CCH_CAP { return 0; }                   // 台账满
+    let np = st_rd!(FA_CCH_NM[0]);
+    if !plausible_ptr(np) { return 0; }
+    st_wr!(FA_HOT_BUILT, st_rd!(FA_HOT_BUILT) + 1);
+    fa_face_of(np as *const u8, size)
+}
+
+/// 每轮 sweep 开头重置建脸预算(font_hot 调)
+pub(crate) unsafe fn hot_build_reset() { st_wr!(FA_HOT_BUILT, 0); }
 
 /// 在用池位清零(在用中的那份被删除后调)。0 = 无在用字体(开机默认态);
 /// 之后"重新应用字体"无文件可读会自然空转, 直到应用投递的新字体。
@@ -1043,28 +1078,9 @@ pub(crate) unsafe fn tick() {
         st_wr!(FA_QUEUED, 0);          // 收尾做完才算 settled(quiet() 用它当最后一道门)
         st_wr!(FA_DONE_AT, st_rd!(FA_DONE_AT) + 1);
         // 这里**不直接 arm** 补写: 刚收尾的这一拍正是引擎在拆建我们自己的页, 那一刻写
-        // 活对象就是前面那条崩溃轴(引擎动树的窗口里写活对象)。改由下面的 FA_DEL_PEND 等
-        // 应用退场 + 静置之后再排。
+        // 活对象就是前面那条崩溃轴(引擎动树的窗口里写活对象)。改由热替 sweep 兜住。
         // 覆盖代价明确: 切字体后**别的页**要退出重进才跟上(那些页的行本来就是固件建行时
-        // 从我们改过的样式现烘的)。当场追不上的那一块交给下面那条等窗口的自动补写。
-    }
-    // "等窗口"旗标(**自动补写**): 应用退出前台(我们的页全部不在)之后**再静置 1 秒**,
-    // 才排那一次逐对象补写。两段依据: 退场 = 与投递包那条不崩的路同形(没有我们的页
-    // 活着); 静置 = "正在开/关页就别写"(刚退出的那一刻引擎正在拆我们的页)。
-    // 应用字体的**每一条路**(手动"重新应用字体" /
-    // 投递包 0x30 / 开机自动应用)收尾都走 apply_finish => 都会自动排一次补写, 把"已经建好
-    // 的常驻对象"(表盘/小部件/桌面按钮的旧脸)当场换掉 —— 开机后不用再手动点行 9。
-    // 补写覆盖的目标面是"还挂在对象上的旧脸", 但门比较全
-    // (两趟指纹 + 渲染门 + 页栈锁定), 所以只留这一条路。
-    // 额外一道门: 有"待切换"不排(切换落地后还会再走一遍 apply_finish, 别用旧脸补一遍)。
-    if st_rd!(FA_DEL_PEND) != 0 && st_rd!(APP_FG) == 0 && st_rd!(FA_PENDING) == 0 && quiet() {
-        let w = st_rd!(FA_DEL_WAIT);
-        if w > 0 {
-            st_wr!(FA_DEL_WAIT, w - 1);
-        } else {
-            st_wr!(FA_DEL_PEND, 0);
-            crate::font_tree::arm();
-        }
+        // 从我们改过的样式现烘的)。
     }
 }
 

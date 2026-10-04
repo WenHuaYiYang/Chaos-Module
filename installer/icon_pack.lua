@@ -239,7 +239,8 @@ local function step()
         finish(false, "打不开目标文件: " .. tostring(derr))
         return
       end
-      job.dst, job.left, job.moved = dst, len, 0
+      job.nm = nm
+      job.dst, job.left, job.moved, job.flen = dst, len, 0, len
       return
     end
     local want = job.left
@@ -249,8 +250,14 @@ local function step()
       finish(false, "第 " .. (job.idx + 1) .. " 张数据缺失")
       return
     end
-    if not pcall(job.dst.write, job.dst, blk) then
-      finish(false, "写失败: " .. job.idx .. "/" .. job.count)
+    -- 满盘时 write 返回 nil(不抛异常) —— 不查返回值就会出现"已投递 N 张"的
+    -- 假象, 实际磁盘上是 0 字节/半截文件: LVGL open 成功、解码失败 = 图标全灭
+    -- (2026-10-04 真机事故, Pure/Delta 两个包同灭的根因)。
+    local wok, wobj = pcall(job.dst.write, job.dst, blk)
+    if not wok or not wobj then
+      close_files()
+      pcall(function() os.remove(ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. job.nm) end)
+      finish(false, "第 " .. (job.idx + 1) .. " 张写入失败, 空间可能不足, 请先删几个图标包")
       return
     end
     job.left = job.left - #blk
@@ -258,6 +265,19 @@ local function step()
     if job.left == 0 then
       local cok = pcall(job.dst.close, job.dst)
       job.dst = nil
+      -- 复核落盘大小: 防个别文件系统"write 返回成功但数据没落"的静默丢失
+      local szok, sz = pcall(function()
+        local rf = io.open(ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. job.nm, "rb")
+        if not rf then return -1 end
+        local n = #rf:read("*a")
+        rf:close()
+        return n
+      end)
+      if not szok or sz ~= job.flen then
+        pcall(function() os.remove(ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. job.nm) end)
+        finish(false, "第 " .. (job.idx + 1) .. " 张落盘不完整, 空间可能不足, 请先删几个图标包")
+        return
+      end
       if not cok or job.moved <= 0 then
         finish(false, "第 " .. (job.idx + 1) .. " 张没写全")
         return

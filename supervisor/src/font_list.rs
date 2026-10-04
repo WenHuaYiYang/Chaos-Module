@@ -86,8 +86,6 @@ static mut FL_ROWS_REQ: u32 = 0;
 static mut FL_SEL: u32 = 0;
 /// 上一次看到的在用池位(变了就重建本页: 勾选态与"使用中"副标签要跟上 live)
 static mut FL_LAST: u32 = 0;
-/// 上一拍补写任务是否在跑(同上; 补写收工那一拍要把行9 的"补写中"文案换回来)
-static mut FL_BF_RUN: u32 = 0;
 
 // ---------------------------------------------------------------------------
 // 清单: 读 / 改 / 写(只碰 index.txt 一个文件, 绝不遍历目录)
@@ -293,6 +291,8 @@ pub(crate) unsafe fn lines_fill() {
     }
     let total = st_rd!(FL_N);
     let live = font_apply::live_get();
+    // (v3.6) font_hot 探针/读数已从界面撤下(诊断期结束), probe_run/readout
+    // 函数在 font_hot.rs 留档(标 allow(dead_code)), 需要时一行调用即可恢复。
     let mut row = 0usize;
     while row < FL_MAX {
         let e = row as u32;
@@ -364,10 +364,9 @@ pub(crate) unsafe fn bind_rows(rows: *mut u32, base: usize, n: usize) {
 }
 
 /// "可以不碰对象树"的窗口 —— 见 font_apply::apply_finish 的说明与固件逐字证据。
-/// 两道跑批任何一个在动(分拍应用 / **补写任务**), 原地改行(或重建本页)就落进
-/// "引擎正在动这棵树"的那一拍。
+/// 补写任务退役(v3.6)后只剩分拍应用一道。
 unsafe fn window_is_quiet() -> bool {
-    font_apply::quiet() && !font_tree::backfill_running()
+    font_apply::quiet()
 }
 
 /// 原地写勾选态(表盘切换页 wf_apply_selection 同款): 只调 row_update 的第 6 参,
@@ -551,7 +550,11 @@ pub(crate) unsafe fn request_delete(slot: u32) {
 unsafe fn delete_tick() {
     match st_rd!(FL_DEL_ST) {
         // 10 = 在用中的那份: 第一步先把样式恢复成系统字体(分拍应用队列)。
+        //   恢复前先把 wrapper 上的热替换还原成 MiSans 原样(font_hot::revert_all):
+        //   文件删掉之后, 我们脸的回调绝不能再挂在 wrapper 上 —— "face 按需回读
+        //   文件"红线。之后台账清零, 热替扫描自然停手。
         10 => {
+            font_hot::revert_all();
             font_apply::request_revert();
             st_wr!(FL_DEL_ST, 11);
         }
@@ -621,13 +624,7 @@ pub(crate) unsafe fn tick() {
         && confirm_pop::close_deferred(confirm_pop::SLOT_FONT) {
         st_wr!(FL_ROWS_REQ, 1);
     }
-    // 补写任务"从在跑变成停了"的那一拍: 行9 的文案要换回来("补写中" -> "补写一遍")。
-    if st_rd!(FL_BF_RUN) == 0 && font_tree::backfill_running() {
-        st_wr!(FL_BF_RUN, 1);
-    } else if st_rd!(FL_BF_RUN) != 0 && !font_tree::backfill_running() {
-        st_wr!(FL_BF_RUN, 0);
-        st_wr!(FL_ROWS_REQ, 1);
-    }
+    // 补写任务已退役(v3.6): 原 FL_BF_RUN 状态机删除。
     // 点击/收尾/提示超时/删除流水线留下的"界面要更新"请求 —— **不在这里原地 row_update**,
     // 统一只在窗口开着的那一拍排一次整页重建。为什么不能原地改行: 见 font_apply::apply_finish
     // 的说明(row_update 的真实代价), 同一份证据不在这里重抄。

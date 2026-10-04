@@ -326,7 +326,7 @@ pub const LV_GLOBAL: u32 = 0x2010_3174;
 /// 重要: 上面那对取/存访问器的形状就是 LVGL 的
 /// `_lv_refr_get/set_disp_refreshing` —— **"没有 display 在刷新"时这个槽是 0**,
 /// 不是"指针取不到"。把 0 当成"忙"方向就整个反了(空闲判忙 => 累计熔断把换字关掉;
-/// 只在它非 0 的瞬间放行 => 恰好是渲染窗口)。门的正确写法见 font_tree::ft_render_busy。
+/// 只在它非 0 的瞬间放行 => 恰好是渲染窗口)。门的正确写法曾见于 font_tree::ft_render_busy(补写已退役, 见 git 历史)。
 /// 注意: `lv_global + 0x18` 是全镜像最热的指针字段(35 次取址), 但"+0x14 与 +0x18
 /// 谁是 display"静态证不了(取用它们的代码在 0x1C 模块, 实现体已被厂商清零)。
 pub const LVG_DISP: u32 = 0x14;
