@@ -202,7 +202,7 @@ unsafe fn load_fixed() -> bool {
 }
 
 pub(crate) unsafe fn request(mode: u32) {
-    if mode > 2 { return; }
+    if mode > 3 { return; }
     st_wr!(MODE, mode);
     if mode == 2 { st_wr!(GENERATE, 1); }
     st_wr!(REQUEST, 1);
@@ -227,6 +227,7 @@ pub(crate) unsafe fn status() -> &'static [u8] {
     match st_rd!(STATUS) {
         1 => "正在生成背景\0".as_bytes(),
         2 => "已生成，复用静态背景\0".as_bytes(),
+        6 => "完全透明背景（实验性）\0".as_bytes(),
         3 => "固定图片背景\0".as_bytes(),
         4 => "背景不可用，保留系统背景\0".as_bytes(),
         5 => "接口不匹配，保留系统背景\0".as_bytes(),
@@ -282,6 +283,18 @@ pub(crate) unsafe fn tick() {
     if !fw_api::screen_is_on() || fw_api::top_app_id() != fw_api::HOME_APP_ID { return; }
     let Some(parents) = fw_api::background_home_targets() else { return; };
     if !watch_structure() { set_status(4); return; }
+    if mode == 3 {
+        if st_rd!(REQUEST) != 0 {
+            if !unmount() { return; }
+            st_wr!(REQUEST, 0);
+            crate::background_surfaces::set_background(0);
+            crate::background_surfaces::enable_transparent(parents);
+            st_wr!(ATTACHED, 1);
+            set_status(6);
+        }
+        if crate::background_surfaces::pending() { let _ = crate::background_surfaces::tick(Some(parents)); }
+        return;
+    }
     let generate = st_rd!(GENERATE) != 0 || st_rd!(SOURCE_MODE) != mode
         || SCENE.descriptor() == 0;
     // 只有生成需要表盘可见；已有静态图在其他主界面页面也可立即重挂。

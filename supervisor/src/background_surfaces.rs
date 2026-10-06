@@ -204,8 +204,12 @@ unsafe fn add(object: u32, root: u32, prop: u32, desired: u32) {
 /// 整页底图；页根本身不画自己的背景，真正出像素的是挂在页根底部那张全屏图像。
 unsafe fn page_background(root: u32) {
     let background = st_rd!(BACKGROUND);
-    if root == 0 || background == 0 { return; }
+    if root == 0 { return; }
     for slot in 0..2 {
+        if background == 0 {
+            add(root, root, BG_OPA, 0);
+            continue;
+        }
         if st_rd!(PAGE_ROOTS[slot]) != root { continue; }
         let mut image = st_rd!(PAGE_IMAGES[slot]);
         if image == 0 {
@@ -220,6 +224,11 @@ unsafe fn page_background(root: u32) {
             st_wr!(PAGE_IMAGES[slot], image);
         }
         fw_api::background_image_set_source(image, background);
+    }
+    if background == 0 {
+        fw_api::background_set_opa(root, 0);
+        scan_children(root, root, 8);
+        return;
     }
     add(root, root, BG_IMAGE, background);
     add(root, root, BG_IMAGE_OPA, 255);
@@ -320,6 +329,15 @@ pub(crate) unsafe fn enable(roots: [u32; 4]) {
                 }
             }
         }
+    }
+    st_wr!(SCAN, 0);
+    st_wr!(ACTIVE, 1);
+}
+
+pub(crate) unsafe fn enable_transparent(roots: [u32; 4]) {
+    consume();
+    for root in roots {
+        if root != 0 { add(root, root, BG_OPA, 0); scan_children(root, root, 8); }
     }
     st_wr!(SCAN, 0);
     st_wr!(ACTIVE, 1);
