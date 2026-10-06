@@ -27,6 +27,7 @@ static mut WORK: u128 = 0;
 static mut SCAN: u32 = 0;
 static mut BACKGROUND: u32 = 0;
 static mut PAGE_ROOTS: [u32; 2] = [0; 2];
+static mut PAGE_IMAGES: [u32; 2] = [0; 2];
 static mut PAGE_WATCHED: [u32; 2] = [0; 2];
 static mut PAGE_SCAN: u32 = 0;
 
@@ -56,6 +57,14 @@ unsafe extern "C" fn page_changed(event: u32) {
 /// 页面生命周期回调在原始 create 返回后登记真实根；后续卡片/清除按钮晚建时只置位。
 pub(crate) unsafe fn set_page_root(slot: usize, root: u32) {
     if slot >= 2 || !safe_ptr(root) { return; }
+    let previous = st_rd!(PAGE_ROOTS[slot]);
+    if previous != 0 && previous != root {
+        let image = st_rd!(PAGE_IMAGES[slot]);
+        if image != 0 && fw_api::obj_is_child_of(previous, image) {
+            fw_api::obj_delete(image);
+        }
+        st_wr!(PAGE_IMAGES[slot], 0);
+    }
     if st_rd!(PAGE_ROOTS[slot]) != root {
         st_wr!(PAGE_ROOTS[slot], root);
         st_wr!(PAGE_SCAN, 1);
@@ -68,6 +77,14 @@ pub(crate) unsafe fn set_page_root(slot: usize, root: u32) {
 }
 
 pub(crate) unsafe fn clear_page_roots() {
+    for slot in 0..2 {
+        let root = st_rd!(PAGE_ROOTS[slot]);
+        let image = st_rd!(PAGE_IMAGES[slot]);
+        if root != 0 && image != 0 && fw_api::obj_is_child_of(root, image) {
+            fw_api::obj_delete(image);
+        }
+    }
+    st_wr!(PAGE_IMAGES, [0; 2]);
     st_wr!(PAGE_ROOTS, [0; 2]);
     st_wr!(PAGE_WATCHED, [0; 2]);
     st_wr!(PAGE_SCAN, 0);
@@ -188,6 +205,22 @@ unsafe fn add(object: u32, root: u32, prop: u32, desired: u32) {
 unsafe fn page_background(root: u32) {
     let background = st_rd!(BACKGROUND);
     if root == 0 || background == 0 { return; }
+    for slot in 0..2 {
+        if st_rd!(PAGE_ROOTS[slot]) != root { continue; }
+        let mut image = st_rd!(PAGE_IMAGES[slot]);
+        if image == 0 {
+            image = fw_api::background_image_create(root);
+            if image == 0 { continue; }
+            fw_api::background_image_set_floating(image);
+            fw_api::background_image_set_scale(image, 256, 256);
+            fw_api::background_image_set_pivot(image, 0, 0);
+            fw_api::obj_align(image, 9, 0, 0);
+            fw_api::background_clear_flags(image, 0x12);
+            fw_api::background_image_move_back(image);
+            st_wr!(PAGE_IMAGES[slot], image);
+        }
+        fw_api::background_image_set_source(image, background);
+    }
     add(root, root, BG_IMAGE, background);
     add(root, root, BG_IMAGE_OPA, 255);
     // 底色透明度为零时原绘制会整块跳过背景，底图跟着一起被跳过，因此必须保持非零；
@@ -223,12 +256,18 @@ unsafe fn scan_children(root: u32, object: u32, depth: u32) {
         let child = fw_api::obj_get_child(object, index as u32);
         if !safe_ptr(child) { continue; }
         let class = rd32(child as *const u32);
+        add(child, root, BG_OPA, if class == OBJ_CLASS && object == root { 150 } else { 0 });
         if class == IMAGE_CLASS {
             if rd32((child + 0x34) as *const u32) == st_rd!(BACKGROUND) {
                 add(child, root, IMAGE_OPA, 255);
-            } else if path_is(child, crate::background_assets::EMPTY_PATH) {
+            } else {
+                if st_rd!(PAGE_ROOTS).contains(&root) {
+                    fw_api::background_notification_cache_refresh(root, child);
+                }
+                if path_is(child, crate::background_assets::EMPTY_PATH) {
                 let source = crate::background_assets::empty_image();
                 if source != 0 { add(child, root, IMAGE_SOURCE, source); }
+                }
             }
         }
         scan_children(root, child, depth - 1);

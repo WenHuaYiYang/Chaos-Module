@@ -45,7 +45,7 @@ local V_R     = 24
 -- 所以标题也走系统字体, 层级靠**字号与颜色**建立。
 local F_BODY  = "MiSans-Regular"
 
-local SUPERVISOR_RESOURCE = SCRIPT_PATH .. "chaos_sup.ko"
+local SUPERVISOR_RESOURCE = SCRIPT_PATH .. "chaos_sup.bin"
 local SUPERVISOR_PATH = "/data/chaos/sup.ko"
 local ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon.bin"
 local ICON_PATH = "/data/chaos/chaos_icon.bin"

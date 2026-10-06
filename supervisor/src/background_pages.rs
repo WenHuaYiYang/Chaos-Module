@@ -9,6 +9,10 @@ use crate::{st_rd, st_wr};
 
 static mut HOOKED: [u32; 2] = [0; 2];
 
+// 详情页的中间内容区由固件自己的黑色容器绘制；对它注入全屏背景会
+// 把该容器的合成层改成黑块。因此只接管通知聚合页，详情页保持原样。
+const ENABLED: [bool; 2] = [true, false];
+
 unsafe extern "C" fn page_detail_create(page: u32, root: u32, start: u32) -> i32 {
     page_create(1, page, root, start)
 }
@@ -42,6 +46,7 @@ pub(crate) unsafe fn install() -> bool {
     let callbacks = callbacks();
     let mut any = false;
     for slot in 0..2 {
+        if !ENABLED[slot] { continue; }
         let desc = fw_api::BACKGROUND_NOTIFY_DESCS[slot];
         if rd32((desc + 0x14) as *const u32) != fw_api::BACKGROUND_NOTIFY_KEYS[slot] {
             continue;
@@ -54,6 +59,10 @@ pub(crate) unsafe fn install() -> bool {
             core::ptr::write_volatile(address as *mut u32, callbacks[slot]);
             st_wr!(HOOKED[slot], 1);
         }
+        let existing = rd32((desc + 0x30) as *const u32);
+        if safe_ptr(existing) {
+            crate::background_surfaces::set_page_root(slot, existing);
+        }
         any = rd32(address as *const u32) == callbacks[slot] || any;
     }
     any
@@ -62,6 +71,7 @@ pub(crate) unsafe fn install() -> bool {
 pub(crate) unsafe fn uninstall() {
     let callbacks = callbacks();
     for slot in 0..2 {
+        if !ENABLED[slot] { continue; }
         let desc = fw_api::BACKGROUND_NOTIFY_DESCS[slot];
         let address = desc + fw_api::BACKGROUND_NOTIFY_CREATE_SLOT;
         if rd32(address as *const u32) == callbacks[slot] {
@@ -82,5 +92,3 @@ pub(crate) unsafe fn pending() -> bool {
 pub(crate) unsafe fn hooked() -> bool {
     st_rd!(HOOKED).iter().any(|value| *value != 0)
 }
-
-\n

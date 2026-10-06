@@ -10,3 +10,6 @@ fonts/
 *.a
 *.o
 *.elf
+
+installer/chaos-install
+.workbuddy

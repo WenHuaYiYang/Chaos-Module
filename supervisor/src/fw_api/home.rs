@@ -89,6 +89,24 @@ pub unsafe fn background_page_invoke(callback: u32, page: u32, root: u32, start:
 
 pub unsafe fn background_watchface_identity() -> u32 { rd32(0x2011_9770 as *const u32) }
 
+/// 备份 scan_children 中的通知全屏缓存重捕获链。
+pub unsafe fn background_notification_cache_refresh(root: u32, image: u32) {
+    let buffer = rd32((image + 0x34) as *const u32);
+    if !safe_ptr(buffer) || rd8(buffer as *const u8) != 25
+        || rd8((buffer + 1) as *const u8) != 15
+        || crate::mem::rd16((buffer + 4) as *const u16) != 336
+        || crate::mem::rd16((buffer + 6) as *const u16) != 480
+        || crate::mem::rd16((buffer + 8) as *const u16) != 1008
+        || rd32((buffer + 12) as *const u32) < 483840
+        || rd32((buffer + 12) as *const u32) > 1048576
+        || !safe_ptr(rd32((buffer + 16) as *const u32)) { return; }
+    let f: unsafe extern "C" fn(u32, u32, u32) -> u32 = transmute(0x0CA5_FB41usize);
+    if f(root, 15, buffer) == 1 {
+        super::fw_img_free_by_path(buffer);
+        super::background_image_set_source(image, buffer);
+    }
+}
+
 /// 已验证的原图像透明度入口；只改变底层图像自身。
 pub unsafe fn background_surface_set_prop(object: u32, prop: u32, value: u32) {
     if prop == 0x1D { super::background_set_opa(object, value); }

@@ -114,6 +114,8 @@ python scripts/verify_chaos_ko.py Chaos-Module/supervisor/chaos_sup.ko
 一节）。跑不通是因为打包链本身（`scripts/build_chaos_installer_043.py` 等）不对外：它写死了
 本地工程路径。对外给的是格式实现 `tools/container_shell.py`，项目侧那点 glue 由使用者自己接。
 
+当然，你可以直接使用`tools/build.py`
+
 ### 编译链
 
 ```
