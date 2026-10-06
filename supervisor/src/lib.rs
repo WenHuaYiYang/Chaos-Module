@@ -166,6 +166,13 @@ unsafe extern "C" fn chaos_ctor() {
     // 返回 0 才算注册成功, 与固件自带模块的"已注册"标志同一套语义
     if registered == 0 {
         st_wr!(DRIVER_ON, 1);
+        // 注入完成后立即启动模块维护定时器。此前定时器只在 Chaos 页面
+        // on_resume 时创建，导致已保存的背景/透明模式要打开一次 Chaos 才生效。
+        // 定时器回调会等待固件桌面对象树就绪，再消费 background.cfg 并刷新缓存；
+        // shake_arm 本身幂等，页面首次打开时不会重复创建定时器。
+        // 这里只建立延后执行的维护定时器；真正的订阅、hook 和设置应用
+        // 由定时器在启动窗口结束后统一开始。
+        crate::watchface::maintenance_arm();
     }
 }
 

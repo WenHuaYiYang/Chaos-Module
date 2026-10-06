@@ -89,7 +89,7 @@ pub(crate) const IC_PACK_MAX: usize = 8;
 /// 清单文件恒长
 const IC_INDEX_SIZE: usize = IC_LINE * IC_PACK_MAX;
 /// 单条路径槽字节数：目录 18 + 包号 2 + '/' 1 + 最长 stem 19 + ".bin" 4 + NUL = 45, 留到 56
-const ICON_SLOT: usize = 56;
+const ICON_SLOT: usize = 128;
 /// 行文本缓冲容量(界面行: 前缀 4 + 短名 12 + "再点一次删除 " 21 + 余量)
 const IC_ROW_CAP: usize = 48;
 

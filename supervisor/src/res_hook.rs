@@ -45,7 +45,7 @@ const MODE_RD: u32 = 2;
 /// 切包时两边一起换。
 const ICON_DIR: &[u8] = b"/data/chaos/icons";
 /// 拼好的目标路径缓冲: 目录 18 + '/' 1 + 包号 2 + '/' 1 + stem <=20 + ".bin" 4 + NUL
-const RH_PATH_CAP: usize = 56;
+const RH_PATH_CAP: usize = 128;
 static mut RH_PATH: [u8; RH_PATH_CAP] = [0; RH_PATH_CAP];
 /// 资源缓存退役使用独立缓冲，文件回调不会覆盖它。
 static mut RH_CACHE_PATH: [u8; 96] = [0; 96];
@@ -74,7 +74,7 @@ struct Rule {
 ///
 /// 素材侧的取名规则: CIPK 容器只接受 `^[A-Za-z0-9_]+\.bin$` 的扁平名(投递脚本
 /// icon_pack.lua 按这条正则挡路径穿越), 所以这里不能写目录结构。
-const RULES: [Rule; 24] = [
+const RULES: [Rule; 106] = [
     // ---- 控制中心(快捷开关) ----
     Rule { dir: b"/resource/app/control_center/icon/", name: b"flashlight_all.bin", stem: b"ctrl_flashlight" },
     Rule { dir: b"/resource/app/control_center/icon/", name: b"setting_all.bin",    stem: b"ctrl_setting" },
@@ -105,6 +105,90 @@ const RULES: [Rule; 24] = [
     // 换这张**不会**盖掉日期: 星期与日期数字是固件画在图上的两枚文字, 它们照旧画,
     // 只是底图变成我们的。所以这张素材必须挑**浅色底** —— 深色底会让深色日期字糊掉。
     Rule { dir: b"/resource/app/perpetual_calendar/", name: b"calendar_background_icon.bin", stem: b"cal_background" },
+    // NFC 卡包：保留目录区分，覆盖两组区域卡片；排除六张系统状态图标。
+    Rule { dir: b"/resource/app/nfccard/", name: b"access_card_01.bin", stem: b"card_access_card_01" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"access_card_02.bin", stem: b"card_access_card_02" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"access_card_03.bin", stem: b"card_access_card_03" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"access_card_04.bin", stem: b"card_access_card_04" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"access_card_sdoor.bin", stem: b"card_access_card_sdoor" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"access_card_work.bin", stem: b"card_access_card_work" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"bank_card_mastercard.bin", stem: b"card_bank_card_mastercard" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"bank_card_visa.bin", stem: b"card_bank_card_visa" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_biyadi.bin", stem: b"card_car_card_biyadi" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_brnd.bin", stem: b"card_car_card_brnd" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_fangchengbao.bin", stem: b"card_car_card_fangchengbao" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_lot1.bin", stem: b"card_car_card_lot1" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_tengshi.bin", stem: b"card_car_card_tengshi" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_xia1.bin", stem: b"card_car_card_xia1" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_yangwang.bin", stem: b"card_car_card_yangwang" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"car_card_yu7.bin", stem: b"card_car_card_yu7" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"ecc.bin", stem: b"card_ecc" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"ecc_student.bin", stem: b"card_ecc_student" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuchangzhou.bin", stem: b"card_jiangsu_transit_card_jiangsuchangzhou" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuhuaian.bin", stem: b"card_jiangsu_transit_card_jiangsuhuaian" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuhuaihai.bin", stem: b"card_jiangsu_transit_card_jiangsuhuaihai" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsujinling.bin", stem: b"card_jiangsu_transit_card_jiangsujinling" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsukunshan.bin", stem: b"card_jiangsu_transit_card_jiangsukunshan" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsulianyungang.bin", stem: b"card_jiangsu_transit_card_jiangsulianyungang" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsunantong.bin", stem: b"card_jiangsu_transit_card_jiangsunantong" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsusuqian.bin", stem: b"card_jiangsu_transit_card_jiangsusuqian" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsusuzhou.bin", stem: b"card_jiangsu_transit_card_jiangsusuzhou" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsutaizhou.bin", stem: b"card_jiangsu_transit_card_jiangsutaizhou" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuwuxi.bin", stem: b"card_jiangsu_transit_card_jiangsuwuxi" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuyancheng.bin", stem: b"card_jiangsu_transit_card_jiangsuyancheng" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuyangzhou.bin", stem: b"card_jiangsu_transit_card_jiangsuyangzhou" },
+    Rule { dir: b"/resource/app/nfccard/jiangsu/", name: b"transit_card_jiangsuzhenjiang.bin", stem: b"card_jiangsu_transit_card_jiangsuzhenjiang" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanchaozhou.bin", stem: b"card_lingnan_transit_card_lingnanchaozhou" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanguangfo.bin", stem: b"card_lingnan_transit_card_lingnanguangfo" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanheyuanyu.bin", stem: b"card_lingnan_transit_card_lingnanheyuanyu" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanhonghai.bin", stem: b"card_lingnan_transit_card_lingnanhonghai" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanlingyun.bin", stem: b"card_lingnan_transit_card_lingnanlingyun" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanmaocheng.bin", stem: b"card_lingnan_transit_card_lingnanmaocheng" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanmojiang.bin", stem: b"card_lingnan_transit_card_lingnanmojiang" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanrongjiang.bin", stem: b"card_lingnan_transit_card_lingnanrongjiang" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanshaozhou.bin", stem: b"card_lingnan_transit_card_lingnanshaozhou" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanwuyi.bin", stem: b"card_lingnan_transit_card_lingnanwuyi" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanyangcheng.bin", stem: b"card_lingnan_transit_card_lingnanyangcheng" },
+    Rule { dir: b"/resource/app/nfccard/lingnan/", name: b"transit_card_lingnanzhaoqing.bin", stem: b"card_lingnan_transit_card_lingnanzhaoqing" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_beijing.bin", stem: b"card_transit_card_beijing" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_chongqing.bin", stem: b"card_transit_card_chongqing" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_dalian.bin", stem: b"card_transit_card_dalian" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_ganzhou.bin", stem: b"card_transit_card_ganzhou" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_guangxi.bin", stem: b"card_transit_card_guangxi" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_haerbin.bin", stem: b"card_transit_card_haerbin" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_hainan.bin", stem: b"card_transit_card_hainan" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_hangzhou.bin", stem: b"card_transit_card_hangzhou" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_hefei.bin", stem: b"card_transit_card_hefei" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_hongcheng.bin", stem: b"card_transit_card_hongcheng" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_hongshan.bin", stem: b"card_transit_card_hongshan" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_jilin.bin", stem: b"card_transit_card_jilin" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_jinhua.bin", stem: b"card_transit_card_jinhua" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_kunming.bin", stem: b"card_transit_card_kunming" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_lanzhou.bin", stem: b"card_transit_card_lanzhou" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_ningbo.bin", stem: b"card_transit_card_ningbo" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_qingdao.bin", stem: b"card_transit_card_qingdao" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_quancheng.bin", stem: b"card_transit_card_quancheng" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_rongcheng.bin", stem: b"card_transit_card_rongcheng" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_shanghai.bin", stem: b"card_transit_card_shanghai" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_shaoxing.bin", stem: b"card_transit_card_shaoxing" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_shengjing.bin", stem: b"card_transit_card_shengjing" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_shenzhen.bin", stem: b"card_transit_card_shenzhen" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_taizhou.bin", stem: b"card_transit_card_taizhou" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_tianfu.bin", stem: b"card_transit_card_tianfu" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_tianjin.bin", stem: b"card_transit_card_tianjin" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_tuocheng.bin", stem: b"card_transit_card_tuocheng" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_wuhan.bin", stem: b"card_transit_card_wuhan" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_xiamen.bin", stem: b"card_transit_card_xiamen" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_xian.bin", stem: b"card_transit_card_xian" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_xiaoxiang.bin", stem: b"card_transit_card_xiaoxiang" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_xizang.bin", stem: b"card_transit_card_xizang" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_yanzhao.bin", stem: b"card_transit_card_yanzhao" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_yinchuan.bin", stem: b"card_transit_card_yinchuan" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_zhengzhou.bin", stem: b"card_transit_card_zhengzhou" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"transit_card_zhuhai.bin", stem: b"card_transit_card_zhuhai" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"widget22.bin", stem: b"card_widget22" },
+    Rule { dir: b"/resource/app/nfccard/", name: b"widget_card_bg.bin", stem: b"card_widget_card_bg" },
+
 ];
 
 /// 规则总数与按序取 stem: 删除流水线(icon_apply)要按同一张表清文件,

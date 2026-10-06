@@ -341,6 +341,8 @@ pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
 //   都算有活, 所以**所有以"拍"为单位的等待量都还在按 50ms 走, 不会因为降频被拉长**。
 const TICK_FAST_MS: u32 = 50;
 const TICK_IDLE_MS: u32 = 1000;
+// 注入后先让友商/系统模块完成启动；50 个 50ms tick 后才运行 Chaos 逻辑。
+static mut BOOT_DELAY: u32 = 50;
 
 /// 有没有活在推进(或有人在用)。为 true 就保持快节拍。
 unsafe fn tick_busy() -> bool {
@@ -377,6 +379,14 @@ unsafe fn tick_adapt() {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
+    if st_rd!(BOOT_DELAY) != 0 {
+        st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
+        return;
+    }
+    // 延时窗口结束后才订阅手势；此前不触碰事件总线。
+    if st_rd!(SHAKE_SUB) == 0 {
+        shake_arm();
+    }
     // 0. 先按上一拍的忙闲把节拍定好(放在最前: 后面的分支里有提前 return)
     tick_adapt();
     // 1. 自愈: 页句柄还在但内容树没建(built == 0, 而 on_resume 没来, 例如息屏唤醒)。
@@ -502,6 +512,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
 // 每清零重建一次就多一个并发实例(表现为 CPU 数值刷新越来越快, 经历的息屏轮次越多越快)。
 // 要做"先删后建"必须先确认 lv_timer_delete 的地址, 在那之前只建一次。
 pub(crate) unsafe fn shake_arm() {
+    if st_rd!(BOOT_DELAY) != 0 { return; }
     // 开关在重启后从持久化文件恢复；文件缺失时保持默认开启。
     let path = b"/data/chaos/shake.cfg\0";
     let fd = fw_api::open(path.as_ptr(), fw_api::oflag::RDONLY, 0);

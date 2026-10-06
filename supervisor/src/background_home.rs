@@ -19,6 +19,8 @@ static mut WATCHED_ROOT: u32 = 0;
 static mut WATCHED_ROOTS: [u32; 4] = [0; 4];
 static mut MUTATING: u32 = 0;
 static mut PERSIST_LOADED: u32 = 0;
+// 模块注入后给其他模块留出启动窗口，约 50 * 50ms = 2.5 秒。
+static mut BOOT_DELAY: u32 = 0;
 
 unsafe fn persist_mode(mode: u32) {
     let path = b"/data/chaos/background.cfg\0";
@@ -255,6 +257,7 @@ unsafe fn set_status(value: u32) {
 }
 
 pub(crate) unsafe fn pending() -> bool {
+    if st_rd!(BOOT_DELAY) != 0 { return true; }
     for i in 0..4 {
         if st_rd!(DELETED[i]).1 != 0 { return true; }
     }
@@ -263,6 +266,10 @@ pub(crate) unsafe fn pending() -> bool {
 }
 
 pub(crate) unsafe fn tick() {
+    if st_rd!(BOOT_DELAY) != 0 {
+        st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
+        return;
+    }
     load_mode();
     consume_deleted();
     if !crate::font_apply::quiet() { return; }

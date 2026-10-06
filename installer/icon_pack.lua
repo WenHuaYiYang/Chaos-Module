@@ -200,7 +200,7 @@ local function step()
       return
     end
     local count = read_u32(hdr, 5)
-    if not count or count < 1 or count > 64 then
+    if not count or count < 1 or count > 256 then
       src:close()
       finish(false, "图标张数非法: " .. tostring(count))
       return
@@ -229,7 +229,7 @@ local function step()
       local nh = job.src:read(1)
       local nl = nh and nh:byte(1)
       -- 名字只允许 [A-Za-z0-9_]+.bin: 绝不让容器决定落点(路径穿越在这里断掉)
-      local nm = (nl and nl > 0 and nl <= 24) and job.src:read(nl) or nil
+      local nm = (nl and nl > 0 and nl <= 64) and job.src:read(nl) or nil
       if type(nm) ~= "string" or #nm ~= nl or not nm:match("^[%w_]+%.bin$") then
         finish(false, "第 " .. (job.idx + 1) .. " 张名字非法")
         return
