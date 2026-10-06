@@ -82,6 +82,34 @@ pub(crate) unsafe fn desel_set(node: u32, off: bool) {
         n -= 1;
     }
     st_wr!(WF_DESEL_CNT, n as u32);
+    persist_deselected();
+}
+
+const SHAKE_WF_CFG: &[u8] = b"/data/chaos/shake-wfaces.cfg\0";
+
+unsafe fn persist_deselected() {
+    let fd = fw_api::open(SHAKE_WF_CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { return; }
+    let mut buf = [0u8; 24 * 16];
+    for i in 0..st_rd!(WF_DESEL_CNT).min(24) as usize {
+        let node = st_rd!(WF_DESEL[i]);
+        let id = (node + 8) as *const u8;
+        for j in 0..15 { buf[i * 16 + j] = read_volatile(id.add(j)); if buf[i * 16 + j] == 0 { break; } }
+    }
+    let _ = fw_api::write(fd, buf.as_ptr(), buf.len() as u32); fw_api::close(fd);
+}
+
+unsafe fn restore_deselected() {
+    let fd = fw_api::open(SHAKE_WF_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return; }
+    let mut buf = [0u8; 24 * 16];
+    let got = fw_api::read(fd, buf.as_mut_ptr(), buf.len() as u32); fw_api::close(fd);
+    if got != buf.len() as i32 { return; }
+    let nodes = core::ptr::addr_of!(WF_NODES) as *const u32;
+    for i in 0..st_rd!(WF_COUNT).min(24) as usize {
+        let node = read_volatile(nodes.add(i)); let id = (node + 8) as *const u8;
+        for j in 0..24 { if buf[j * 16] == 0 { continue; } let mut same = true; for k in 0..15 { if read_volatile(id.add(k)) != buf[j * 16 + k] { same = false; break; } if buf[j * 16 + k] == 0 { break; } } if same { desel_set(node, true); break; } }
+    }
 }
 
 // show_builtin: 本页列表是否包含内置表盘(type 0) 两页各自的开关独立控制
@@ -159,6 +187,8 @@ pub(crate) unsafe fn load_watchfaces(show_builtin: u32) {
     }
     st_wr!(WF_TOTAL, total as u32);
     st_wr!(WF_COUNT, cnt as u32);
+    // 节点地址每次启动都会变化，按持久化的表盘 ID 恢复摇一摇参与列表。
+    restore_deselected();
 }
 
 // 表盘页行文本: 行0="显示内置表盘"开关, 行1-8=窗内条目(主标签=名称, 副标签=ID), 行9="更多", 行10="返回"
@@ -472,12 +502,26 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
 // 每清零重建一次就多一个并发实例(表现为 CPU 数值刷新越来越快, 经历的息屏轮次越多越快)。
 // 要做"先删后建"必须先确认 lv_timer_delete 的地址, 在那之前只建一次。
 pub(crate) unsafe fn shake_arm() {
+    // 开关在重启后从持久化文件恢复；文件缺失时保持默认开启。
+    let path = b"/data/chaos/shake.cfg\0";
+    let fd = fw_api::open(path.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd >= 0 {
+        let mut v = 1u8;
+        if fw_api::read(fd, &mut v as *mut u8, 1) == 1 { st_wr!(SHAKE_EN, if v == 0 { 0 } else { 1 }); }
+        fw_api::close(fd);
+    }
     if st_rd!(SHAKE_SUB) == 0 {
         let cb: unsafe extern "C" fn(u32, u32) -> u32 = chaos_shake_cb;
         let h = fw_api::eventbus_subscribe(fw_api::TOPIC_QUICK_GUESTURE, 0, cb as u32, 0);
         st_wr!(SHAKE_SUB, h);
     }
     maintenance_arm();
+}
+
+pub(crate) unsafe fn persist_shake_enabled(value: u32) {
+    let path = b"/data/chaos/shake.cfg\0";
+    let fd = fw_api::open(path.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd >= 0 { let v = if value == 0 { 0u8 } else { 1u8 }; let _ = fw_api::write(fd, &v as *const u8, 1); fw_api::close(fd); }
 }
 
 /// UI 线程启动维护队列，后台注入与页面共用一个定时器。
@@ -502,4 +546,3 @@ pub(crate) unsafe fn shake_toggle_text(dp: *mut u8) {
     x.s("摇一摇".as_bytes());
     x.end();
 }
-

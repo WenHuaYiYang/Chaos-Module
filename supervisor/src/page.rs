@@ -612,7 +612,8 @@ impl Page for WfMgmtPage {
         self.shake_en.store(if en != 0 { 0 } else { 1 }, Ordering::Relaxed);
         // 同步到全局(摇一摇定时器读的是全局)
         unsafe {
-            st_wr!(SHAKE_EN, self.shake_en.load(Ordering::Relaxed));
+        st_wr!(SHAKE_EN, self.shake_en.load(Ordering::Relaxed));
+        unsafe { crate::watchface::persist_shake_enabled(self.shake_en.load(Ordering::Relaxed)); }
         }
     }
 
@@ -848,11 +849,12 @@ impl Page for BeautifyPage {
                     (1, RowSpec::switch("持续复用静态背景\0".as_bytes())),
                     (2, RowSpec::check("固定图片背景\0".as_bytes(), core::ptr::null())),
                     (3, RowSpec::clickable("生成或更新表盘背景\0".as_bytes())),
-                    (4, RowSpec::clickable("完全透明背景（实验性）\0".as_bytes())),
+                    (4, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
                     (5, RowSpec::display(crate::background_home::status(), core::ptr::null())),
                     (6, RowSpec::clickable("返回\0".as_bytes()))])?;
                 let selected = crate::background_home::mode() as usize;
                 for i in 0..3 { fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)), fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (i == selected) as u8); }
+                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)), fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (selected == 3) as u8);
                 return Ok(());
             }
             build_rows(ctx, ctx.title, &[
@@ -868,16 +870,17 @@ impl Page for BeautifyPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             if BLUR_SUBPAGE {
-                match idx { 0 => crate::background_home::request(0), 1 => crate::background_home::request(1), 2 => crate::background_home::request(2), 3 => crate::background_home::generate(), 4 => crate::background_home::request(3), 6 => { BLUR_SUBPAGE = false; render_req(13); }, _ => {} }
+                match idx { 0 => crate::background_home::request(0), 1 => crate::background_home::request(1), 2 => crate::background_home::request(2), 3 => crate::background_home::generate(), 6 => { BLUR_SUBPAGE = false; render_req(13); }, _ => {} }
             } else {
                 match idx { 0 => nav_goto(5, 0), 1 => nav_goto(6, 0), 2 => { BLUR_SUBPAGE = true; render_req(13); }, 4 => nav_back(), _ => {} }
             }
         }
     }
-    fn is_switch_row(&self, idx: usize) -> bool { unsafe { if BLUR_SUBPAGE { idx == 1 } else { idx == 3 } } }
+    fn is_switch_row(&self, idx: usize) -> bool { unsafe { if BLUR_SUBPAGE { idx == 1 || idx == 4 } else { idx == 3 } } }
     fn on_switch(&self, idx: usize) {
         unsafe {
             if BLUR_SUBPAGE && idx == 1 { crate::background_home::request(if crate::background_home::mode() == 1 { 0 } else { 1 }); }
+            if BLUR_SUBPAGE && idx == 4 { crate::background_home::request(if crate::background_home::mode() == 3 { 0 } else { 3 }); }
             if !BLUR_SUBPAGE && idx == 3 { crate::beautify_restore::request_toggle(); }
         }
     }

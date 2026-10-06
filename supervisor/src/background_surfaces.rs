@@ -337,7 +337,31 @@ pub(crate) unsafe fn enable(roots: [u32; 4]) {
 pub(crate) unsafe fn enable_transparent(roots: [u32; 4]) {
     consume();
     for root in roots {
-        if root != 0 { add(root, root, BG_OPA, 0); scan_children(root, root, 8); }
+        if root != 0 {
+            fw_api::background_set_opa(root, 0);
+            add(root, root, BG_OPA, 0);
+            scan_children(root, root, 8);
+        }
+    }
+    // 通知聚合页是独立 page 根；详情页不会被 hook，因此保持固件原样。
+    for root in st_rd!(PAGE_ROOTS) {
+        if root != 0 {
+            fw_api::background_set_opa(root, 0);
+            scan_children(root, root, 8);
+        }
+    }
+    // 控制中心 footer/蒙版对象自身也有黑色底色，不能只处理外层根。
+    let control = roots[1];
+    if control != 0 {
+        let count = fw_api::obj_child_count(control);
+        if count <= 8 {
+            for i in 0..count {
+                let child = fw_api::obj_get_child(control, i as u32);
+                if safe_ptr(child) && rd32(child as *const u32) == OBJ_CLASS {
+                    add(child, control, BG_OPA, 0);
+                }
+            }
+        }
     }
     st_wr!(SCAN, 0);
     st_wr!(ACTIVE, 1);

@@ -18,6 +18,20 @@ static mut DELETED: [(u32, u32); 4] = [(0, 0); 4];
 static mut WATCHED_ROOT: u32 = 0;
 static mut WATCHED_ROOTS: [u32; 4] = [0; 4];
 static mut MUTATING: u32 = 0;
+static mut PERSIST_LOADED: u32 = 0;
+
+unsafe fn persist_mode(mode: u32) {
+    let path = b"/data/chaos/background.cfg\0";
+    let fd = fw_api::open(path.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd >= 0 { let v = mode as u8; let _ = fw_api::write(fd, &v as *const u8, 1); fw_api::close(fd); }
+}
+
+unsafe fn load_mode() {
+    if st_rd!(PERSIST_LOADED) != 0 { return; }
+    st_wr!(PERSIST_LOADED, 1);
+    let fd = fw_api::open(b"/data/chaos/background.cfg\0".as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd >= 0 { let mut v=0u8; if fw_api::read(fd, &mut v as *mut u8, 1)==1 && v <= 3 { st_wr!(MODE, v as u32); if v==1 || v==2 { st_wr!(REQUEST,1); st_wr!(GENERATE,1); } else if v==3 { st_wr!(REQUEST,1); } } fw_api::close(fd); }
+}
 
 /// 子对象创建和删除会向父链冒泡；回调只登记请求。
 unsafe extern "C" fn structure_changed(event: u32) {
@@ -204,9 +218,10 @@ unsafe fn load_fixed() -> bool {
 pub(crate) unsafe fn request(mode: u32) {
     if mode > 3 { return; }
     st_wr!(MODE, mode);
-    if mode == 2 { st_wr!(GENERATE, 1); }
+    if mode == 1 || mode == 2 { st_wr!(GENERATE, 1); }
     st_wr!(REQUEST, 1);
     st_wr!(DIRTY, 1);
+    persist_mode(mode);
 }
 
 /// 手动更新只登记请求，返回表盘后由已有 UI 调度捕获一次。
@@ -248,6 +263,7 @@ pub(crate) unsafe fn pending() -> bool {
 }
 
 pub(crate) unsafe fn tick() {
+    load_mode();
     consume_deleted();
     if !crate::font_apply::quiet() { return; }
     if fw_api::screen_is_on() && crate::background_surfaces::pending() {
