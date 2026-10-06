@@ -85,7 +85,7 @@ const IC_LINE: usize = 16;          // 定长记录: [2 位包号][空格][12 �
 const IC_NAME_AT: usize = 3;
 const IC_NAME_BYTES: usize = 12;
 /// 清单最多几个包(界面每页 3 个, 三页用完)
-const IC_PACK_MAX: usize = 8;
+pub(crate) const IC_PACK_MAX: usize = 8;
 /// 清单文件恒长
 const IC_INDEX_SIZE: usize = IC_LINE * IC_PACK_MAX;
 /// 单条路径槽字节数：目录 18 + 包号 2 + '/' 1 + 最长 stem 19 + ".bin" 4 + NUL = 45, 留到 56
@@ -106,7 +106,7 @@ static mut IC_PACK_N: u32 = 0;
 /// 1 = 清单已读过(界面上每次进页会强制重读, 见 refresh_packs)
 static mut IC_LOADED: u32 = 0;
 
-// ===== 状态(RAM 无痕，重启即回原图标) =====
+// ===== 图标应用队列状态 =====
 static mut IC_BUILT: u32 = 0;       // 1 = 路径串已按 IC_PACK 拼好
 static mut IC_PACK: u32 = 0;        // 当前选中的包号, 0 = 系统原图标
 static mut IC_REQ: u32 = 0;         // 0=无 1=应用 IC_PACK 2=恢复原图标
@@ -790,6 +790,7 @@ unsafe fn delete_tick() {
         1 => {
             if st_rd!(IC_PACK) == st_rd!(IC_DEL) {
                 st_wr!(IC_PACK, 0);
+                crate::beautify_restore::remember_icon(0);
                 st_wr!(IC_BUILT, 0);
                 plan_restore();
                 st_wr!(IC_DEL_ST, 2);
@@ -1091,12 +1092,34 @@ unsafe fn click_entry(e: u32) {
     st_wr!(IC_PACK, pack);
     st_wr!(IC_BUILT, 0);
     st_wr!(IC_REQ, if pack == 0 { 2 } else { 1 });
+    crate::beautify_restore::remember_icon(pack);
     // 勾选立刻挪到点的那一条, 不等 38 拍跑完(跑批在后台把桌面图标换过去)
     refresh_rows();
 }
 
-/// 有没有我们这一路的活在推进(供节拍自适应用): 跑批、待消费的应用/恢复请求、
-/// 删除流水线、关框后欠着的那一次整页重建。
+/// 恢复选择须等待应用、删除与补刷队列空闲。
+pub(crate) unsafe fn restore_busy() -> bool {
+    st_rd!(IC_STATE) == 2 || st_rd!(IC_STATE) == 3 || st_rd!(IC_REQ) != 0
+        || st_rd!(IC_DEL_ST) != 0 || st_rd!(IC_RB_N) != 0 || res_hook::pending()
+}
+
+/// 仅恢复仍在清单中的包，缺件交给原有资源回退处理。
+pub(crate) unsafe fn restore_selection(pack: u32) -> bool {
+    if pack == 0 { return true; }
+    if pack > IC_PACK_MAX as u32 || restore_busy() { return false; }
+    refresh_packs();
+    let mut found = false;
+    for i in 0..st_rd!(IC_PACK_N) as usize {
+        if st_rd!(IC_PACK_ID)[i] == pack { found = true; break; }
+    }
+    if !found { return false; }
+    st_wr!(IC_PACK, pack);
+    st_wr!(IC_BUILT, 0);
+    st_wr!(IC_REQ, 1);
+    true
+}
+
+/// 跑批、待消费的请求、删除与关框重建是否仍在推进。
 pub(crate) unsafe fn pending() -> bool {
     st_rd!(IC_STATE) != 0 || st_rd!(IC_REQ) != 0 || st_rd!(IC_DEL_ST) != 0
         || st_rd!(IP_POP_DIRT) != 0

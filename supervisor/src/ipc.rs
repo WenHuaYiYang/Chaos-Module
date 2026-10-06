@@ -318,6 +318,113 @@ pub(crate) unsafe fn notify_firmware_full() {
     fops_wr(FOPS_DBG2, rc as u32);
 }
 
+// 启动命令只入队，注册操作由 UI 线程逐拍执行。
+pub const CMD_BOOT_DQ: u32 = 0x5348_4333;
+static DQ_SEQ: [u32; 3] = [0x18, 0x13, 0x22];
+const DQ_PERIOD_MS: u32 = 1000;
+const DQ_IDLE_MS: u32 = 60000;
+const DQ_TRIES_MAX: u32 = 8;
+static mut DQ_STEP: u32 = 0;
+static mut DQ_TRIES: u32 = 0;
+static mut DQ_TIMER: u32 = 0;
+static mut DQ_FIRED: u32 = 0;
+
+unsafe fn run_install_cmd(arg0: u32, arg1: u32) {
+    // 安装流程用到的命令: 0/1/2 注册发布, 0x13 注册链, 0x43 固件 notify,
+    // 0x18/0x19 语言, 0x22 回读槽统计, 0x30 字体投递与切换(投递包)
+    match arg0 {
+        0    => { fops_wr(FOPS_STEP, 0); cmd_install(0x12); }   // 注册链(止于 init_buffer)
+        1 | 2 => { /* no-op publish: 不调固件，仅置 ACTIVE */ }
+        0x13 => { fops_wr(FOPS_STEP, 0); cmd_install(0x13); }   // 完整注册链
+        0x43 => { fops_wr(FOPS_STEP, 0); notify_firmware_full(); } // 固件完整 notify 链
+        0x18 => { st_wr!(LANG, 1); } // 设中文
+        0x19 => { st_wr!(LANG, 0); } // 设英文
+        0x22 => {
+            // 回读槽统计: d0=选中id d1=空闲数 d2=空闲位图
+            fops_wr(FOPS_DBG0, st_rd!(APP_ID));
+            fops_wr(FOPS_DBG1, st_rd!(FREE_COUNT));
+            fops_wr(FOPS_DBG2, st_rd!(FREE_BITS));
+        }
+        // 字体投递(字体包 Lua 专用): arg1 = 目标池位(1..8), 发这条命令时
+        // Lua 已经把新字体整份写进了那个池位。这里只做三件事: 切池位、换登记名
+        // (ChaosSans-R<代>, 必须换 —— 固件 face 缓存按 (名字,尺寸) 命中, 沿用旧名
+        // 会拿回按旧文件建的脸)、请求重应用(下一拍起分拍重建所有脸)。
+        //
+        // 三道门, 任何一条不过就不动: 池位合法 / 不是当前正在用的那一份(覆写在用
+        // 文件会让还活着的老脸读到别人的字节 = font_apply 红线) / 当前没有正在跑的
+        // 应用(半途换池位会让正在建的那批脸读到另一个文件)。被拒时池位不变,
+        // 投递包靠"回读 +0x46 是否等于自己请求的值"判成败, 所以这里不需要额外回报。
+        //
+        // 这条路也是**切换字体**的唯一入口: 清单页点某一条 = 同一句命令
+        // (ko 侧 font_list::click_entry 直接调 commit + request)。所以门放宽到
+        // 池位 1..8, 与 FONT_SLOT_MAX 同一常量, 不写死数字。
+        0x30 => {
+            let slot = arg1;
+            if slot >= 1 && slot <= font_apply::FONT_SLOT_MAX
+                && slot != font_apply::live_get()
+                && !font_apply::busy()
+                && font_slot_file_ok(slot)
+            {
+                font_apply::commit(slot);
+                font_apply::request();
+            }
+        }
+
+        _   => {}
+    }
+    // 每条 INSTALL 类命令收尾都把槽 0 刷成"激活"记录(激活态/保留/模块 id/0),
+    // Lua 端 read_status 的槽位区读的就是这四词。
+    fops_wr(FOPS_SLOTS, ST_ACTIVE);
+    fops_wr(FOPS_SLOTS + 1, 0);
+    fops_wr(FOPS_SLOTS + 2, MOD_ID);
+    fops_wr(FOPS_SLOTS + 3, 0);
+}
+
+unsafe extern "C" fn dq_timer_cb(_t: u32) {
+    let step = st_rd!(DQ_STEP);
+    if step == 0 || st_rd!(WRITE_BUSY) != 0 { return; }
+    let i = (step - 1) as usize;
+    if i >= DQ_SEQ.len() { return; }
+    st_wr!(WRITE_BUSY, 1);
+    run_install_cmd(DQ_SEQ[i], 0);
+    st_wr!(WRITE_BUSY, 0);
+    st_wr!(DQ_STEP, if i + 1 >= DQ_SEQ.len() { 0 } else { step + 1 });
+    if st_rd!(DQ_STEP) == 0 {
+        // 注册队列收尾已在 UI 线程，启动幂等的后台维护。
+        if st_rd!(APP_REGISTERED) != 0 { crate::watchface::maintenance_arm(); }
+        let timer = st_rd!(DQ_TIMER);
+        fw_api::timer_set_period(timer, DQ_IDLE_MS);
+        if fw_api::timer_period_of(timer) != DQ_IDLE_MS {
+            st_wr!(DQ_TRIES, DQ_TRIES_MAX);
+        }
+    }
+}
+
+unsafe fn dq_start() -> i32 {
+    if st_rd!(DQ_FIRED) != 0 { return 0; }
+    if st_rd!(APP_REGISTERED) != 0 { return -16; }
+    if st_rd!(DQ_TRIES) >= DQ_TRIES_MAX { return -19; }
+    st_wr!(DQ_TRIES, st_rd!(DQ_TRIES) + 1);
+    if st_rd!(DQ_TIMER) == 0 {
+        let t = fw_api::timer_create(dq_timer_cb as *const () as u32, DQ_IDLE_MS, 0);
+        if t == 0 { return -19; }
+        st_wr!(DQ_TIMER, t);
+        if fw_api::timer_period_of(t) != DQ_IDLE_MS {
+            st_wr!(DQ_TRIES, DQ_TRIES_MAX);
+            return -19;
+        }
+    }
+    let t = st_rd!(DQ_TIMER);
+    fw_api::timer_set_period(t, DQ_PERIOD_MS);
+    if fw_api::timer_period_of(t) != DQ_PERIOD_MS {
+        st_wr!(DQ_TRIES, DQ_TRIES_MAX);
+        return -19;
+    }
+    st_wr!(DQ_FIRED, 1);
+    st_wr!(DQ_STEP, 1);
+    0
+}
+
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32) -> i32 {
     // 命令帧至少 16 字节: magic | cmd | arg0 | arg1
@@ -353,62 +460,21 @@ pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32
         st_wr!(WRITE_BUSY, 0); // 清锁再返回
         return 16; // 已注册，INSTALL 重入静默成功（重复的注册命令按幂等处理）
     }
-    match cmd {
-        CMD_INSTALL => {
-            // 安装流程用到的命令: 0/1/2 注册发布, 0x13 注册链, 0x43 固件 notify,
-            // 0x18/0x19 语言, 0x22 回读槽统计, 0x30 字体投递与切换(投递包)
-            match arg0 {
-                0    => { fops_wr(FOPS_STEP, 0); cmd_install(0x12); }   // 注册链(止于 init_buffer)
-                1 | 2 => { /* no-op publish: 不调固件，仅置 ACTIVE */ }
-                0x13 => { fops_wr(FOPS_STEP, 0); cmd_install(0x13); }   // 完整注册链
-                0x43 => { fops_wr(FOPS_STEP, 0); notify_firmware_full(); } // 固件完整 notify 链
-                0x18 => { st_wr!(LANG, 1); } // 设中文
-                0x19 => { st_wr!(LANG, 0); } // 设英文
-                0x22 => {
-                    // 回读槽统计: d0=选中id d1=空闲数 d2=空闲位图
-                    fops_wr(FOPS_DBG0, st_rd!(APP_ID));
-                    fops_wr(FOPS_DBG1, st_rd!(FREE_COUNT));
-                    fops_wr(FOPS_DBG2, st_rd!(FREE_BITS));
-                }
-                // 字体投递(字体包 Lua 专用): arg1 = 目标池位(1..8), 发这条命令时
-                // Lua 已经把新字体整份写进了那个池位。这里只做三件事: 切池位、换登记名
-                // (ChaosSans-R<代>, 必须换 —— 固件 face 缓存按 (名字,尺寸) 命中, 沿用旧名
-                // 会拿回按旧文件建的脸)、请求重应用(下一拍起分拍重建所有脸)。
-                //
-                // 三道门, 任何一条不过就不动: 池位合法 / 不是当前正在用的那一份(覆写在用
-                // 文件会让还活着的老脸读到别人的字节 = font_apply 红线) / 当前没有正在跑的
-                // 应用(半途换池位会让正在建的那批脸读到另一个文件)。被拒时池位不变,
-                // 投递包靠"回读 +0x46 是否等于自己请求的值"判成败, 所以这里不需要额外回报。
-                //
-                // 这条路也是**切换字体**的唯一入口: 清单页点某一条 = 同一句命令
-                // (ko 侧 font_list::click_entry 直接调 commit + request)。所以门放宽到
-                // 池位 1..8, 与 FONT_SLOT_MAX 同一常量, 不写死数字。
-                0x30 => {
-                    let slot = arg1;
-                    if slot >= 1 && slot <= font_apply::FONT_SLOT_MAX
-                        && slot != font_apply::live_get()
-                        && !font_apply::busy()
-                        && font_slot_file_ok(slot)
-                    {
-                        font_apply::commit(slot);
-                        font_apply::request();
-                    }
-                }
-
-                _   => {}
-            }
-            // 每条 INSTALL 类命令收尾都把槽 0 刷成"激活"记录(激活态/保留/模块 id/0),
-            // Lua 端 read_status 的槽位区读的就是这四词。
-            fops_wr(FOPS_SLOTS, ST_ACTIVE);
-            fops_wr(FOPS_SLOTS + 1, 0);
-            fops_wr(FOPS_SLOTS + 2, MOD_ID);
-            fops_wr(FOPS_SLOTS + 3, 0);
-        }
-        _ => {}
+    if cmd == CMD_INSTALL && st_rd!(DQ_STEP) != 0
+        && (arg0 <= 2 || arg0 == 0x13 || arg0 == 0x43) {
+        st_wr!(WRITE_BUSY, 0);
+        return -16;
     }
+    let result = match cmd {
+        CMD_INSTALL => { run_install_cmd(arg0, arg1); 16 }
+        CMD_BOOT_DQ => {
+            let rc = dq_start();
+            if rc < 0 { rc } else { 16 }
+        }
+        _ => 16,
+    };
     // 清理: 释放 write 重入锁
     st_wr!(WRITE_BUSY, 0);
     trace_step(0xAA); // write 完成返回
-    16
+    result
 }
-

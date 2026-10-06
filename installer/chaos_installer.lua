@@ -1,6 +1,6 @@
 -- chaos_sup 原生应用安装器
 -- 流程约束：
--- 1. 不做 rmmod。若 /dev/chaos 已存在说明旧模块还在内核里，此时要求重启设备再运行。
+-- 1. 不做 rmmod。模块已加载时只更新磁盘文件，重启后加载更新。
 --    根因: rmmod 释放模块内存，但 app 注册链表的条目留在原地悬空 → 切表盘时
 --    launcher 遍历到悬空回调 → 崩。
 -- 2. 每条命令一个独立 timer 拍，让 miwear 的事件循环在两个注册阶段之间转一圈。
@@ -55,6 +55,7 @@ local DEVICE_PATH = "/dev/chaos"
 local CMD_MAGIC = 0x53484331           -- "1CHS"
 local STATUS_MAGIC = 0x53484332        -- "2CHS"
 local STATUS_VERSION = 0x43485302      -- "CHS2"
+local CMD_BOOT_DQ = 0x53484333
 local CMD_INSTALL = 2
 local STATUS_SIZE = 192
 local STATE_ACTIVE = 1
@@ -219,6 +220,155 @@ local function u32le(value)
   return table.concat(pieces)
 end
 
+local RC_DIR = "/data/rc.d"
+local RC_SH = RC_DIR .. "/chaos.sh"
+local BOOT_FRAME = DATA_DIR .. "/boot.bin"
+local AS_LOG = DATA_DIR .. "/autostart.log"
+local LEGACY_FLAG = DATA_DIR .. "/autostart.on"
+local LEGACY_CHAOS_RC = DATA_DIR .. "/rc"
+local LEGACY_RC_PATH = "/data/rc"
+local LEGACY_HOP = "sh /data/chaos/rc &"
+local function write_file(path, body)
+  if read_all(path) == body then return true end
+  local f = io.open(path, "wb")
+  if not f then return false, "无法写入 " .. path end
+  local ok, value = pcall(f.write, f, body)
+  local closed, result = pcall(f.close, f)
+  if not ok or value == false or not closed or result == false then return false, "写入失败" end
+  if read_all(path) ~= body then return false, "回读核对失败" end
+  return true
+end
+-- 已加载的模块保持原样，仅部署下次启动的模块文件。
+local function update_supervisor()
+  local ko = read_all(SUPERVISOR_RESOURCE)
+  if type(ko) ~= "string" or #ko < 52 or ko:sub(1, 4) ~= string.char(127) .. "ELF" then
+    return false, "安装包模块无效"
+  end
+  if read_all(SUPERVISOR_PATH) == ko then return true, "模块已就绪，请重启" end
+  exec("mkdir -p " .. DATA_DIR)
+  local ok, err = write_file(SUPERVISOR_PATH, ko)
+  if not ok then return false, err end
+  return true, "模块已更新，请重启"
+end
+
+local function build_chaos_sh()
+  local L = {}
+  local function w(s) L[#L + 1] = s end
+  w("set +e")
+  w("echo start > " .. AS_LOG)
+  w("insmod " .. SUPERVISOR_PATH .. " chaos_sup")
+  w("echo insmod >> " .. AS_LOG)
+  w("dd if=" .. DEVICE_PATH .. " of=" .. DATA_DIR .. "/stage1.bin bs="
+    .. STATUS_SIZE .. " count=1 conv=notrunc")
+  w("dd if=" .. BOOT_FRAME .. " of=" .. DEVICE_PATH .. " bs=16 count=1 conv=notrunc")
+  w("echo boot_cmd_sent >> " .. AS_LOG)
+  w("dd if=" .. DEVICE_PATH .. " of=" .. DATA_DIR .. "/stage3.bin bs="
+    .. STATUS_SIZE .. " count=1 conv=notrunc")
+  w("echo done >> " .. AS_LOG)
+  return table.concat(L, "\n") .. "\n"
+end
+
+local function build_boot_frame()
+  return u32le(CMD_MAGIC) .. u32le(CMD_BOOT_DQ) .. u32le(0) .. u32le(0)
+end
+
+local function remove_file(path)
+  if read_all(path) == nil then return true end
+  exec("rm -f " .. path)
+  if read_all(path) ~= nil then return false, "删除失败 " .. path end
+  return true
+end
+
+local function directory_writable(path)
+  local check = path .. "/.chaos-check"
+  local ok, err = write_file(check, "ok")
+  local cleaned, why = remove_file(check)
+  if not cleaned then return false, why end
+  return ok, err
+end
+
+local function rc_dir_ready()
+  local ok = directory_writable(RC_DIR)
+  if ok then return true end
+  if directory_writable("/data") then return false, "先安装自启动管理器" end
+  return false, "写不进 /data，请检查存储"
+end
+
+local function without_legacy_hop(raw)
+  if type(raw) ~= "string" then return raw end
+  local keep, start = {}, 1
+  while start <= #raw do
+    local last = raw:find("\n", start, true) or #raw
+    local line = raw:sub(start, last)
+    if line:gsub("[\r\n]+$", ""):gsub("[ \t]+$", "") ~= LEGACY_HOP then
+      keep[#keep + 1] = line
+    end
+    start = last + 1
+  end
+  return table.concat(keep)
+end
+
+local function legacy_cleanup()
+  local raw = read_all(LEGACY_RC_PATH)
+  local cleaned = without_legacy_hop(raw)
+  if cleaned ~= raw then
+    local ok, err = write_file(LEGACY_RC_PATH, cleaned)
+    if not ok then return false, err end
+  end
+  local ok, err = remove_file(LEGACY_FLAG)
+  if not ok then return false, err end
+  return remove_file(LEGACY_CHAOS_RC)
+end
+
+local function autostart_install()
+  local ko, icon = read_all(SUPERVISOR_RESOURCE), read_all(ICON_RESOURCE)
+  if type(ko) ~= "string" or #ko == 0 or type(icon) ~= "string" or #icon == 0 then
+    return false, "安装包资源缺失"
+  end
+  if read_all(SUPERVISOR_PATH) == ko and read_all(ICON_PATH) == icon
+    and read_all(BOOT_FRAME) == build_boot_frame() and read_all(RC_SH) == build_chaos_sh()
+    and read_all(LEGACY_FLAG) == nil and read_all(LEGACY_CHAOS_RC) == nil then
+    local raw = read_all(LEGACY_RC_PATH)
+    if without_legacy_hop(raw) == raw then return true end
+  end
+  local ready, why = rc_dir_ready()
+  if not ready then return false, why end
+  for _, path in ipairs({ DATA_DIR, FONT_DIR, ICON_DIR }) do
+    exec("mkdir -p " .. path)
+    local ok, err = directory_writable(path)
+    if not ok then return false, "目录不可写 " .. path .. ": " .. tostring(err) end
+  end
+  if read_all(SUPERVISOR_PATH) ~= ko or read_all(ICON_PATH) ~= icon
+    or read_all(BOOT_FRAME) ~= build_boot_frame() then
+    local ok, err = remove_file(RC_SH)
+    if not ok then return false, err end
+  end
+  local ok, err = write_file(SUPERVISOR_PATH, ko)
+  if not ok then return false, err end
+  ok, err = write_file(ICON_PATH, icon)
+  if not ok then return false, err end
+  ok, err = write_file(BOOT_FRAME, build_boot_frame())
+  if not ok then return false, err end
+  ok, err = legacy_cleanup()
+  if not ok then return false, err end
+  ok, err = write_file(RC_SH, build_chaos_sh())
+  if not ok then return false, err end
+  return true
+end
+local function autostart_remove()
+  local ok, err = remove_file(RC_SH)
+  if not ok then return false, err end
+  ok, err = remove_file(BOOT_FRAME)
+  if not ok then return false, err end
+  return legacy_cleanup()
+end
+local function autostart_state_text()
+  if read_all(RC_SH) == build_chaos_sh() and read_all(BOOT_FRAME) == build_boot_frame() then
+    return "已注册，开关在管理器"
+  end
+  return "尚未注册自启动"
+end
+
 local function status_words(raw)
   if type(raw) ~= "string" or #raw ~= STATUS_SIZE then return nil end
   local words = {}
@@ -368,11 +518,18 @@ local function run_next_step(timer)
     end
 end
 
-local function start_runner()
+local function start_runner(update_only)
     step_index = 1
     local timer = lvgl.Timer {
         period = 1000, repeat_count = -1, paused = true,
         cb = function(t)
+            if update_only then
+                local called, ok, message = pcall(update_supervisor)
+                if not called then stop_runner(t, false, "更新失败: " .. tostring(ok))
+                elseif not ok then stop_runner(t, false, "更新失败: " .. tostring(message))
+                else stop_runner(t, true, message) end
+                return
+            end
             local ok, message = pcall(run_next_step, t)
             if not ok then
                 stop_runner(t, false, "运行失败: " .. tostring(message))
@@ -410,21 +567,46 @@ root:clear_flag(lvgl.FLAG.SCROLLABLE)
 root:add_flag(lvgl.FLAG.CLICKABLE)
 root:add_flag(lvgl.FLAG.EVENT_BUBBLE)
 
--- 标题: 一个 Label 说完, 字号与颜色建立层级(不用衬线, 原因见上面 F_BODY 的说明)
-lvgl.Label(root, {
+local OFF_Y = 3000
+local main_view = lvgl.Object(root, {
+  w = SCR_W, h = SCR_H, bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
+})
+local as_view = lvgl.Object(root, {
+  w = SCR_W, h = SCR_H, bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = OFF_Y },
+})
+local views = { main_view, as_view }
+for i = 1, #views do
+  views[i]:clear_flag(lvgl.FLAG.SCROLLABLE)
+  views[i]:add_flag(lvgl.FLAG.CLICKABLE)
+  views[i]:add_flag(lvgl.FLAG.EVENT_BUBBLE)
+end
+local function view_show(name)
+  local top = name == "as" and as_view or main_view
+  local off = name == "as" and main_view or as_view
+  top:set { align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 } }
+  off:set { align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = OFF_Y } }
+end
+
+local as_label
+local function as_set(text, color)
+  if as_label then as_label:set { text = tostring(text), text_color = color or V_TXT2 } end
+end
+
+lvgl.Label(main_view, {
   text = "Chaos 安装器",
   text_color = V_TXT,
-  text_font = lvgl.Font(F_BODY, 40),
-  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -170 },
+  text_font = lvgl.Font(F_BODY, 32),
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -198 },
 })
 
--- 状态卡片: 中间灰 + 1px 边框 + 圆角走 V_R(卡片里不再套卡片); 状态文字在卡片内居中
-local card = lvgl.Object(root, {
-  w = SCR_W - 32, h = 150,
+local card = lvgl.Object(main_view, {
+  w = SCR_W - 32, h = 94,
   bg_opa = lvgl.OPA(100), bg_color = V_MID,
   border_width = 1, border_color = V_LINE2,
   radius = V_R, pad_all = 0,
-  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -20 },
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -126 },
 })
 card:clear_flag(lvgl.FLAG.SCROLLABLE)
 card:add_flag(lvgl.FLAG.EVENT_BUBBLE)
@@ -435,22 +617,15 @@ status_label = lvgl.Label(card, {
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
 })
 
--- 按钮三态查表(替代 if/elseif 链)。danger 用**同色系淡底 + 同色字 + 无边框**:
---   Web 上那套写法是 bg-[#ff453a]/15 text-[#ff453a], 即 15% 透明度的红底配红字;
---   LVGL 里对应 bg_color=同色 + bg_opa=OPA(15)(底下的深灰透出来, 就是 /15 的效果)。
---   对照过两种不对的写法: "深灰底 + 红字"缺那层红底, "实心红底 + 白字"又太实。
---   primary = 强调蓝底 + 白字(主操作)
---   danger  = 红 15% 底 + 红字, 无边框
---   ghost   = 深底 + 1px 边框 + 次要文字
 local BUTTON_STYLES = {
   primary = { bg = V_ACC_BG, line = V_ACC_BG, fg = V_TXT,  opa = 100, bw = 1 },
   danger  = { bg = V_ERR,    line = V_ERR,    fg = V_ERR,  opa = 15,  bw = 0 },
   ghost   = { bg = V_DEEP,   line = V_LINE2,  fg = V_TXT2, opa = 100, bw = 1 },
 }
 
-local function make_button(text, y_ofs, kind, on_clicked)
+local function make_button(parent, text, y_ofs, kind, on_clicked)
   local style = BUTTON_STYLES[kind] or BUTTON_STYLES.ghost
-  local b = lvgl.Object(root, {
+  local b = lvgl.Object(parent, {
     w = SCR_W - 32, h = 64,
     bg_opa = lvgl.OPA(style.opa),
     bg_color = style.bg,
@@ -475,23 +650,63 @@ end
 local run_button
 detect_language()
 
-run_button = make_button("运行", 110, "primary", function()
+run_button = make_button(main_view, "运行", 6, "primary", function()
   if runner then set_status("正在运行"); return end
-  if started_once then set_status("每次开机只能运行一次", V_WARN); return end
   if module_loaded() then
-    set_status("已激活, 请重启后运行", V_WARN)
+    set_status("正在更新模块")
+    local started, err = start_runner(true)
+    if not started then set_status("更新失败: " .. tostring(err), V_ERR) end
     return
   end
+  if started_once then set_status("每次开机只能运行一次", V_WARN); return end
   started_once = true
-  run_button:clear_flag(lvgl.FLAG.CLICKABLE)
   local started, err = start_runner()
   if not started then set_status("运行失败: " .. tostring(err), V_ERR) end
 end)
 
-make_button("清除重置", 186, "danger", function()
+make_button(main_view, "自启动", 80, "ghost", function()
+  as_set(autostart_state_text(), V_TXT2)
+  view_show("as")
+end)
+
+make_button(main_view, "清除重置", 154, "danger", function()
   if runner then set_status("运行中, 请等待", V_WARN); return end
   if not wipe_armed then wipe_armed = true; set_status("再按一次以确认清除", V_WARN); return end
   wipe_armed = false
+  local ok, err = autostart_remove()
+  if not ok then set_status(tostring(err), V_ERR); return end
   exec("rm -rf " .. DATA_DIR)
   set_status("已清除, 重启后重新运行", V_OK)
+end)
+
+lvgl.Label(as_view, {
+  text = "自启动",
+  text_color = V_TXT,
+  text_font = lvgl.Font(F_BODY, 32),
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -198 },
+})
+as_label = lvgl.Label(as_view, {
+  text = "",
+  text_color = V_TXT2,
+  text_font = lvgl.Font(F_BODY, 18),
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -152 },
+})
+
+make_button(as_view, "安装", -66, "primary", function()
+  if runner then as_set("正在运行, 请等待", V_WARN); return end
+  local ok, err = autostart_install()
+  if not ok then as_set(tostring(err), V_ERR); return end
+  as_set("已注册，请到管理器重建", V_OK)
+end)
+
+make_button(as_view, "删除", 8, "danger", function()
+  if runner then as_set("正在运行, 请等待", V_WARN); return end
+  local ok, err = autostart_remove()
+  if not ok then as_set("失败: " .. tostring(err), V_ERR); return end
+  as_set("已删除，请到管理器重建", V_WARN)
+end)
+
+make_button(as_view, "< 返回", 82, "ghost", function()
+  as_set(autostart_state_text(), V_TXT2)
+  view_show("main")
 end)

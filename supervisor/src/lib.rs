@@ -9,11 +9,20 @@ mod state;
 pub(crate) use state::*;
 
 mod font_apply;
+mod beautify_restore;
 mod font_list;
 mod font_hot;
 mod icon_apply;
 mod res_hook;
 mod confirm_pop;
+#[allow(dead_code)]
+mod background_pixels;
+#[allow(dead_code)]
+mod background_scene;
+mod background_home;
+mod background_pages;
+mod background_surfaces;
+mod background_assets;
 
 mod text;
 mod explorer;

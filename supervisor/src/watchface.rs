@@ -323,6 +323,8 @@ unsafe fn tick_busy() -> bool {
     || res_hook::pending()
     || font_list::pending()
     || confirm_pop::pending()
+    || crate::background_home::pending()
+    || crate::beautify_restore::pending()
 }
 
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。
@@ -383,6 +385,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     //    放定时器而不是页面渲染路径, 是因为**目标页不是我们的页** —— 系统页
     //    没有任何我们能挂的渲染钩子(生命周期槽位只属于我们注册的页, eventbus 也
     //    没有"页面切换"主题)。
+    crate::beautify_restore::tick();
     font_apply::tick();
     // wrapper 原地热替换(融合 Corona 的核心一招): 20 拍一轮 + quiet 门,
     // fail-closed(结构校验任一不过一个字节都不写)。详见 font_hot.rs 头部。
@@ -394,6 +397,8 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面几项跑批同一个位置:
     // 快节拍 50ms 一拍, 息屏空闲时降到 1000ms(页面不在前台时 render_req 也只是置位, 由存活门挡住)。
     font_list::tick();
+    // 背景沿用本调度，截图与有限跑批先过亮屏及字体安静门。
+    crate::background_home::tick();
     // 5. 摇一摇: 冷却 + 消费旗标 + 切表盘
     let cool = st_rd!(SHAKE_COOL);
     if cool > 0 {
@@ -472,6 +477,11 @@ pub(crate) unsafe fn shake_arm() {
         let h = fw_api::eventbus_subscribe(fw_api::TOPIC_QUICK_GUESTURE, 0, cb as u32, 0);
         st_wr!(SHAKE_SUB, h);
     }
+    maintenance_arm();
+}
+
+/// UI 线程启动维护队列，后台注入与页面共用一个定时器。
+pub(crate) unsafe fn maintenance_arm() {
     if st_rd!(SHAKE_TIMER) == 0 {
         let tm: unsafe extern "C" fn(u32) = chaos_shake_timer;
         let t = fw_api::timer_create(tm as u32, TICK_FAST_MS, 0);

@@ -149,6 +149,7 @@ pub(crate) unsafe fn commit(slot: u32) {
     w.s(b"ChaosSans-R").n(g);
     w.end();
     st_wr!(FA_CCH_N, 0);
+    crate::beautify_restore::remember_font(slot);
 }
 
 // 被 UI 写回、但不在 132 条表里的样式对象: 固件开机字体表盖不到它们, 界面却在用它们。
@@ -672,6 +673,7 @@ static mut FA_BOOT_Q: u32 = 0;
 
 /// 开机自动应用: 一拍一次, 只做"要不要开始"的判断; 真正的建脸/写样式仍走分拍队列。
 unsafe fn boot_auto_tick() {
+    if !crate::beautify_restore::font_auto_allowed(live_get()) { return; }
     // 手动请求优先(调用方已在上一步消费 FA_REQ), 这里只管自动那一条。
     if st_rd!(FA_REQ) != 0 || st_rd!(FA_STAGE) != 0 || st_rd!(FA_BOOT_Q) != 0 { return; }
     if st_rd!(FA_OK) != 0 || st_rd!(FA_TRY) >= FA_TRY_MAX { return; }
@@ -739,7 +741,8 @@ pub(crate) unsafe fn busy() -> bool { st_rd!(FA_STAGE) != 0 }
 /// 重建、开机自动应用的等待/重试计数。任何一条非 0 就别降频。
 pub(crate) unsafe fn pending() -> bool {
     st_rd!(FA_STAGE) != 0 || st_rd!(FA_REQ) != 0 || st_rd!(FA_QUEUED) != 0
-        || st_rd!(FA_WAIT) != 0
+        || (st_rd!(FA_WAIT) != 0 && st_rd!(FA_OK) == 0 && st_rd!(FA_TRY) < FA_TRY_MAX
+            && crate::beautify_restore::font_auto_allowed(live_get()))
 }
 
 /// 取(或首次建立)该 (名字,字号) 的 face, 带复用台账。0 = 建不出来。
@@ -967,6 +970,7 @@ pub(crate) static FA_SYSFONT: &[u8] = b"/resource/font/MiSans-Regular.ttf\0";
 /// 从系统字体文件全新生成, 独占载荷(绝不拿共享载荷当第二个所有者, 见上面"投毒")。
 /// 写回完成后样式全部指回系统字体, 此时删字体文件才不违反"face 会按需回读文件"。
 pub(crate) unsafe fn request_revert() {
+    crate::beautify_restore::remember_font(u32::MAX);
     if st_rd!(FA_REVERT) != 0 { return; }
     st_wr!(FA_REVERT, 1);
     let g = st_rd!(FA_GEN) + 1;
@@ -1026,7 +1030,21 @@ pub(crate) unsafe fn hot_build_reset() { st_wr!(FA_HOT_BUILT, 0); }
 
 /// 在用池位清零(在用中的那份被删除后调)。0 = 无在用字体(开机默认态);
 /// 之后"重新应用字体"无文件可读会自然空转, 直到应用投递的新字体。
-pub(crate) unsafe fn clear_live() { st_wr!(FA_LIVE, 0); }
+pub(crate) unsafe fn clear_live() {
+    st_wr!(FA_LIVE, 0);
+    crate::beautify_restore::remember_font(u32::MAX);
+}
+
+/// 验证素材后排入原有字体应用队列。
+pub(crate) unsafe fn restore_selection(slot: u32) -> bool {
+    if slot > FONT_SLOT_MAX || busy() || st_rd!(FA_PENDING) != 0 || st_rd!(FA_REQ) != 0 { return false; }
+    let fd = fw_api::open(path_of(slot), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return false; }
+    fw_api::close(fd);
+    commit(slot);
+    // 启动恢复沿用原有等待和就绪门。
+    true
+}
 
 pub(crate) unsafe fn request() {
     st_wr!(FA_REQ, 1);

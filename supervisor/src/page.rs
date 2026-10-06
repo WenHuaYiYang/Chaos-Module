@@ -845,7 +845,23 @@ impl Page for BeautifyPage {
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable("更换字体\0".as_bytes())),
                 (1, RowSpec::clickable("桌面图标\0".as_bytes())),
-                (2, RowSpec::clickable("返回\0".as_bytes()))])?;
+                (2, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
+                (3, RowSpec::switch("持续复用静态背景\0".as_bytes())),
+                (4, RowSpec::check("固定图片背景\0".as_bytes(), core::ptr::null())),
+                (5, RowSpec::clickable("生成或更新表盘背景\0".as_bytes())),
+                (6, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (7, RowSpec::switch("重启恢复字体和图标\0".as_bytes())),
+                (8, RowSpec::clickable("返回\0".as_bytes()))])?;
+            // 只在新行构建完成后补选态，点击只登记请求。
+            let selected = crate::background_home::mode() as usize;
+            for i in 0..3 {
+                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2 + i)),
+                    fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+                    (i == selected) as u8);
+            }
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(7)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, crate::beautify_restore::status(), 0,
+                crate::beautify_restore::enabled() as u8);
             Ok(())
         }
     }
@@ -856,9 +872,23 @@ impl Page for BeautifyPage {
                 // 进二级页走 nav_goto(真页面跳转 => 固件带压栈动画, 返回键也是动画 pop)
                 0 => nav_goto(5, 0),
                 1 => nav_goto(6, 0),
-                2 => nav_back(),
+                2 => crate::background_home::request(0),
+                3 => crate::background_home::request(1),
+                4 => crate::background_home::request(2),
+                5 => crate::background_home::generate(),
+                8 => nav_back(),
                 _ => {}
             }
+        }
+    }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 3 || idx == 7 }
+
+    fn on_switch(&self, idx: usize) {
+        if idx == 7 { unsafe { crate::beautify_restore::request_toggle(); } }
+        if idx == 3 {
+            unsafe { crate::background_home::request(
+                if crate::background_home::mode() == 1 { 0 } else { 1 }); }
         }
     }
 }

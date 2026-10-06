@@ -170,11 +170,15 @@ pub mod eventbus_event {
 mod event;
 mod fs;
 mod gfx;
+mod glass;
+mod home;
 mod page;
 mod sys;
 
 pub use event::*;
 pub use fs::*;
 pub use gfx::*;
+pub use glass::*;
+pub use home::*;
 pub use page::*;
 pub use sys::*;
