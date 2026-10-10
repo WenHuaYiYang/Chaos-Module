@@ -6,6 +6,9 @@ use crate::{st_rd, st_wr};
 
 static mut SCENE: Backdrop<4> = Backdrop::new();
 static mut MODE: u32 = 0;
+/// 背景档位那一页(系统模糊)的 page_id: 页号只在这里写一次 ——
+/// 状态变化要重画的是这一页(见 tick 里的 DIRTY 分支), 美化菜单页13 从本页跳过来。
+pub(crate) const BLUR_PID: u32 = 4;
 static mut REQUEST: u32 = 0;
 static mut HOOKED: u32 = 0;
 static mut ATTACHED: u32 = 0;
@@ -32,7 +35,15 @@ unsafe fn load_mode() {
     if st_rd!(PERSIST_LOADED) != 0 { return; }
     st_wr!(PERSIST_LOADED, 1);
     let fd = fw_api::open(b"/data/chaos/background.cfg\0".as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd >= 0 { let mut v=0u8; if fw_api::read(fd, &mut v as *mut u8, 1)==1 && v <= 3 { st_wr!(MODE, v as u32); if v==1 || v==2 { st_wr!(REQUEST,1); st_wr!(GENERATE,1); } else if v==3 { st_wr!(REQUEST,1); } } fw_api::close(fd); }
+    if fd < 0 { return; }
+    let mut v = 0u8;
+    // 只认 0/1/3; 设备上存的旧值 2(已删的固定图片背景)按"系统背景"处理
+    if fw_api::read(fd, &mut v as *mut u8, 1) == 1 && (v == 0 || v == 1 || v == 3) {
+        st_wr!(MODE, v as u32);
+        if v == 1 { st_wr!(REQUEST, 1); st_wr!(GENERATE, 1); }
+        else if v == 3 { st_wr!(REQUEST, 1); }
+    }
+    fw_api::close(fd);
 }
 
 /// 子对象创建和删除会向父链冒泡；回调只登记请求。
@@ -192,35 +203,13 @@ unsafe extern "C" fn home_delete(a: u32, b: u32, c: u32, d: u32) -> u32 {
     result
 }
 
-unsafe fn load_fixed() -> bool {
-    const BYTES: u32 = 30252;
-    let fd = fw_api::open(b"/data/chaos/background.bin\0".as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd < 0 { return false; }
-    let length = fw_api::lseek(fd, 0, fw_api::seek::END);
-    if length != BYTES as i64 || fw_api::lseek(fd, 0, fw_api::seek::SET) != 0 {
-        fw_api::close(fd);
-        return false;
-    }
-    let input = fw_api::heap_malloc(BYTES);
-    if input == 0 { fw_api::close(fd); return false; }
-    let mut position = 0;
-    for _ in 0..8 {
-        if position == BYTES { break; }
-        let count = fw_api::read(fd, (input + position) as *mut u8, (BYTES - position).min(4096));
-        if count <= 0 || count as u32 > (BYTES - position).min(4096) { break; }
-        position += count as u32;
-    }
-    fw_api::close(fd);
-    let loaded = position == BYTES && SCENE.load_fixed(
-        core::slice::from_raw_parts(input as *const u8, BYTES as usize));
-    fw_api::fw_free(input);
-    loaded
-}
-
 pub(crate) unsafe fn request(mode: u32) {
-    if mode > 3 { return; }
+    // 档位只有 0(系统背景) / 1(复用静态背景) / 3(完全透明)。
+    // 原来的 2(固定图片背景)已删: 那条链只读 /data/chaos/background.bin,
+    // 而全项目没有任何一处写这个文件, 选中它永远只会得到"背景不可用"。
+    if mode != 0 && mode != 1 && mode != 3 { return; }
     st_wr!(MODE, mode);
-    if mode == 1 || mode == 2 { st_wr!(GENERATE, 1); }
+    if mode == 1 { st_wr!(GENERATE, 1); }
     st_wr!(REQUEST, 1);
     st_wr!(DIRTY, 1);
     persist_mode(mode);
@@ -245,7 +234,6 @@ pub(crate) unsafe fn status() -> &'static [u8] {
         1 => "正在生成背景\0".as_bytes(),
         2 => "已生成，复用静态背景\0".as_bytes(),
         6 => "完全透明背景（实验性）\0".as_bytes(),
-        3 => "固定图片背景\0".as_bytes(),
         4 => "背景不可用，保留系统背景\0".as_bytes(),
         5 => "接口不匹配，保留系统背景\0".as_bytes(),
         _ => "系统背景\0".as_bytes(),
@@ -279,9 +267,11 @@ pub(crate) unsafe fn tick() {
             st_wr!(REFRESH, st_rd!(REFRESH) | changed);
         }
     }
+    // 档位或状态一变就排一次整页重建: 回调里(事件派发链上)只登记请求, 控件由这里
+    // 在安静拍上重建 —— 与"更换字体""桌面图标"两页同一套做法。
     if st_rd!(DIRTY) != 0 {
         st_wr!(DIRTY, 0);
-        if crate::page_is_live(13) { crate::render_req(13); }
+        if crate::page_is_live(BLUR_PID as usize) { crate::render_req(BLUR_PID as usize); }
     }
     let mode = st_rd!(MODE);
     if mode == 0 {
@@ -332,7 +322,7 @@ pub(crate) unsafe fn tick() {
                 if !SCENE.release() { return; }
                 st_wr!(GENERATE, 0);
                 st_wr!(SOURCE_MODE, mode);
-                let loaded = if mode == 1 { SCENE.capture() } else { load_fixed() };
+                let loaded = SCENE.capture();
                 if !loaded { set_status(4); return; }
                 set_status(1);
             }
@@ -349,7 +339,7 @@ pub(crate) unsafe fn tick() {
             crate::background_surfaces::enable(parents);
             st_wr!(ATTACHED, 1);
             st_wr!(REFRESH, 0xE);
-            set_status(if mode == 1 { 2 } else { 3 });
+            set_status(2);
         } else {
             unmount();
             set_status(4);

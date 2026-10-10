@@ -136,7 +136,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_DIR0) as u32,
     core::ptr::addr_of!(PAGE_DIR1) as u32,
     core::ptr::addr_of!(PAGE_DIR2) as u32,
-    core::ptr::addr_of!(PAGE_DIR3) as u32,
+    core::ptr::addr_of!(PAGE_BLUR) as u32,
     core::ptr::addr_of!(PAGE_TXTSUB) as u32,
     core::ptr::addr_of!(PAGE_ICONSUB) as u32,
     core::ptr::addr_of!(PAGE_VIEWR) as u32,

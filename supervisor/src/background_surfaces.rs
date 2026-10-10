@@ -4,6 +4,12 @@ use crate::mem::{rd8, rd16, rd32, safe_ptr, plausible_ptr};
 use crate::{st_rd, st_wr};
 
 const LIMIT: usize = 128;
+/// 一个容器最多认多少个子节点。这个数只为挡住坏读数(垃圾指针回来的 count), 不是工作量
+/// 上限 —— 每拍真正的写入由 WORK 位图限到 8 项, 遍历本身只是读 child 指针。
+/// 原来写的是 16: 通知聚合页每条通知是列表容器的一个子节点, 到 15 条就超过 16,
+/// `count > 16` 直接把整个容器 return 掉, 于是"过某个条数后整片卡片都不透明"
+/// (真机 2026-10-10 用户报, 重进也不变 —— 与遍历时机无关, 就是这道门)。
+const CHILD_CAP: i32 = 64;
 const BG_IMAGE: u32 = 40;
 const BG_IMAGE_OPA: u32 = 41;
 const BG_OPA: u32 = 0x1D;
@@ -189,6 +195,12 @@ unsafe fn add(object: u32, root: u32, prop: u32, desired: u32) {
         }
         if entry.object == 0 && free == LIMIT { free = slot; }
     }
+    // 已经等于目标值的对象不占台账槽。真机转储(notifications-tree.json, 一条通知):
+    // 17 个节点里 16 个的 BG_OPA 本来就是 0, 只有卡片本体是 255。逐节点登记时一条通知
+    // 要吃掉约 10 个槽, 而 WORK/EVENT_MASK 是 u128 位图、台账上限就是 128 ——
+    // 多条通知就会把槽占满, 之后的卡片 add() 静默返回, 表现成"有的透明有的不透明"。
+    // 不登记也就不需要还原: 它一个字节都没被我们动过。
+    if value(object, prop) == desired { return; }
     let generation = st_rd!(NEXT_TAG);
     if free == LIMIT || generation >= 0x01FF_FFFF { return; }
     let tag = generation << 7 | free as u32;
@@ -236,7 +248,7 @@ unsafe fn page_background(root: u32) {
     // 底下的黑色填充被整页底图完全盖住。原值由背景所有权在关闭时还原，这里不强占台账。
     fw_api::background_set_opa(root, 255);
     let count = fw_api::obj_child_count(root);
-    if count > 8 { return; }
+    if count > CHILD_CAP { return; }
     // 页根类的事件回调不处理绘制、也不转交基类，挂在页根上的底图永远不会出像素；
     // 底部这张图像子对象才是整页底图的来源，必须保持可见。
     for index in 0..count {
@@ -260,7 +272,7 @@ unsafe fn path_is(image: u32, expected: &[u8]) -> bool {
 unsafe fn scan_children(root: u32, object: u32, depth: u32) {
     if depth == 0 || !safe_ptr(object) { return; }
     let count = fw_api::obj_child_count(object);
-    if count > 16 { return; }
+    if count > CHILD_CAP { return; }
     for index in 0..count {
         let child = fw_api::obj_get_child(object, index as u32);
         if !safe_ptr(child) { continue; }
@@ -287,12 +299,12 @@ pub(crate) unsafe fn enable(roots: [u32; 4]) {
     consume();
     let control = roots[1];
     let count = fw_api::obj_child_count(control);
-    if count <= 8 {
+    if count <= CHILD_CAP {
         for index in 0..count {
             let footer = fw_api::obj_get_child(control, index as u32);
             if safe_ptr(footer) && rd32(footer as *const u32) == OBJ_CLASS {
                 let count = fw_api::obj_child_count(footer);
-                if count <= 8 {
+                if count <= CHILD_CAP {
                     for child in 0..count {
                         let battery = fw_api::obj_get_child(footer, child as u32);
                         if safe_ptr(battery) && rd32(battery as *const u32) == BATTERY_CLASS
@@ -319,7 +331,7 @@ pub(crate) unsafe fn enable(roots: [u32; 4]) {
     let messages = roots[3];
     if messages != 0 {
         let count = fw_api::obj_child_count(messages);
-        if count <= 8 {
+        if count <= CHILD_CAP {
             for index in 0..count {
                 let list = fw_api::obj_get_child(messages, index as u32);
                 if safe_ptr(list) && rd32(list as *const u32) == IMAGE_CLASS
@@ -354,7 +366,7 @@ pub(crate) unsafe fn enable_transparent(roots: [u32; 4]) {
     let control = roots[1];
     if control != 0 {
         let count = fw_api::obj_child_count(control);
-        if count <= 8 {
+        if count <= CHILD_CAP {
             for i in 0..count {
                 let child = fw_api::obj_get_child(control, i as u32);
                 if safe_ptr(child) && rd32(child as *const u32) == OBJ_CLASS {

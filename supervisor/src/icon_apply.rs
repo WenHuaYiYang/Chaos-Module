@@ -126,7 +126,6 @@ static mut IC_SAVED: [u32; IC_STEM_N] = [0; IC_STEM_N];     // 原路径指针(�
 // 做法与本项目其它看门同款: 周期性读回 + 影子比对, 只在"确实被冲回"时才动笔,
 // 空闲态低频(约 2 秒一查, 一次注册表遍历 + 一次字节比对)。
 static mut IC_CALT: u32 = 0;        // 看门节拍计数
-static mut IC_LATCH: u32 = 0;       // 真正补写成功的次数(界面读数用)
 /// 已核对日历整图素材的包号，0 表示保留系统日历。
 static mut IC_CAL_PACK: u32 = 0;
 /// 桌面记录不在位时按槽登记补刷，回到桌面后每拍刷新一个应用。
@@ -531,33 +530,6 @@ unsafe fn cal_find_by_id(id: u32) -> u32 {
     0
 }
 
-/// 日历格取证读数: 桌面日历格节点 +0x0C 此刻的**真实形态**(切包/重光栅化/
-/// 失败回退三种世界一眼分流)。返回 (节点+0x0C 值, 类型字符, 缓冲单例槽值)。
-///   'P'(0x2F '/') = 路径串 —— 我们的切包生效态
-///   'D'(0x19)     = 图像描述符指针 —— 固件缓冲(0x0C4EFDE8 的单例)
-///   'L'('l')      = launcher.bin 回退路径 —— 固件光栅化失败分支写的
-///   '0'           = 空   '?' = 指针不可信
-pub(crate) unsafe fn cal_dbg() -> (u32, u32, u32) {
-    let node = cal_find_by_id(CAL_APP_ID);
-    if node == 0 { return (0, b'?' as u32, 0); }
-    let v = rd32((node + fw_api::APPN_ICON) as *const u32);
-    let t = if v == 0 {
-        b'0' as u32
-    } else if plausible_ptr(v) {
-        match rd8(v as *const u8) {
-            b'/' => b'P' as u32,
-            0x19 => b'D' as u32,
-            b'l' => b'L' as u32,
-            other => other as u32,
-        }
-    } else {
-        b'?' as u32
-    };
-    // 0x2010F05C = 固件日历缓冲单例槽(0x0C4EFDE8 分配一次永久复用, 见 res_hook"日历")
-    let slot = rd32(0x2010_F05C as *const u32);
-    (v, t, slot)
-}
-
 // ---------------------------------------------------------------------------
 // 计划与执行(每 tick 推进一个应用：refresh 内部会 rebuild 桌面，不能连做)
 // ---------------------------------------------------------------------------
@@ -697,9 +669,6 @@ unsafe fn point_to_ours_node(slot: usize, node: u32, id: u32) -> bool {
         fw_api::fw_free(newp);
         if saved == 0 { st_wr!(IC_SAVED[slot], 0); }
         return false;
-    }
-    if slot == IC_CAL_SLOT {
-        st_wr!(IC_LATCH, st_rd!(IC_LATCH).wrapping_add(1));
     }
     // 桌面记录不在位时不假装刷新成功: 指针已经换了(下次进桌面会重建记录读到新路径),
     // 只是当前界面不会变 —— 这就是"有时候点了没反应"的成因。
@@ -898,16 +867,6 @@ pub(crate) unsafe fn entry_shown() -> u32 {
     if total > IC_ENTRY_MAX as u32 { IC_ENTRY_MAX as u32 } else { total }
 }
 
-/// 写十进制数字(只到两位, 计数超 99 就截断 —— 副标签放不下更长的)
-unsafe fn wnum(w: &mut W, v: u32) {
-    if v >= 100 {
-        w.s("99".as_bytes());
-        return;
-    }
-    if v >= 10 { w.c(b'0' + (v / 10) as u8); }
-    w.c(b'0' + (v % 10) as u8);
-}
-
 /// 填条目行的两排文本。先整体清零再按需写(与 refresh_watchface_lines 同款):
 /// 上一屏的长名字不会被下一屏读出来。
 /// 主标签 = 包名(两步删除的确认态则是"再点一次删除 X"), 副标签 = 包号 + 是否已投递。
@@ -945,25 +904,6 @@ pub(crate) unsafe fn lines_fill() {
             // 整包没投递时直接在副标签上说清楚(点下去不会有反应, 但这个状态必须写在界面上)
             if !pack_present(pack) {
                 w.s(" 未投递".as_bytes());
-            } else {
-                // 读数一律压缩到最短, 因为这一列在真机上会被界面按宽度截断
-                // (上一版写"包 01 系统21/21 日C", 末尾根本显示不出来, 等于白加)。
-                //   L = 日历节点落到我们路径上的次数(0 = 一次都没写成)
-                //   H = 固件重读日历底图文件的次数(043 常态是 0, 见 res_hook"日历"一节)
-                //   G/H = 系统图标换成我们素材的次数 / 命中规则次数
-                //   t = 日历格 +0x0C 实时形态(P=我们路径生效 D=固件缓冲 L=失败回退)
-                let (hit, ok, _fb) = res_hook::sys_counters();
-                let (_cv, ct, _slot) = cal_dbg();
-                w.s("日".as_bytes());
-                wnum(&mut w, st_rd!(IC_LATCH));
-                w.c(b'.');
-                wnum(&mut w, res_hook::cal_hit());
-                w.c(b' ');
-                w.c(ct as u8);
-                w.s(" 系".as_bytes());
-                wnum(&mut w, ok);
-                w.c(b'/');
-                wnum(&mut w, hit);
             }
         }
         w.end();

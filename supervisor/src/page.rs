@@ -347,7 +347,9 @@ impl Page for DirPage {
                     let dt = read_volatile(types.add(e));
                     let cur = (core::ptr::addr_of!(PATH_STACK) as *const u8).add(d * 160);
                     if dt == DT_DIR {
-                        if d < 3 {
+                        // 目录只占页 1..3(深度 0..2): 再往下一级没有独立 page_id 了,
+                        // 不降这个级就无法给"系统模糊"一个真 page_id(见 state.rs 页名表)。
+                        if d < 2 {
                             write_volatile((core::ptr::addr_of_mut!(DIR_WIN_SAVE) as *mut u32).add(d), win as u32);
                             let nxt = (core::ptr::addr_of_mut!(PATH_STACK) as *mut u8).add((d + 1) * 160);
                             path_join(nxt, cur, names.add(e * 64));
@@ -612,8 +614,9 @@ impl Page for WfMgmtPage {
         self.shake_en.store(if en != 0 { 0 } else { 1 }, Ordering::Relaxed);
         // 同步到全局(摇一摇定时器读的是全局)
         unsafe {
-        st_wr!(SHAKE_EN, self.shake_en.load(Ordering::Relaxed));
-        unsafe { crate::watchface::persist_shake_enabled(self.shake_en.load(Ordering::Relaxed)); }
+            let v = self.shake_en.load(Ordering::Relaxed);
+            st_wr!(SHAKE_EN, v);
+            crate::watchface::persist_shake_enabled(v);
         }
     }
 
@@ -818,7 +821,7 @@ impl Page for CachePage {
 // 里有(页面注册见 ipc.rs)。页内切层级(只 render_req)没有动画, 整页内容原地换一批,
 // 观感上就不是"进了另一个页面"。文件管理每级目录各占一个 page_id 也是同一个原因。
 // 代价: 原生应用最多注册 14 页, 再多会在安装过程中黑屏自重启(机制未验证, 按硬上限处理);
-// 所以文件管理从 6 级压到 4 级腾出两个 page_id —— 注册总数仍是 14, 只是重新分配。
+// 所以文件管理从 6 级压到 3 级腾出三个 page_id(页4/5/6) —— 注册总数仍是 14, 只是重新分配。
 //
 // 行位分配都受 MAX_ROWS_PER_PAGE(=12) 封顶: 条目行从行 0 起排, 页5/页6 的行 11 固定"返回"。
 
@@ -832,56 +835,117 @@ unsafe fn cbuf(p: *const u8) -> &'static [u8] {
     core::slice::from_raw_parts(p, n + 1)
 }
 
-// ===== 页13: 系统美化(只有菜单, 两条进二级页) =====
+// ===== 页13: 系统美化(只有菜单, 三条进二级页) =====
 
 pub(crate) struct BeautifyPage;
-static mut BLUR_SUBPAGE: bool = false;
 
 impl Page for BeautifyPage {
     fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, if BLUR_SUBPAGE { "系统模糊\0" } else { "系统美化\0" }.as_bytes()); }
+        unsafe { put_str(buf, "系统美化\0".as_bytes()); }
     }
+
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            if BLUR_SUBPAGE {
-                build_rows(ctx, ctx.title, &[
-                    (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                    (1, RowSpec::switch("持续复用静态背景\0".as_bytes())),
-                    (2, RowSpec::check("固定图片背景\0".as_bytes(), core::ptr::null())),
-                    (3, RowSpec::clickable("生成或更新表盘背景\0".as_bytes())),
-                    (4, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
-                    (5, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                    (6, RowSpec::clickable("返回\0".as_bytes()))])?;
-                let selected = crate::background_home::mode() as usize;
-                for i in 0..3 { fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)), fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (i == selected) as u8); }
-                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)), fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (selected == 3) as u8);
-                return Ok(());
-            }
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable("更换字体\0".as_bytes())),
                 (1, RowSpec::clickable("桌面图标\0".as_bytes())),
                 (2, RowSpec::clickable("系统模糊\0".as_bytes())),
                 (3, RowSpec::switch("重启恢复字体和图标\0".as_bytes())),
-                (4, RowSpec::clickable("返回\0".as_bytes()))])?;
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)), fw_api::NONE_PTR, fw_api::NONE_PTR, crate::beautify_restore::status(), 0, crate::beautify_restore::enabled() as u8);
+                (4, RowSpec::switch("系统图标资源钩子\0".as_bytes())),
+                (5, RowSpec::clickable("返回\0".as_bytes()))])?;
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, crate::beautify_restore::status(), 0,
+                crate::beautify_restore::enabled() as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, crate::res_hook::status(), 0,
+                crate::res_hook::held() as u8);
             Ok(())
         }
     }
+
     fn on_click(&self, idx: usize) {
         unsafe {
-            if BLUR_SUBPAGE {
-                match idx { 0 => crate::background_home::request(0), 1 => crate::background_home::request(1), 2 => crate::background_home::request(2), 3 => crate::background_home::generate(), 6 => { BLUR_SUBPAGE = false; render_req(13); }, _ => {} }
-            } else {
-                match idx { 0 => nav_goto(5, 0), 1 => nav_goto(6, 0), 2 => { BLUR_SUBPAGE = true; render_req(13); }, 4 => nav_back(), _ => {} }
+            // 二级页一律 nav_goto(真页面跳转 => 固件带压栈动画, 返回键也是动画 pop);
+            // 页内切层级(只 render_req)没有动画, 不许再用这种做法。
+            match idx {
+                0 => nav_goto(5, 0),
+                1 => nav_goto(6, 0),
+                2 => nav_goto(crate::background_home::BLUR_PID, 0),
+                5 => nav_back(),
+                _ => {}
             }
         }
     }
-    fn is_switch_row(&self, idx: usize) -> bool { unsafe { if BLUR_SUBPAGE { idx == 1 || idx == 4 } else { idx == 3 } } }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 3 || idx == 4 }
+
+    fn on_switch(&self, idx: usize) {
+        match idx {
+            3 => unsafe { crate::beautify_restore::request_toggle(); },
+            // 关掉 = 让出 LVGL 资源钩子。Corona 那类模块要求槽里仍是出厂回调才肯装,
+            // 先让位、让它装好、再打开这一格, 两条重定向就能串在一起。
+            4 => unsafe { crate::res_hook::request_toggle(); },
+            _ => {}
+        }
+    }
+}
+
+// ===== 页4: 系统美化 -> 系统模糊(二级) =====
+//
+// 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
+// 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
+// 原"固定图片背景"那一档已删: 它只读 /data/chaos/background.bin, 而这文件从没有生成过。
+pub(crate) struct BlurPage;
+
+impl Page for BlurPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "系统模糊\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
+                (1, RowSpec::switch("持续复用静态背景\0".as_bytes())),
+                (2, RowSpec::clickable("生成或更新表盘背景\0".as_bytes())),
+                (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
+                (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
+            // 勾选态原地写(不重建整页): 行 0/1 是两档单选, 行 3 是实验性那一档的开关
+            let sel = crate::background_home::mode() as usize;
+            for i in 0..2 {
+                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)), fw_api::NONE_PTR,
+                    fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (i == sel) as u8);
+            }
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (sel == 3) as u8);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            match idx {
+                0 => crate::background_home::request(0),
+                2 => crate::background_home::generate(),
+                11 => nav_back(),
+                _ => {}
+            }
+        }
+    }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 3 }
+
     fn on_switch(&self, idx: usize) {
         unsafe {
-            if BLUR_SUBPAGE && idx == 1 { crate::background_home::request(if crate::background_home::mode() == 1 { 0 } else { 1 }); }
-            if BLUR_SUBPAGE && idx == 4 { crate::background_home::request(if crate::background_home::mode() == 3 { 0 } else { 3 }); }
-            if !BLUR_SUBPAGE && idx == 3 { crate::beautify_restore::request_toggle(); }
+            if idx == 1 {
+                crate::background_home::request(
+                    if crate::background_home::mode() == 1 { 0 } else { 1 });
+            }
+            if idx == 3 {
+                crate::background_home::request(
+                    if crate::background_home::mode() == 3 { 0 } else { 3 });
+            }
         }
     }
 }
@@ -1023,6 +1087,7 @@ static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage { shake_en: AtomicU32::new(1) };
 static PAGE_BRIGHT: BrightnessPage = BrightnessPage { req: AtomicU32::new(0), req_val: AtomicU32::new(0) };
 static PAGE_CACHEP: CachePage = CachePage;
 static PAGE_BEAUTIFY: BeautifyPage = BeautifyPage;
+static PAGE_BLURP: BlurPage = BlurPage;
 static PAGE_FONTLIST: FontListPage = FontListPage;
 static PAGE_ICONSUB: IconSubPage = IconSubPage;
 
@@ -1030,8 +1095,8 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 14] = [
     &PAGE_INFO,       // 0
     &PAGE_DIR,        // 1  目录 1 级(/)
     &PAGE_DIR,        // 2  目录 2 级
-    &PAGE_DIR,        // 3  目录 3 级
-    &PAGE_DIR,        // 4  目录 4 级(文件管理最深一级)
+    &PAGE_DIR,        // 3  目录 3 级(文件管理最深一级)
+    &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
     &PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
     &PAGE_VIEWER,     // 7

@@ -65,21 +65,6 @@ impl<const N: usize> Backdrop<N> {
         true
     }
 
-    /// 固定素材必须是完整的 84 x 120 RGB888 编码，复制后不保留输入。
-    pub unsafe fn load_fixed(&mut self, encoded: &[u8]) -> bool {
-        if self.allocation != 0 || encoded.len() != 12 + pixels::PIXEL_BYTES
-            || encoded[..12] != [25, 15, 0, 0, 84, 0, 120, 0, 252, 0, 0, 0] {
-            return false;
-        }
-        self.allocation = fw_api::heap_malloc(ALLOCATION_BYTES as u32);
-        if self.allocation == 0 { return false; }
-        core::ptr::copy_nonoverlapping(encoded.as_ptr().add(12),
-            (self.allocation + LOW_OFFSET as u32) as *mut u8, pixels::PIXEL_BYTES);
-        self.expanding = true;
-        self.expanded_rows = 0;
-        true
-    }
-
     /// 每拍只做一批模糊或展开，完整素材就绪前不挂到页面。
     pub unsafe fn step(&mut self) -> bool {
         if self.ready { return true; }

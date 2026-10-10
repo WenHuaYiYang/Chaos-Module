@@ -87,17 +87,19 @@ pub static DISPLAY_NAME: [u8; 6] = *b"Chaos\0";
 #[no_mangle]
 pub static PAGE_MAIN: [u8; 5] = *b"main\0";
 
-// 页名(互异即可, page_goto 按 page_id 解析; page1-4=目录0-3级 page5/6=美化二级
-//  page7=查看)。文件管理原来占 6 页(page1-6), 为了给"更换字体""桌面图标"
-//  两个二级页腾出**独立 page_id**(独立 page_id 才有固件的页面跳转动画), 目录页收到 4 级:
-//  文件管理最深到 /a/b/c(/data/chaos/icons 够用, 再往下进不去了)。
+// 页名(互异即可, page_goto 按 page_id 解析; page1-3=目录0-2级 page4/5/6=美化二级
+//  page7=查看)。文件管理原来占 6 页(page1-6), 为了给"更换字体""桌面图标""系统模糊"
+//  三个二级页腾出**独立 page_id**(独立 page_id 才有固件的页面跳转动画), 目录页收到 3 级:
+//  最深进到 /data/chaos(再往下的 icons/<包号> 这级进不去了, 由美化页的列表代管)。
 pub static PAGE_DIR0: [u8; 6] = *b"files\0";
 
 pub static PAGE_DIR1: [u8; 7] = *b"files1\0";
 
 pub static PAGE_DIR2: [u8; 7] = *b"files2\0";
 
-pub static PAGE_DIR3: [u8; 7] = *b"files3\0";
+/// 页4: 系统美化 -> 系统模糊(二级)。原来这一格是目录第 4 级(files3),
+/// 为了让模糊页有真正的 page_goto/page_back 动画而重新分配过来。
+pub static PAGE_BLUR: [u8; 8] = *b"blursub\0";
 
 /// 页5: 系统美化 -> 更换字体(二级)。页名沿用 "textsub" —— 它只是 page_goto 的解析键,
 /// 与页面内容无关, 改它就要三处同步(state/ipc/page), 收益为零。

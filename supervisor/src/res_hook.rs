@@ -204,12 +204,18 @@ pub(crate) fn rule_stem(k: usize) -> &'static [u8] {
 static mut RH_ON: u32 = 0;
 /// 装之前从槽里读到的原回调(与 FS_OPEN_ORIG 双记录: 槽值可能因固件版本不同)
 static mut RH_ORIG: u32 = 0;
+/// 用户要不要持有这个槽。0 = 已让位: 别的模块(如 Corona)要求槽里仍是出厂回调才肯
+/// 安装自己的钩子, 我们先占住它就装不进去。让位之后对方装完, 我们再接管就会链到它下面,
+/// 两条重定向同时生效。
+static mut RH_WANTED: u32 = 1;
+static mut RH_LOADED: bool = false;
+static mut RH_SAVE_FAILED: bool = false;
+static mut RH_TOGGLE: bool = false;
+const HOOK_CFG: &[u8] = b"/data/chaos/hook.cfg\0";
 /// 命中规则的次数 / 换路径后打开成功的次数 / 打开失败回退的次数(真机取证用)
 static mut RH_HIT: u32 = 0;
 static mut RH_OK: u32 = 0;
 static mut RH_FALLBACK: u32 = 0;
-/// 日历底图这条规则被 open 命中的次数(0 = 固件自装 hook 起没重读过底图)
-static mut RH_CAL_HIT: u32 = 0;
 
 // ---------------------------------------------------------------------------
 // 字符串小工具(回调里不能用 fmt, 全部手写)
@@ -367,12 +373,6 @@ pub(crate) unsafe extern "C" fn chaos_fs_open(drv: u32, path: u32, mode: u32) ->
                 return f(drv, path, mode);
             }
             st_wr!(RH_HIT, st_rd!(RH_HIT).wrapping_add(1));
-            // 日历底图单独计一次: 它有没有被读过, 直接区分"固件根本没重画"
-            // 与"重画了但没用我们的图" —— 这两种的下一步完全不同。
-            if RULES[k].stem.len() == CAL_STEM.len()
-                && at_is(abs.as_ptr() as u32, 0, b"/resource/app/perpetual_calendar/") {
-                st_wr!(RH_CAL_HIT, st_rd!(RH_CAL_HIT).wrapping_add(1));
-            }
             let pack = icon_apply::cur_pack();
             if pack < 1 || pack > 8 { return f(drv, path, mode); }
             build_target(k, pack);
@@ -409,6 +409,9 @@ unsafe fn drv_ready() -> bool {
 /// 真机上两者应当相等, 不等时以槽值为准才不会把调用指到错的地址。
 pub(crate) unsafe fn install() {
     if st_rd!(RH_ON) != 0 { return; }
+    load_wanted();
+    // 让位期间不去抢: 每拍抢一次会把用户刚腾出的槽又占回去
+    if st_rd!(RH_WANTED) == 0 { return; }
     if !drv_ready() { return; }
     let slot = rd32(FS_OPEN_SLOT as *const u32);
     if slot == chaos_fs_open as *const () as u32 { return; }
@@ -468,12 +471,71 @@ unsafe fn refresh_cache_step() {
 }
 
 /// 摘 hook, 把原回调写回去。模块卸载路径用; 正常运行时不调。
-pub(crate) unsafe fn uninstall() {
-    if st_rd!(RH_ON) == 0 { return; }
+/// 让位: 把槽里的回调还原成我们装之前读到的那个值。
+///
+/// 只在**槽里仍是我们自己**时才动手 —— 如果有别的模块链在我们上面(它把我们的回调当成了
+/// 原回调存起来), 我们一摘就把那条链剪断了。摘不动就返回 false, 让界面说实话。
+pub(crate) unsafe fn yield_slot() -> bool {
+    if st_rd!(RH_ON) == 0 { return true; }
+    if rd32(FS_OPEN_SLOT as *const u32) != chaos_fs_open as *const () as u32 { return false; }
     let orig = st_rd!(RH_ORIG);
-    if orig == 0 { return; }
+    if orig == 0 { return false; }
     write_volatile(FS_OPEN_SLOT as *mut u32, orig);
     st_wr!(RH_ON, 0);
+    // 读回确认: 写不进去(只读页/ MPU)就不能声称已经让开
+    rd32(FS_OPEN_SLOT as *const u32) == orig
+}
+
+unsafe fn persist_wanted(on: u32) {
+    let fd = fw_api::open(HOOK_CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { st_wr!(RH_SAVE_FAILED, true); return; }
+    let v = if on == 0 { 0u8 } else { 1u8 };
+    let ok = fw_api::write(fd, &v as *const u8, 1) == 1;
+    fw_api::close(fd);
+    st_wr!(RH_SAVE_FAILED, !ok);
+}
+
+unsafe fn load_wanted() {
+    if st_rd!(RH_LOADED) { return; }
+    st_wr!(RH_LOADED, true);
+    let fd = fw_api::open(HOOK_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return; }
+    let mut v = [0u8; 1];
+    let n = fw_api::read(fd, v.as_mut_ptr(), 1);
+    fw_api::close(fd);
+    if n == 1 { st_wr!(RH_WANTED, if v[0] == 0 { 0 } else { 1 }); }
+}
+
+/// 切换请求。开关回调只登记这一位, 真正的摘/装与写文件都挪到 UI 节拍里做 ——
+/// 事件派发上下文里不碰 flash, 与 beautify_restore 同一套。
+pub(crate) unsafe fn request_toggle() { st_wr!(RH_TOGGLE, true); }
+
+/// 持有/让出资源钩子。让位失败(别人链在我们上面)时不改状态, 界面据此说实话。
+unsafe fn apply_toggle() {
+    st_wr!(RH_TOGGLE, false);
+    let want = st_rd!(RH_WANTED) == 0;
+    if want {
+        st_wr!(RH_WANTED, 1);
+        persist_wanted(1);
+        install();
+    } else if yield_slot() {
+        st_wr!(RH_WANTED, 0);
+        persist_wanted(0);
+    }
+}
+
+/// 这一行开关现在的状态(界面用): 让位 = 关。
+pub(crate) unsafe fn held() -> bool {
+    load_wanted();
+    st_rd!(RH_WANTED) != 0
+}
+
+/// 开关下方的说明。三种情况分得开: 已接管 / 已让位 / 想接管但驱动还没就绪。
+pub(crate) unsafe fn status() -> *const u8 {
+    if st_rd!(RH_SAVE_FAILED) { return "保存失败，请重新切换开关\0".as_ptr(); }
+    if !held() { return "已让位，可去激活 Corona\0".as_ptr(); }
+    if st_rd!(RH_ON) != 0 { return "已接管，系统图标替换生效\0".as_ptr(); }
+    "等待驱动就绪后接管\0".as_ptr()
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +565,7 @@ const CAL_STEM: &[u8] = b"cal_background";
 
 /// 每拍尝试安装文件回调，并推进已登记的资源缓存退役。
 pub(crate) unsafe fn tick() {
+    if st_rd!(RH_TOGGLE) { apply_toggle(); }
     if st_rd!(RH_ON) == 0 { install(); }
     refresh_cache_step();
 }
@@ -511,13 +574,3 @@ pub(crate) unsafe fn tick() {
 pub(crate) unsafe fn counters() -> (u32, u32, u32, u32) {
     (st_rd!(RH_ON), st_rd!(RH_HIT), st_rd!(RH_OK), st_rd!(RH_FALLBACK))
 }
-
-/// 系统 UI 那一路的三个计数(图标页副标签显示, 用来分辨卡在哪一环):
-/// (命中规则次数, 换成我们素材的次数, 素材缺失而回退的次数)
-pub(crate) unsafe fn sys_counters() -> (u32, u32, u32) {
-    (st_rd!(RH_HIT), st_rd!(RH_OK), st_rd!(RH_FALLBACK))
-}
-
-/// 日历底图那条规则的命中次数(0 = 固件自装 hook 起没重读过底图 —— 043 上
-/// 这就是常态, 见"日历"一节; 只在固件自己发 signal=6 重光栅化时才会 >0)
-pub(crate) unsafe fn cal_hit() -> u32 { st_rd!(RH_CAL_HIT) }
