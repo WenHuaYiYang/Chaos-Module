@@ -10,7 +10,7 @@
   容器 = [头部 0x00..0x27][包名 0x28..0x33][填充 0x34..0x67][显示名 0x68..0xA7]
          [主题表 0xA8..0x147][记录表 0x148..rec_end][预览块 rec_end..file_region]
          [文件数据区 file_region..]
-  - 头部魔数 0x1234A55A; 0x04 设备码(手环 10 Pro 用 0x10000); 0x10=0x800; 0x14=0x10000;
+  - 头部魔数 0x1234A55A; 0x04 表盘版本(0x10000 = 1.0); 0x10=0x800; 0x14=0x10000;
     0x1C 主题数; 0x20 与 0xAC 都等于记录表结束地址(= 预览块起点)。
   - 记录表首条 = (0, 0, 尾标记记录地址, 0x10); 每条文件记录 = (0x05000000|槽号, 0, 偏移, 长度);
     尾标记 = (0x05000000, 0, 0, 0)。槽号从 0 起, **条数不受 4 限制**(实测样本有 10 条)。
@@ -27,7 +27,8 @@ import struct
 import sys
 
 MAGIC = 0x1234A55A
-DEV_CODE_P67 = 0x10000
+# 表盘版本: 高 16 位主号, 低 16 位次号。打包工具默认出 1.0。
+WF_VERSION_V1 = 0x10000
 PREVIEW_TAG = 0x410
 REC_OFF = 0x148
 PKG_OFF, PKG_LEN = 0x28, 12
@@ -64,7 +65,7 @@ def blob_for(path_ascii, data):
 
 
 def build_shell(files, pkg_name, display_name, preview, theme_name=DEFAULT_THEME_NAME,
-                dev_code=DEV_CODE_P67):
+                version=WF_VERSION_V1):
     """files = [(容器内路径, 数据字节)]，preview = 预览块原始字节(含 12 字节头)。"""
     pkg = pkg_name.encode('ascii') if isinstance(pkg_name, str) else pkg_name
     _assert(len(pkg) == PKG_LEN, '包名必须正好 12 字节')
@@ -86,7 +87,7 @@ def build_shell(files, pkg_name, display_name, preview, theme_name=DEFAULT_THEME
     file_region = rec_end + len(preview)
 
     shell = bytearray(file_region)
-    struct.pack_into('<IIII', shell, 0x00, MAGIC, dev_code, 0, 0)
+    struct.pack_into('<IIII', shell, 0x00, MAGIC, version, 0, 0)
     struct.pack_into('<IIII', shell, 0x10, 0x800, 0x10000, 0, 1)
     struct.pack_into('<II', shell, 0x20, rec_end, 0)
     shell[PKG_OFF:PKG_OFF + PKG_LEN] = pkg
@@ -118,7 +119,7 @@ def build_shell(files, pkg_name, display_name, preview, theme_name=DEFAULT_THEME
 
 def parse_container(raw):
     """把容器拆回 (清单, 包名, 显示名, 主题名, 预览块, 头部杂项)，用于校验。"""
-    magic, dev, _a, _b = struct.unpack_from('<4I', raw, 0)
+    magic, ver, _a, _b = struct.unpack_from('<4I', raw, 0)
     _assert(magic == MAGIC, '魔数不对')
     w800, w10000, _x18, theme_cnt = struct.unpack_from('<4I', raw, 0x10)
     rec_end = struct.unpack_from('<I', raw, 0x20)[0]
@@ -161,7 +162,7 @@ def parse_container(raw):
         'name': raw[NAME_OFF:NAME_OFF + NAME_LEN].split(b'\0')[0].decode('utf-8'),
         'theme': raw[THEME_NAME_OFF:THEME_NAME_OFF + 64].split(b'\0')[0].decode('utf-8'),
         'preview': preview,
-        'dev_code': dev,
+        'version': ver,
         'theme_cnt': theme_cnt,
         'file_cnt_field': struct.unpack_from('<I', raw, FILE_CNT_OFF)[0],
     }
@@ -192,7 +193,7 @@ def roundtrip(path):
     _assert(c['file_cnt_field'] == len(c['files']),
             '主题表 0xD8 不等于文件条数(%d vs %d)' % (c['file_cnt_field'], len(c['files'])))
     mine = build_shell(c['files'], c['pkg'], c['name'], c['preview'],
-                       theme_name=c['theme'], dev_code=c['dev_code'])
+                       theme_name=c['theme'], version=c['version'])
     if mine == raw:
         return True, '%d 字节 完全一致 (%d 个文件, 预览 %d 字节)' % (
             len(raw), len(c['files']), len(c['preview']))

@@ -216,6 +216,30 @@ const HOOK_CFG: &[u8] = b"/data/chaos/hook.cfg\0";
 static mut RH_HIT: u32 = 0;
 static mut RH_OK: u32 = 0;
 static mut RH_FALLBACK: u32 = 0;
+// ===== 挂法状态(节点法 / 字段法) =====
+/// 0=还在扫 1=扫到唯一节点 2=没有唯一节点或写不进(本次开机只用字段法)
+static mut RH_SCAN: u32 = 0;
+static mut RH_SCAN_AT: u32 = SRAM_BASE;
+/// 链表里那个"指向驱动"的字在哪(节点载荷地址)
+static mut RH_NODE: u32 = 0;
+/// 0=未装 1=字段法 2=节点法
+static mut RH_METHOD: u32 = 0;
+/// 我们自己的驱动副本(固件 lv_fs_drv_t 取 80 字节足够)
+static mut RH_COPY: [u32; 20] = [0; 20];
+/// 节点法下"亮屏但一次都没命中"的连续拍数 —— 到点就退回字段法
+static mut RH_IDLE: u32 = 0;
+static mut RH_BASELINE: u32 = 0;
+/// 1 = 本次开机见过别家的回调(此后不再让位, 直接串链)
+static mut RH_FOREIGN: u32 = 0;
+/// 1 = 正让着(别家监管模块在位, 字段还是出厂值)
+static mut RH_WAITING: u32 = 0;
+/// 让位探测的节流计数。初值取满一档: 第一次判断就要真探一次,
+/// 不能先按"没装对方"接管字段、再等一秒才反应过来。
+static mut RH_PROBE: u32 = 20;
+/// 最近一次 /dev/canopus 探测结果
+static mut RH_CANOPUS: u32 = 0;
+/// 字段法为什么在用: 0=还没探过 1=扫不到驱动指针 2=指针不唯一或写不进 3=节点没生效自证退回
+static mut RH_WHY: u32 = 0;
 
 // ---------------------------------------------------------------------------
 // 字符串小工具(回调里不能用 fmt, 全部手写)
@@ -346,14 +370,18 @@ unsafe fn build_target(rule: usize, pack: u32) {
 /// 返回值: 大于 0 才算成功(固件判据), 0 与 -1 都是失败。
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_fs_open(drv: u32, path: u32, mode: u32) -> i32 {
-    let orig = st_rd!(RH_ORIG);
+    let orig = live_orig();
     if orig == 0 { return -1; }
     let f: unsafe extern "C" fn(u32, u32, u32) -> i32 = core::mem::transmute(orig as usize);
-    // 约束 A: 只在这一个驱动的只读打开上生效, 其余原样透传
-    if drv != FS_DRV || mode != MODE_RD || path == 0 { return f(drv, path, mode); }
+    // 约束 A: 只在这一个驱动的只读打开上生效, 其余原样透传。
+    // 节点法时 LVGL 递来的 drv 是我们那份副本的地址, 认两个都算; 往下调一律用固件的驱动。
+    let copy = core::ptr::addr_of_mut!(RH_COPY) as u32;
+    if (drv != FS_DRV && drv != copy) || mode != MODE_RD || path == 0 {
+        return f(FS_DRV, path, mode);
+    }
 
     let n = path_len(path, RH_PATH_CAP - 1);
-    if n == 0 || n >= RH_PATH_CAP - 1 { return f(drv, path, mode); }
+    if n == 0 || n >= RH_PATH_CAP - 1 { return f(FS_DRV, path, mode); }
 
     // 加回前导斜杠: 规则表按带斜杠的绝对路径写, 这里拼在栈上的缓冲里
     let mut abs = [0u8; RH_PATH_CAP];
@@ -366,26 +394,26 @@ pub(crate) unsafe extern "C" fn chaos_fs_open(drv: u32, path: u32, mode: u32) ->
     abs[n + 1] = 0;
 
     match rule_match(abs.as_ptr() as u32, n + 1) {
-        None => f(drv, path, mode),
+        None => f(FS_DRV, path, mode),
         Some(k) => {
             // 缺少日历整图的包保留系统底图，避免接管一半日历。
             if RULES[k].stem == CAL_STEM && !icon_apply::calendar_available() {
-                return f(drv, path, mode);
+                return f(FS_DRV, path, mode);
             }
             st_wr!(RH_HIT, st_rd!(RH_HIT).wrapping_add(1));
             let pack = icon_apply::cur_pack();
-            if pack < 1 || pack > 8 { return f(drv, path, mode); }
+            if pack < 1 || pack > 8 { return f(FS_DRV, path, mode); }
             build_target(k, pack);
             // 目标路径剥掉前导斜杠再交给原回调 —— 它收到的从来都是这种形态
             let rel = (core::ptr::addr_of!(RH_PATH) as u32) + 1;
-            let got = f(drv, rel, mode);
+            let got = f(FS_DRV, rel, mode);
             if got > 0 {
                 st_wr!(RH_OK, st_rd!(RH_OK).wrapping_add(1));
                 got
             } else {
                 // 约束 B: 素材缺失/打不开就回退, 最坏只是显示固件原图标
                 st_wr!(RH_FALLBACK, st_rd!(RH_FALLBACK).wrapping_add(1));
-                f(drv, path, mode)
+                f(FS_DRV, path, mode)
             }
         }
     }
@@ -404,24 +432,178 @@ unsafe fn drv_ready() -> bool {
     slot != 0
 }
 
-/// 装 hook。幂等: 槽里已经是我们自己就不重装(模块被重复加载时不会套两层)。
-/// 原回调**以槽里的值为准**, FS_OPEN_ORIG 只是静态核对记下的期望值 ——
-/// 真机上两者应当相等, 不等时以槽值为准才不会把调用指到错的地址。
+/// 装 hook。优先走**节点法**: 把 LVGL 驱动链表里"指向驱动的那个指针"换成我们自己的驱动副本,
+/// 固件那份驱动结构体一个字都不动。
+///
+/// 为什么要绕这一层: 别家模块(如 Corona 的 resource-hook)激活时检查的是驱动结构体 +0x0C
+/// 这个字段"还是不是出厂回调", 我们改了字段它就装不进来(-2009)。换指针就不挡它 ——
+/// 它读到的字段始终是出厂值, 而固件按盘符取驱动时取到的是我们的副本。
+/// 扫不到唯一节点、或换过去没生效, 就退回字段法(与改动前行为一致)。
 pub(crate) unsafe fn install() {
     if st_rd!(RH_ON) != 0 { return; }
     load_wanted();
     // 让位期间不去抢: 每拍抢一次会把用户刚腾出的槽又占回去
     if st_rd!(RH_WANTED) == 0 { return; }
     if !drv_ready() { return; }
+
+    if st_rd!(RH_SCAN) == 0 {
+        scan_node_step();
+        return;                     // 扫描期间先不装字段法, 免得装完又要搬家
+    }
+    if st_rd!(RH_SCAN) == 1 && install_by_node() { return; }
+    if field_should_wait() { return; }
+    install_by_field();
+}
+
+/// Canopus 监管模块的设备节点。
+const CANOPUS_DEV: &[u8] = b"/dev/canopus\0";
+/// 对方装在磁盘上的根（取自它自己的安装文档）。目录在 = 这套东西已经装上，
+/// 比设备节点可靠：用户"注入"之后可能过很久才"激活"，这期间我们要一直让着。
+const CORONA_DIRS: [&[u8]; 3] = [
+    b"/data/quickapp/files/ng.lst.corona\0",
+    b"/data/files/ng.lst.corona\0",
+    b"/data/canopus\0",
+];
+
+unsafe fn canopus_present() -> bool {
+    for p in CORONA_DIRS {
+        let d = fw_api::opendir(p.as_ptr());
+        if d != 0 { fw_api::closedir(d); return true; }
+    }
+    // 设备节点两种模式都试: 对方自己是用"只写"打开 /dev/canopus 的, 只用只读去探
+    // 会被节点权限挡掉 —— 那样就等于这条兜底从来没生效过。
+    for mode in [fw_api::oflag::RDONLY, fw_api::oflag::WRONLY] {
+        let fd = fw_api::open(CANOPUS_DEV.as_ptr(), mode, 0);
+        if fd >= 0 { fw_api::close(fd); return true; }
+    }
+    false
+}
+
+/// 每 20 拍(约 1 秒)探一次, 其余拍用上一次的结果。
+/// 必须周期刷新: 我们注入时对方模块可能还没起来, 起来之后才知道要让。
+unsafe fn canopus_now() -> bool {
+    let n = st_rd!(RH_PROBE) + 1;
+    if n >= 20 {
+        st_wr!(RH_PROBE, 0);
+        st_wr!(RH_CANOPUS, canopus_present() as u32);
+    }
+    st_rd!(RH_CANOPUS) != 0
+}
+
+/// **已经用字段法占着**之后对方模块才起来的情况: 这时必须主动松手, 否则它永远装不上
+/// (对方的注入与激活之间的间隔不可预期, 可能隔很久才轮到它)。
+/// 松手之后 `field_should_wait` 接着让, 直到看到字段变成别家的回调, 我们再串上去。
+unsafe fn hand_off_if_needed() {
+    if st_rd!(RH_ON) == 0 || st_rd!(RH_METHOD) != 1 { return; }
+    if st_rd!(RH_FOREIGN) != 0 { return; }
+    if rd32(FS_OPEN_SLOT as *const u32) != chaos_fs_open as *const () as u32 {
+        st_wr!(RH_FOREIGN, 1);      // 字段已经不是我们的了(别家接在上面), 不再折腾
+        return;
+    }
+    if !canopus_now() { return; }
+    if yield_slot() { st_wr!(RH_WAITING, 1); }
+}
+
+/// 节点法用不上时, 字段法要不要**先让着**。
+///
+/// 字段法会把固件驱动结构体的 +0x0C 改掉, 而 Corona 的激活要求那个字段还是出厂回调
+/// (0x1C057C51), 所以我们先装它就把它挡死(-2009)。检测到对方监管模块在位、而它的回调
+/// 还没挂上时, 我们就不占这个字段。一旦看到字段变成别家的值, 本次开机不再让 ——
+/// 那时我们串在它前面, 两边重定向同时生效。
+unsafe fn field_should_wait() -> bool {
+    if st_rd!(RH_FOREIGN) != 0 { st_wr!(RH_WAITING, 0); return false; }
     let slot = rd32(FS_OPEN_SLOT as *const u32);
-    if slot == chaos_fs_open as *const () as u32 { return; }
+    if slot == chaos_fs_open as *const () as u32 { return false; }   // 模块重载留下的我们自己
+    if slot != FS_OPEN_ORIG {
+        st_wr!(RH_FOREIGN, 1);      // 已经是别家的了(或别家接了我们后面), 串链即可
+        st_wr!(RH_WAITING, 0);
+        return false;
+    }
+    let wait = canopus_now();
+    st_wr!(RH_WAITING, wait as u32);
+    wait
+}
+
+/// SRAM 区间(与硬件参数表的 AP_RAM_SIZE 一致: 0x20000000 + 1.4MB)。
+const SRAM_BASE: u32 = 0x2000_0000;
+const SRAM_END: u32 = 0x2016_0000;
+/// 每拍扫多少个字(32KB, 全区间 44 拍 ~= 2.2 秒)
+const SCAN_WORDS: u32 = 8192;
+
+/// 找"值等于固件驱动地址、且前两个字看起来像 prev/next"的唯一节点载荷。
+/// 找到 0 个或多个都算没有 —— 宁可用字段法, 也不能把一个巧合的数字当成链表节点。
+unsafe fn scan_node_step() {
+    let mut at = st_rd!(RH_SCAN_AT);
+    let end = (at + SCAN_WORDS).min(SRAM_END);
+    while at < end {
+        if rd32(at as *const u32) == FS_DRV && at > SRAM_BASE + 8 {
+            let prev = rd32((at - 8) as *const u32);
+            let next = rd32((at - 4) as *const u32);
+            let ok = |p: u32| p == 0 || (safe_ptr(p) && p != at - 8);
+            if ok(prev) && ok(next) {
+                if st_rd!(RH_NODE) != 0 && st_rd!(RH_NODE) != at {
+                    st_wr!(RH_SCAN, 2);       // 两个候选: 认不出哪个是节点, 放弃节点法
+                    st_wr!(RH_WHY, 2);
+                    st_wr!(RH_NODE, 0);
+                    return;
+                }
+                st_wr!(RH_NODE, at);
+                st_wr!(RH_SCAN, 1);
+            }
+        }
+        at += 4;
+    }
+    if at >= SRAM_END && st_rd!(RH_SCAN) == 0 {
+        st_wr!(RH_SCAN, 2);
+        st_wr!(RH_WHY, 1);                    // 扫完整个 SRAM 没有驱动指针: 这版不是指针语义
+    }
+    st_wr!(RH_SCAN_AT, at);
+}
+
+/// 节点法: 复制固件驱动 -> 副本的 +0x0C 指向我们的回调 -> 把节点里的指针换成副本。
+unsafe fn install_by_node() -> bool {
+    let node = st_rd!(RH_NODE);
+    if node == 0 || !safe_ptr(node) { st_wr!(RH_SCAN, 2); st_wr!(RH_WHY, 2); return false; }
+    let copy = core::ptr::addr_of_mut!(RH_COPY) as u32;
+    for i in 0..RH_COPY.len() as u32 {
+        write_volatile((copy + i * 4) as *mut u32, rd32((FS_DRV + i * 4) as *const u32));
+    }
+    write_volatile((copy + 0x0C) as *mut u32, chaos_fs_open as *const () as u32);
+    write_volatile(node as *mut u32, copy);
+    if rd32(node as *const u32) != copy {
+        st_wr!(RH_SCAN, 2);                   // 写不动(只读页/MPU): 本次开机不再试
+        st_wr!(RH_WHY, 2);
+        return false;
+    }
+    st_wr!(RH_ORIG, rd32(FS_OPEN_SLOT as *const u32));
+    st_wr!(RH_ON, 1);
+    st_wr!(RH_METHOD, 2);
+    st_wr!(RH_IDLE, 0);
+    st_wr!(RH_BASELINE, st_rd!(RH_HIT));
+    true
+}
+
+/// 字段法: 直接改固件驱动的 +0x0C。会挡住"要求字段是出厂值"的其他模块。
+unsafe fn install_by_field() {
+    let slot = rd32(FS_OPEN_SLOT as *const u32);
+    if slot == chaos_fs_open as *const () as u32 {
+        st_wr!(RH_ON, 1); st_wr!(RH_METHOD, 1); return;
+    }
     if !plausible_ptr(slot) { return; }
     st_wr!(RH_ORIG, slot);
     write_volatile(FS_OPEN_SLOT as *mut u32, chaos_fs_open as *const () as u32);
     // 写回去读不出来就当没装成: 下一拍再试, 绝不留下"以为装了其实没装"
     if rd32(FS_OPEN_SLOT as *const u32) == chaos_fs_open as *const () as u32 {
         st_wr!(RH_ON, 1);
+        st_wr!(RH_METHOD, 1);
     }
+}
+
+/// 当前该调哪个原回调: 字段法时槽里是我们的, 要用装之前存下的那个;
+/// 节点法时槽里始终是出厂值或别家接管的值, **每次现读**才跟得上别家的装卸。
+unsafe fn live_orig() -> u32 {
+    let v = rd32(FS_OPEN_SLOT as *const u32);
+    if v == 0 || v == chaos_fs_open as *const () as u32 { st_rd!(RH_ORIG) } else { v }
 }
 
 /// 切换素材时登记一次资源缓存退役，实际工作由 UI 节拍执行。
@@ -477,11 +659,23 @@ unsafe fn refresh_cache_step() {
 /// 原回调存起来), 我们一摘就把那条链剪断了。摘不动就返回 false, 让界面说实话。
 pub(crate) unsafe fn yield_slot() -> bool {
     if st_rd!(RH_ON) == 0 { return true; }
-    if rd32(FS_OPEN_SLOT as *const u32) != chaos_fs_open as *const () as u32 { return false; }
     let orig = st_rd!(RH_ORIG);
     if orig == 0 { return false; }
+    if st_rd!(RH_METHOD) == 2 {
+        let node = st_rd!(RH_NODE);
+        // 节点被别家换走了就不动(同字段法的道理)
+        if node == 0 || rd32(node as *const u32) != core::ptr::addr_of_mut!(RH_COPY) as u32 {
+            return false;
+        }
+        write_volatile(node as *mut u32, FS_DRV);
+        st_wr!(RH_ON, 0);
+        st_wr!(RH_METHOD, 0);
+        return rd32(node as *const u32) == FS_DRV;
+    }
+    if rd32(FS_OPEN_SLOT as *const u32) != chaos_fs_open as *const () as u32 { return false; }
     write_volatile(FS_OPEN_SLOT as *mut u32, orig);
     st_wr!(RH_ON, 0);
+    st_wr!(RH_METHOD, 0);
     // 读回确认: 写不进去(只读页/ MPU)就不能声称已经让开
     rd32(FS_OPEN_SLOT as *const u32) == orig
 }
@@ -513,11 +707,12 @@ pub(crate) unsafe fn request_toggle() { st_wr!(RH_TOGGLE, true); }
 /// 持有/让出资源钩子。让位失败(别人链在我们上面)时不改状态, 界面据此说实话。
 unsafe fn apply_toggle() {
     st_wr!(RH_TOGGLE, false);
+    st_wr!(RH_WAITING, 0);
     let want = st_rd!(RH_WANTED) == 0;
     if want {
         st_wr!(RH_WANTED, 1);
         persist_wanted(1);
-        install();
+        install();              // 打开 = 回到自动阶梯(对方在位时仍会让着, 由状态行说明)
     } else if yield_slot() {
         st_wr!(RH_WANTED, 0);
         persist_wanted(0);
@@ -528,14 +723,6 @@ unsafe fn apply_toggle() {
 pub(crate) unsafe fn held() -> bool {
     load_wanted();
     st_rd!(RH_WANTED) != 0
-}
-
-/// 开关下方的说明。三种情况分得开: 已接管 / 已让位 / 想接管但驱动还没就绪。
-pub(crate) unsafe fn status() -> *const u8 {
-    if st_rd!(RH_SAVE_FAILED) { return "保存失败，请重新切换开关\0".as_ptr(); }
-    if !held() { return "已让位，可去激活 Corona\0".as_ptr(); }
-    if st_rd!(RH_ON) != 0 { return "已接管，系统图标替换生效\0".as_ptr(); }
-    "等待驱动就绪后接管\0".as_ptr()
 }
 
 // ---------------------------------------------------------------------------
@@ -566,8 +753,44 @@ const CAL_STEM: &[u8] = b"cal_background";
 /// 每拍尝试安装文件回调，并推进已登记的资源缓存退役。
 pub(crate) unsafe fn tick() {
     if st_rd!(RH_TOGGLE) { apply_toggle(); }
+    hand_off_if_needed();
     if st_rd!(RH_ON) == 0 { install(); }
+    hook_watchdog();
     refresh_cache_step();
+}
+
+/// 节点法的自证门: 挂上之后亮屏 60 秒一次都没命中, 说明 LVGL 其实不是按我们改的那个
+/// 指针取驱动(这一版可能是把驱动**按值**拷进节点)。当场退回字段法并且本次开机不再试 ——
+/// 宁可挡住别家的激活, 也不能让系统图标悄悄不替换。
+unsafe fn hook_watchdog() {
+    if st_rd!(RH_ON) == 0 || st_rd!(RH_METHOD) != 2 { return; }
+    if !fw_api::screen_is_on() { return; }
+    if st_rd!(RH_HIT) != st_rd!(RH_BASELINE) { st_wr!(RH_IDLE, 0); return; }
+    let idle = st_rd!(RH_IDLE) + 1;
+    if idle < 1200 { st_wr!(RH_IDLE, idle); return; }
+    st_wr!(RH_IDLE, 0);
+    yield_slot();
+    st_wr!(RH_SCAN, 2);
+    st_wr!(RH_WHY, 3);                        // 界面要能说出"为什么又用旧法"
+    st_wr!(RH_NODE, 0);
+    install();
+}
+
+/// 开关下方的说明。三种情况分得开: 已接管 / 已让位 / 想接管但驱动还没就绪。
+pub(crate) unsafe fn status() -> *const u8 {
+    if st_rd!(RH_SAVE_FAILED) { return "保存失败，请重新切换开关\0".as_ptr(); }
+    if !held() { return "已让位，可去激活 Corona\0".as_ptr(); }
+    if st_rd!(RH_WAITING) != 0 { return "已让位，等 Corona 先装\0".as_ptr(); }
+    match st_rd!(RH_METHOD) {
+        2 => "已接管，不挡 Corona\0".as_ptr(),
+        1 => match st_rd!(RH_WHY) {
+            1 => "旧法：没找到驱动指针\0".as_ptr(),
+            2 => "旧法：驱动指针不唯一\0".as_ptr(),
+            3 => "旧法：节点没生效\0".as_ptr(),
+            _ => "已接管(旧法，会挡 Corona)\0".as_ptr(),
+        },
+        _ => "等待驱动就绪后接管\0".as_ptr(),
+    }
 }
 
 /// 取证读数(界面用): 是否已装 / 命中 / 换成功 / 回退

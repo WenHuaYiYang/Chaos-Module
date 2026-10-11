@@ -567,13 +567,18 @@ root:clear_flag(lvgl.FLAG.SCROLLABLE)
 root:add_flag(lvgl.FLAG.CLICKABLE)
 root:add_flag(lvgl.FLAG.EVENT_BUBBLE)
 
+-- 重要: 这两个满屏层要带上与 root 同一组清零。主题给普通对象默认画 1px 边框, 而边框画在
+-- 对象自己的坐标之内、纯色底让给它一圈 —— 满屏层不做这件事时, 屏幕四条边显出一圈比页底更
+-- 暗的窄带, 看着就是"纯色背景没铺到边"。outline(描边画在对象之外)同理要关掉。
 local OFF_Y = 3000
 local main_view = lvgl.Object(root, {
-  w = SCR_W, h = SCR_H, bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
+  w = SCR_W, h = SCR_H, outline_width = 0, border_width = 0, pad_all = 0,
+  bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
 })
 local as_view = lvgl.Object(root, {
-  w = SCR_W, h = SCR_H, bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
+  w = SCR_W, h = SCR_H, outline_width = 0, border_width = 0, pad_all = 0,
+  bg_opa = lvgl.OPA(100), bg_color = V_DEEP,
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = OFF_Y },
 })
 local views = { main_view, as_view }
