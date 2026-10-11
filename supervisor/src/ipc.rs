@@ -270,6 +270,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
     fops_wr(FOPS_DBG1, install_result as u32);
     // 注册成功置标志（防 notify 触发的重入）
     st_wr!(APP_REGISTERED, 1);
+    crate::watchface::maintenance_arm();
 
     if phase < 0x12 { return; }
 
@@ -320,6 +321,8 @@ pub(crate) unsafe fn notify_firmware_full() {
 
 // 启动命令只入队，注册操作由 UI 线程逐拍执行。
 pub const CMD_BOOT_DQ: u32 = 0x5348_4333;
+const SHELLPP_SETTINGS_DQ: u32 = 0x5351_001B;
+const SHELLPP_SETTINGS_BUILD: u32 = 0x0435_0901;
 static DQ_SEQ: [u32; 3] = [0x18, 0x13, 0x22];
 const DQ_PERIOD_MS: u32 = 1000;
 const DQ_IDLE_MS: u32 = 60000;
@@ -337,6 +340,7 @@ unsafe fn run_install_cmd(arg0: u32, arg1: u32) {
         1 | 2 => { /* no-op publish: 不调固件，仅置 ACTIVE */ }
         0x13 => { fops_wr(FOPS_STEP, 0); cmd_install(0x13); }   // 完整注册链
         0x43 => { fops_wr(FOPS_STEP, 0); notify_firmware_full(); } // 固件完整 notify 链
+        0x44 => { crate::settings_entry::request(); }
         0x18 => { st_wr!(LANG, 1); } // 设中文
         0x19 => { st_wr!(LANG, 0); } // 设英文
         0x22 => {
@@ -439,7 +443,15 @@ pub(crate) unsafe extern "C" fn chaos_write(_: *mut u8, buf: *const u8, len: u32
     let writes_now = fops_rd(FOPS_WCNT) + 1;
     fops_wr(FOPS_WCNT, writes_now);
     let frame = buf as *const u32;
-    if core::ptr::read_volatile(frame) != CMD_MAGIC {
+    let magic = core::ptr::read_volatile(frame);
+    if magic == 0x5350_5331 && core::ptr::read_volatile(frame.add(1)) == SHELLPP_SETTINGS_DQ {
+        let stage = core::ptr::read_volatile(frame.add(2));
+        if stage != SHELLPP_SETTINGS_BUILD { st_wr!(WRITE_BUSY, 0); return -22; }
+        crate::settings_entry::request();
+        st_wr!(WRITE_BUSY, 0);
+        return 16;
+    }
+    if magic != CMD_MAGIC {
         st_wr!(WRITE_BUSY, 0);
         return 0;
     }

@@ -48,7 +48,9 @@ local F_BODY  = "MiSans-Regular"
 local SUPERVISOR_RESOURCE = SCRIPT_PATH .. "chaos_sup.bin"
 local SUPERVISOR_PATH = "/data/chaos/sup.ko"
 local ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon.bin"
+local SETTINGS_ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon_settings.bin"
 local ICON_PATH = "/data/chaos/chaos_icon.bin"
+local SETTINGS_ICON_PATH = "/data/chaos/chaos_icon_settings.bin"
 local DATA_DIR = "/data/chaos"
 local DEVICE_PATH = "/dev/chaos"
 
@@ -66,6 +68,7 @@ local status_label
 -- wipe_armed = 清除按钮的两段式确认闸。
 local runner
 local step_index = 1
+local settings_enabled = true
 local started_once = false
 local wipe_armed = false
 
@@ -199,7 +202,9 @@ local function stage_icons()
   exec("mkdir -p " .. DATA_DIR)
   exec("mkdir -p " .. ICON_DIR)
   exec("rm -f " .. ICON_DIR .. "/*.bin")
-  return stage_resource(ICON_RESOURCE, ICON_PATH)
+  local ok, err = stage_resource(ICON_RESOURCE, ICON_PATH)
+  if not ok then return ok, err end
+  return stage_resource(SETTINGS_ICON_RESOURCE, SETTINGS_ICON_PATH)
 end
 
 local function module_loaded()
@@ -239,16 +244,22 @@ local function write_file(path, body)
   return true
 end
 -- 已加载的模块保持原样，仅部署下次启动的模块文件。
+local send_settings_command
 local function update_supervisor()
   local ko = read_all(SUPERVISOR_RESOURCE)
   if type(ko) ~= "string" or #ko < 52 or ko:sub(1, 4) ~= string.char(127) .. "ELF" then
     return false, "安装包模块无效"
   end
-  if read_all(SUPERVISOR_PATH) == ko then return true, "模块已就绪，请重启" end
   exec("mkdir -p " .. DATA_DIR)
   local ok, err = write_file(SUPERVISOR_PATH, ko)
   if not ok then return false, err end
-  return true, "模块已更新，请重启"
+  local sf, serr = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
+  if not sf then return false, serr end
+  if settings_enabled and module_loaded() then
+    local sent, send_err = send_settings_command()
+    if not sent then return false, send_err end
+  end
+  return true, settings_enabled and "模块已更新，settings 已触发，请重启" or "模块已更新，请重启"
 end
 
 local function build_chaos_sh()
@@ -321,11 +332,12 @@ local function legacy_cleanup()
 end
 
 local function autostart_install()
-  local ko, icon = read_all(SUPERVISOR_RESOURCE), read_all(ICON_RESOURCE)
-  if type(ko) ~= "string" or #ko == 0 or type(icon) ~= "string" or #icon == 0 then
+  local ko, icon, settings_icon = read_all(SUPERVISOR_RESOURCE), read_all(ICON_RESOURCE), read_all(SETTINGS_ICON_RESOURCE)
+  if type(ko) ~= "string" or #ko == 0 or type(icon) ~= "string" or #icon == 0 or type(settings_icon) ~= "string" or #settings_icon == 0 then
     return false, "安装包资源缺失"
   end
   if read_all(SUPERVISOR_PATH) == ko and read_all(ICON_PATH) == icon
+    and read_all(SETTINGS_ICON_PATH) == settings_icon
     and read_all(BOOT_FRAME) == build_boot_frame() and read_all(RC_SH) == build_chaos_sh()
     and read_all(LEGACY_FLAG) == nil and read_all(LEGACY_CHAOS_RC) == nil then
     local raw = read_all(LEGACY_RC_PATH)
@@ -339,6 +351,7 @@ local function autostart_install()
     if not ok then return false, "目录不可写 " .. path .. ": " .. tostring(err) end
   end
   if read_all(SUPERVISOR_PATH) ~= ko or read_all(ICON_PATH) ~= icon
+    or read_all(SETTINGS_ICON_PATH) ~= settings_icon
     or read_all(BOOT_FRAME) ~= build_boot_frame() then
     local ok, err = remove_file(RC_SH)
     if not ok then return false, err end
@@ -346,6 +359,8 @@ local function autostart_install()
   local ok, err = write_file(SUPERVISOR_PATH, ko)
   if not ok then return false, err end
   ok, err = write_file(ICON_PATH, icon)
+  if not ok then return false, err end
+  ok, err = write_file(SETTINGS_ICON_PATH, settings_icon)
   if not ok then return false, err end
   ok, err = write_file(BOOT_FRAME, build_boot_frame())
   if not ok then return false, err end
@@ -404,6 +419,15 @@ local function read_status()
 end
 
 -- 命令帧: magic | cmd | arg0 | arg1(恒 0), 与 chaos_sup 的 fops 写入口对齐
+send_settings_command = function()
+  local frame = u32le(0x53505331) .. u32le(0x5351001B) .. u32le(0x04350901) .. u32le(0)
+  local fh = io.open(DEVICE_PATH, "wb")
+  if not fh then return false, "设备打不开" end
+  local ok, result = pcall(fh.write, fh, frame)
+  local closed, close_result = pcall(fh.close, fh)
+  if not ok or result == false or not closed or close_result == false then return false, "settings 命令写入失败" end
+  return true
+end
 local function send_command(arg0)
   local frame = u32le(CMD_MAGIC) .. u32le(CMD_INSTALL) .. u32le(arg0) .. u32le(0)
   local fh = io.open(DEVICE_PATH, "wb")
@@ -462,6 +486,13 @@ local pipeline = {
   end },
   { name = "5 恢复占位", body = function() return install_step(0x0A) end },
   { name = "6 注册应用", body = function() return install_step(0x13) end },
+  { name = "6.4 注入 settings", body = function()
+      local fh = io.open(DATA_DIR .. "/settings.cfg", "wb")
+      if not fh then return false, "无法保存 settings 选项" end
+      fh:write(string.char(settings_enabled and 1 or 0)); fh:close()
+      if settings_enabled then return send_settings_command() end
+      return true
+  end },
   { name = "6.5 通知系统", body = function()
       -- 直接走固件自己的 notify 完整链(0x0CA81D18 注册表查询
       -- + 0x0CA81FB9 notify_installed), 实测这一条必成。
@@ -642,16 +673,25 @@ local function make_button(parent, text, y_ofs, kind, on_clicked)
   b:clear_flag(lvgl.FLAG.SCROLLABLE)
   b:add_flag(lvgl.FLAG.CLICKABLE)
   b:add_flag(lvgl.FLAG.EVENT_BUBBLE)
-  lvgl.Label(b, {
+  local button_label = lvgl.Label(b, {
     text = text,
     text_color = style.fg,
     text_font = lvgl.Font(F_BODY, 24),
     align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = 0 },
   })
   b:onClicked(function() local ok, msg = pcall(on_clicked); if not ok then set_status("错误: " .. tostring(msg), V_ERR) end end)
-  return b
+  return b, button_label
 end
 
+local settings_button, settings_label
+local saved_settings = read_all(DATA_DIR .. "/settings.cfg", "rb")
+settings_enabled = (saved_settings == nil) or saved_settings == string.char(1)
+settings_button, settings_label = make_button(main_view, "注入 settings：关闭", -52, "ghost", function()
+  if runner or started_once then set_status("请在运行前选择", V_WARN); return end
+  settings_enabled = not settings_enabled
+  settings_label:set { text = settings_enabled and "注入 settings：开启" or "注入 settings：关闭" }
+end)
+settings_label:set { text = settings_enabled and "注入 settings：开启" or "注入 settings：关闭" }
 local run_button
 detect_language()
 

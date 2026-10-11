@@ -853,7 +853,7 @@ impl Page for BeautifyPage {
                 (1, RowSpec::clickable("桌面图标\0".as_bytes())),
                 (2, RowSpec::clickable("系统模糊\0".as_bytes())),
                 (3, RowSpec::switch("重启恢复字体和图标\0".as_bytes())),
-                (4, RowSpec::switch("系统图标资源钩子\0".as_bytes())),
+                (4, RowSpec::switch("重启恢复模糊\0".as_bytes())),
                 (5, RowSpec::clickable("返回\0".as_bytes()))])?;
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, crate::beautify_restore::status(), 0,

@@ -14,6 +14,7 @@ mod font_list;
 mod font_hot;
 mod icon_apply;
 mod res_hook;
+mod settings_entry;
 mod confirm_pop;
 #[allow(dead_code)]
 mod background_pixels;

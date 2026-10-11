@@ -82,6 +82,9 @@ pub static PKG_NAME: [u8; 18] = *b"com.chaos.manager\0";
 pub static ICON_PATH: [u8; 27] = *b"/data/chaos/chaos_icon.bin\0";
 
 #[no_mangle]
+pub static SETTINGS_ICON_PATH: [u8; 36] = *b"/data/chaos/chaos_icon_settings.bin\0";
+
+#[no_mangle]
 pub static DISPLAY_NAME: [u8; 6] = *b"Chaos\0";
 
 #[no_mangle]

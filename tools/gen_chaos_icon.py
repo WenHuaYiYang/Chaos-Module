@@ -20,9 +20,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_HERE, 'chaos.png')
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(_HERE, '..', 'chaos_icon.bin')
 
-SIZE = 112
+SIZE = int(os.environ.get('CHAOS_ICON_SIZE', '112'))
 SS = 4
-DIAMETER = 100
+DIAMETER = int(round(SIZE * 100 / 112))
 
 
 def generate():

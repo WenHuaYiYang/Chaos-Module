@@ -35,15 +35,17 @@ def run_build(repo: Path, build: Path, source: str, output: Path) -> None:
     print(f"已生成: {output} ({output.stat().st_size} bytes)", flush=True)
 
 
-def build_icon(repo: Path, output: Path) -> None:
+def build_icon(repo: Path, output: Path, size: int = 112) -> None:
     """生成真实的 LVGL/固件图像资源；不能把 module.ko 当作图标。"""
     generator = repo / "tools" / "gen_chaos_icon.py"
     source = repo / "tools" / "chaos.png"
     command = [sys.executable, str(generator), str(source), str(output)]
+    env = os.environ.copy()
+    env["CHAOS_ICON_SIZE"] = str(size)
     print("+", " ".join(command), flush=True)
-    subprocess.run(command, cwd=repo, check=True)
+    subprocess.run(command, cwd=repo, env=env, check=True)
     data = output.read_bytes()
-    if len(data) != 12 + 112 * 112 * 4 or data[:4] != bytes((0x19, 0x10, 0, 0)):
+    if len(data) != 12 + size * size * 4 or data[:4] != bytes((0x19, 0x10, 0, 0)):
         raise RuntimeError(f"生成的图标格式错误: {output}")
     print(f"已生成: {output} ({len(data)} bytes)", flush=True)
 
@@ -71,7 +73,8 @@ def main() -> int:
 
     # 使用绝对路径，避免从其他目录调用时输出位置错误。
     run_build(repo, build, "supervisor", destination / "chaos_sup.bin")
-    build_icon(repo, destination / "chaos_icon.bin")
+    build_icon(repo, destination / "chaos_icon.bin", 112)
+    build_icon(repo, destination / "chaos_icon_settings.bin", 64)
 
     print(f"完成：{destination}", flush=True)
     return 0
