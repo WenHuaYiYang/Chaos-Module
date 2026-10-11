@@ -371,6 +371,17 @@ pub(crate) unsafe fn enable_transparent(roots: [u32; 4]) {
                 let child = fw_api::obj_get_child(control, i as u32);
                 if safe_ptr(child) && rd32(child as *const u32) == OBJ_CLASS {
                     add(child, control, BG_OPA, 0);
+                    let n = fw_api::obj_child_count(child);
+                    if n <= CHILD_CAP {
+                        for j in 0..n {
+                            let battery = fw_api::obj_get_child(child, j as u32);
+                            if safe_ptr(battery) && rd32(battery as *const u32) == BATTERY_CLASS
+                                && path_is(battery, crate::background_assets::BATTERY_PATH) {
+                                let source = crate::background_assets::battery_mask(st_rd!(BACKGROUND), control, battery);
+                                if source != 0 { add(battery, control, BATTERY_SOURCE, source); }
+                            }
+                        }
+                    }
                 }
             }
         }

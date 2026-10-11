@@ -191,6 +191,7 @@ impl Page for InfoPage {
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理
                 (5, RowSpec::clickable(b"\xe4\xba\xae\xe5\xba\xa6\xe6\x8e\xa7\xe5\x88\xb6\0")), // 亮度
                 (6, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化
+                (7, RowSpec::clickable("关于 ".as_bytes())),
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -213,6 +214,7 @@ impl Page for InfoPage {
                 4 => nav_goto(10, 0),
                 5 => nav_goto(11, 0),
                 6 => nav_goto(13, 0),
+                7 => nav_goto(14, 0),
                 _ => {} // 行0-2 是数据行
             }
         }
@@ -1090,8 +1092,65 @@ static PAGE_BEAUTIFY: BeautifyPage = BeautifyPage;
 static PAGE_BLURP: BlurPage = BlurPage;
 static PAGE_FONTLIST: FontListPage = FontListPage;
 static PAGE_ICONSUB: IconSubPage = IconSubPage;
+static PAGE_ABOUT: AboutPage = AboutPage;
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 14] = [
+pub(crate) struct AboutPage;
+static mut ABOUT_FW: [u8; 32] = [0; 32];
+static mut ABOUT_BT: [u8; 40] = [0; 40];
+
+unsafe fn about_firmware() -> &'static [u8] {
+    let out = core::ptr::addr_of_mut!(ABOUT_FW) as *mut u8;
+    let fd = fw_api::open(b"/etc/build.prop\0".as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd >= 0 {
+        let mut b = [0u8; 512];
+        let n = fw_api::read(fd, b.as_mut_ptr(), 511);
+        fw_api::close(fd);
+        let key = b"ro.build.version=";
+        let mut i = 0usize;
+        while i + key.len() < n.max(0) as usize {
+            let mut same = true;
+            for j in 0..key.len() { if b[i + j] != key[j] { same = false; break; } }
+            if same {
+                let start = i + key.len();
+                let mut end = start;
+                while end < n as usize && b[end] != b'\n' && b[end] != b'\r' && b[end] != 0 { end += 1; }
+                let len = core::cmp::min(end - start, 31);
+                for j in 0..len { write_volatile(out.add(j), b[start + j]); }
+                write_volatile(out.add(len), 0);
+                return core::slice::from_raw_parts(out, len + 1);
+            }
+            i += 1;
+        }
+    }
+    put_str(out, "未知 ".as_bytes());
+    core::slice::from_raw_parts(out, 7)
+}
+
+unsafe fn about_build_time() -> &'static [u8] {
+    let out = core::ptr::addr_of_mut!(ABOUT_BT) as *mut u8;
+    let src = option_env!("CHAOS_BUILD_TIME").unwrap_or("unknown").as_bytes();
+    let len = core::cmp::min(src.len(), 39);
+    for i in 0..len { write_volatile(out.add(i), src[i]); }
+    write_volatile(out.add(len), 0);
+    core::slice::from_raw_parts(out, len + 1)
+}
+
+impl Page for AboutPage {
+    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "关于\0".as_bytes()); } }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe { build_rows(ctx, ctx.title, &[
+            (0, RowSpec::display("Chaos\0".as_bytes(), "v1.0.0\0".as_bytes().as_ptr())),
+            (1, RowSpec::display(about_build_time(), "当前Chaos编译时间\0".as_bytes().as_ptr())),
+            (2, RowSpec::display(about_firmware(), "运行固件\0".as_bytes().as_ptr())),
+            (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+            (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+            (5, RowSpec::clickable("返回\0".as_bytes())),
+        ]).map(|_| ()) }
+    }
+    fn on_click(&self, idx: usize) { if idx == 5 { unsafe { nav_back(); } } }
+}
+
+pub(crate) static PAGE_TABLE: [&dyn Page; 15] = [
     &PAGE_INFO,       // 0
     &PAGE_DIR,        // 1  目录 1 级(/)
     &PAGE_DIR,        // 2  目录 2 级
@@ -1106,4 +1165,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 14] = [
     &PAGE_BRIGHT,     // 11
     &PAGE_CACHEP,     // 12
     &PAGE_BEAUTIFY,     // 13
+    &PAGE_ABOUT,        // 14
 ];

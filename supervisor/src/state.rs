@@ -117,12 +117,13 @@ pub static PAGE_MGR: [u8; 7] = *b"wfmgmt\0";
 pub static PAGE_BRIGHT: [u8; 7] = *b"bright\0";
 pub static PAGE_CACHE: [u8; 6] = *b"cache\0";
 pub static PAGE_FONTD: [u8; 6] = *b"fontd\0";
+pub static PAGE_ABOUT: [u8; 6] = *b"about\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 14;                   // 注册页数(页0..页13)
+pub const PAGE_COUNT: usize = 15;                   // 注册页数(页0..页13)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 406] = [0; 406];         // 14 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 435] = [0; 435];         // 14 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 
@@ -352,7 +353,7 @@ pub const FACE_LINE_HEIGHT_OFF: u32 = 0x0C;
 
 pub static mut APP_FG: u32 = 0;                  // 1 = 我们的应用在前台(on_resume 置, on_pause/on_destroy 清)
 
-pub static mut SHAKE_EN: u32 = 1;                        // 开关(信息页行3切换)
+pub static mut SHAKE_EN: u32 = 0;                        // 开关(信息页行3切换)
 
 pub static mut RENDER_REQ: u32 = RENDER_NONE;            // 待重建页号(由 lv_timer 消费)
 

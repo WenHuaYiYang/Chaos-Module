@@ -300,8 +300,11 @@ pub(crate) unsafe fn tick() {
         if st_rd!(REQUEST) != 0 {
             if !unmount() { return; }
             st_wr!(REQUEST, 0);
-            crate::background_surfaces::set_background(0);
             crate::background_surfaces::enable_transparent(parents);
+            // enable_transparent 必须先看到当前模糊背景，才能为电池
+            // 生成与模糊模式完全相同的局部 patch；patch 挂载完成后
+            // 再清除背景描述符，页面其余区域仍保持完全透明。
+            crate::background_surfaces::set_background(0);
             st_wr!(ATTACHED, 1);
             set_status(6);
         }

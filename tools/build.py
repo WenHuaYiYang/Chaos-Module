@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +25,11 @@ def run_build(repo: Path, build: Path, source: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     command = ["sh", str(build), source, str(output)]
     print("+", " ".join(command), flush=True)
-    subprocess.run(command, cwd=repo, check=True)
+    build_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    build_env = os.environ.copy()
+    build_env["CHAOS_BUILD_TIME"] = build_time
+    print(f"Chaos BuildTime: {build_time}", flush=True)
+    subprocess.run(command, cwd=repo, env=build_env, check=True)
     if not output.is_file() or output.stat().st_size == 0:
         raise RuntimeError(f"构建完成但没有生成有效文件: {output}")
     print(f"已生成: {output} ({output.stat().st_size} bytes)", flush=True)
