@@ -301,3 +301,30 @@ pub unsafe extern "C" fn launcher_refresh_app(app_id: u32) {
     let f: unsafe extern "C" fn(u32) = transmute(0x0C51_3BC1usize);
     f(app_id)
 }
+
+/// `app_launcher_del(app_id)` —— **立即**把一个应用从桌面摘掉(只删桌面记录+图标对象,
+/// 不卸载、不碰注册表)。0x0C513B2C。取证(2026-10-15, Ghidra launcher-del.md):
+///   * 身份: 函数尾字面量 0x0C513BB0->"app_launcher_del"、0x0C513BB4->
+///     "[%s] %s: app_launcher_del app"(__func__ 日志对)。
+///   * 行为: 在桌面记录链(0x200D0CBC)按 `ldrh [rec]`==app_id 找记录 ->
+///     FUN_0c517f74(rec) 删图标对象 -> 链上摘记录 -> 顺序表(0x200D0CA4)摘对应目
+///     -> free -> FUN_0c513440 relayout。
+///   * 固件自己的"隐藏应用"命令(hidden_and_show cmd 0x1a, 日志 "hidden appid %lu",
+///     0x0C5141F0)就是这一条 del; 没有任何持久化 —— 重启后是否再现完全由
+///     注册表(/data/apps.json)决定, 与 appmgr 的搬移写回正好互补。
+///   * data_init(0x0C513E90, 从 launcher.db 重建记录)只在开机总初始化
+///     (FUN_0c4c7194)跑一次, 进桌面不会撤销 del。
+pub unsafe extern "C" fn app_launcher_del(app_id: u32) {
+    let f: unsafe extern "C" fn(u32) = transmute(0x0C51_3B2Dusize);
+    f(app_id)
+}
+
+/// `app_launcher_add(app_id)` —— 把**注册表在册**的应用立即加回桌面。0x0C513A44
+/// (与 state.rs FW_INIT_BUFFER 同址, 那边服务于 ipc 注册链)。取证(同上日):
+///   尾字面量 0x0C513B1C->"app_launcher_add"、0x0C513B24->"add icon: %s";
+///   经 FUN_0c513700 按注册表节点建记录(应用不在册/"The app need hidden"时拒绝
+///   返回0), 插入顺序表后 FUN_0c513440 relayout。
+pub unsafe extern "C" fn app_launcher_add(app_id: u32) {
+    let f: unsafe extern "C" fn(u32) = transmute(0x0C51_3A45usize);
+    f(app_id)
+}

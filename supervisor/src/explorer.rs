@@ -194,79 +194,15 @@ pub(crate) unsafe fn refresh_dir_lines() {
     let mut x = W::new(base.add(9 * 88), 88);
     x.s(if st_rd!(DIR_DEPTH) > 0 { "上级".as_bytes() } else { "返回".as_bytes() });
     x.end();
-    // slot10 = 缓存清理入口(仅根目录页 pid1 建行, 见 ui.rs rows_layout)
-    let mut x = W::new(base.add(10 * 88), 88);
-    x.s("缓存清理".as_bytes());
-    x.end();
+    // (2026-10-15) slot10 缓存清理入口已退役(提升到主页行7), 缓冲区保持空。
 }
 
-// ===== 缓存清理 =====
+// ===== 缓存清理(2026-10-15 已退役) =====
 //
-// 清理范围(固件字符串核对): 只清 /data/cache 与 /data/quickapp/cache 两个目录下的
-// 普通文件(含一层子目录)。**不碰 /data/fitness/cache** —— 那里的 *.db 是等待同步到
-// 手机的健康数据缓存, 删了会丢记录。
-// 删除走 fw_api::fs_remove(libc remove, 0x0C1EABE0, 固件里广泛调用的标准入口)。
-
-const CACHE_DIR1: &[u8] = b"/data/cache\0";
-const CACHE_DIR2: &[u8] = b"/data/quickapp/cache\0";
-
-// 统计并(可选)删除一个目录里的普通文件。depth=0 时对子目录再走一层。
-// 计数: 文件数 files / 删除失败 fail。返回 0=目录打不开(不算失败, 可能不存在)。
-unsafe fn cache_walk_dir(dir: *const u8, depth: u32, clean: bool,
-                         files: *mut u32, fail: *mut u32) -> u32 {
-    let od: unsafe extern "C" fn(*const u8) -> u32 = core::mem::transmute(FW_OPENDIR as usize);
-    let dirp = od(dir);
-    if dirp == 0 { return 0; }
-    let rd: unsafe extern "C" fn(u32) -> u32 = core::mem::transmute(FW_READDIR as usize);
-    let cd: unsafe extern "C" fn(u32) -> i32 = core::mem::transmute(FW_CLOSEDIR as usize);
-    let mut cnt_here = 0u32;
-    let mut iter = 0usize;
-    let mut sub: [u8; 160] = [0; 160];
-    while iter < 200 {
-        iter += 1;
-        let de = rd(dirp);
-        if de == 0 { break; }
-        let dt = rd8(de as *const u8);
-        let nm = (de + 1) as *const u8;
-        let n1 = read_volatile(nm);
-        let n2 = read_volatile(nm.add(1));
-        let n3 = read_volatile(nm.add(2));
-        if n1 == b'.' && (n2 == 0 || (n2 == b'.' && n3 == 0)) { continue; }
-        path_join(sub.as_mut_ptr(), dir, nm);
-        if dt == DT_REG {
-            write_volatile(files, read_volatile(files) + 1);
-            cnt_here += 1;
-            if clean && fw_api::fs_remove(sub.as_ptr()) < 0 {
-                write_volatile(fail, read_volatile(fail) + 1);
-            }
-        } else if dt == DT_DIR && depth < 1 {
-            cnt_here += cache_walk_dir(sub.as_ptr(), depth + 1, clean, files, fail);
-        }
-    }
-    cd(dirp);
-    cnt_here
-}
-
-// 扫描/清理两条缓存目录。clean=false 只数; clean=true 删除并返回结果计数。
-pub(crate) unsafe fn cache_walk(clean: bool, files: *mut u32, fail: *mut u32) {
-    write_volatile(files, 0);
-    write_volatile(fail, 0);
-    cache_walk_dir(CACHE_DIR1.as_ptr(), 0, clean, files, fail);
-    cache_walk_dir(CACHE_DIR2.as_ptr(), 0, clean, files, fail);
-}
-
-// 把"N 个文件"样式的状态文本写入 CACHE_MSG。
-// scan:  "缓存: N 个文件";  done:  "已清理 N 个(失败 M), 释放 X MB"
-pub(crate) unsafe fn cache_fmt_msg(mode: u32, n: u32, fail: u32, freed_mb: u32) {
-    let mut w = W::new(core::ptr::addr_of_mut!(CACHE_MSG) as *mut u8, 64);
-    match mode {
-        0 => { w.s("缓存: ".as_bytes()).n(n).s(" 个文件".as_bytes()); }
-        1 => { w.s("已清理 ".as_bytes()).n(n).s(" 个(失败 ".as_bytes()).n(fail)
-               .s("), 释放 ".as_bytes()).n(freed_mb).s(" MB".as_bytes()); }
-        _ => { w.s("无可清理缓存".as_bytes()); }
-    }
-    w.end();
-}
+// 原实现(cache_walk/cache_fmt_msg, 只清 /data/cache 与 /data/quickapp/cache)
+// 已整体移除, 由 cacheclean.rs 接管(四个根目录 + 递归计体积 + 二次确认删除),
+// 页面在 page.rs 页12, 入口在主页行7。/data/fitness/cache 红线在 cacheclean.rs
+// 的 ROOTS 清单里继续保留(根本不在清单内)。
 
 // 页7 label 文本: 首刷读块(VIEW_LOADED) → 文本sanitize / 二进制strings提取 → VIEW_TEXT + Back行文本
 pub(crate) unsafe fn refresh_view_text() {

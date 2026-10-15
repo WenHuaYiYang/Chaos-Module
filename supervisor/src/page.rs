@@ -187,11 +187,12 @@ impl Page for InfoPage {
             write_volatile(hp.add(5), d1.bar);
             // 导航入口
             build_rows(ctx, d1.row, &[
-                (3, RowSpec::clickable(b"\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\0")), // 文件管理
+                (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理
                 (5, RowSpec::clickable(b"\xe4\xba\xae\xe5\xba\xa6\xe6\x8e\xa7\xe5\x88\xb6\0")), // 亮度
                 (6, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化
-                (7, RowSpec::clickable("关于 ".as_bytes())),
+                (7, RowSpec::clickable(b"\xe7\xbc\x93\xe5\xad\x98\xe6\xb8\x85\xe7\x90\x86\0")), // 缓存清理(页12, Shell++ 逻辑重写)
+                (8, RowSpec::clickable("关于 ".as_bytes())),
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -204,17 +205,21 @@ impl Page for InfoPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             match idx {
-                3 => {
-                    let rp = core::ptr::addr_of_mut!(PATH_STACK) as *mut u8;
-                    write_volatile(rp.add(0), b'/');
-                    write_volatile(rp.add(1), 0u8);
-                    write_volatile(core::ptr::addr_of_mut!(DIR_WIN_SAVE).cast::<u32>(), 0);
-                    nav_goto(1, 0);
-                }
+                // 3 = 应用管理(页1, Shell++ 移植, 见 appmgr.rs)。
+                // (2026-10-15) 原文件管理入口已注释退役:
+                //   3 => {
+                //       let rp = core::ptr::addr_of_mut!(PATH_STACK) as *mut u8;
+                //       write_volatile(rp.add(0), b'/');
+                //       write_volatile(rp.add(1), 0u8);
+                //       write_volatile(core::ptr::addr_of_mut!(DIR_WIN_SAVE).cast::<u32>(), 0);
+                //       nav_goto(1, 0);
+                //   }
+                3 => nav_goto(1, 0),
                 4 => nav_goto(10, 0),
                 5 => nav_goto(11, 0),
                 6 => nav_goto(13, 0),
-                7 => nav_goto(14, 0),
+                7 => nav_goto(12, 0),
+                8 => nav_goto(14, 0),
                 _ => {} // 行0-2 是数据行
             }
         }
@@ -373,7 +378,8 @@ impl Page for DirPage {
                     render_req(pid);
                 }
             } else if idx == 10 && pid == 1 {
-                nav_goto(12, 0);   // 根目录专属: 清理的是固定两条缓存目录, 与当前目录无关
+                // (2026-10-15) 缓存清理入口已提升到主页行7, 文件管理退役后此分支不可达
+                nav_back();
             } else {
                 nav_back();
             }
@@ -574,10 +580,7 @@ impl Page for WatchfaceListPage {
 
 // ===== 页10: 表盘管理 =====
 
-pub(crate) struct WfMgmtPage {
-    /// 摇一摇开关状态(AtomicU32 内部可变, 不再用全局 static mut)
-    pub shake_en: AtomicU32,
-}
+pub(crate) struct WfMgmtPage;
 
 impl Page for WfMgmtPage {
 
@@ -601,7 +604,7 @@ impl Page for WfMgmtPage {
             let s0 = read_volatile(rows.add(0));
             if s0 != 0 {
                 let upd = fw_api::row_update;
-                let en = self.shake_en.load(Ordering::Relaxed);
+                let en = st_rd!(SHAKE_EN);   // 开关真源 = 全局(与开机恢复/定时器门控同源)
                 upd(s0, core::ptr::null(), tbuf.as_ptr(), core::ptr::null(), 0, en as u8);
             }
             let _ = prev;
@@ -612,11 +615,11 @@ impl Page for WfMgmtPage {
     fn is_switch_row(&self, idx: usize) -> bool { idx == 0 }
 
     fn on_switch(&self, _idx: usize) {
-        let en = self.shake_en.load(Ordering::Relaxed);
-        self.shake_en.store(if en != 0 { 0 } else { 1 }, Ordering::Relaxed);
-        // 同步到全局(摇一摇定时器读的是全局)
+        // 开关唯一真源 = 全局 SHAKE_EN(摇一摇定时器门控与开机恢复都读它)。
+        // 页面不再持本地副本 —— 本地副本会让开关初态与持久化状态脱钩
+        // (旧实现: 本地默认 1, 重启后永远显示"开", 且第一次拨动写的值与所见相反)。
         unsafe {
-            let v = self.shake_en.load(Ordering::Relaxed);
+            let v = if st_rd!(SHAKE_EN) != 0 { 0u32 } else { 1u32 };
             st_wr!(SHAKE_EN, v);
             crate::watchface::persist_shake_enabled(v);
         }
@@ -749,7 +752,11 @@ impl Page for BrightnessPage {
     }
 }
 
-// ===== 页12: 缓存清理(从文件管理根目录进入) =====
+// ===== 页12: 缓存清理(核心逻辑移植自 Shell++, 见 cacheclean.rs) =====
+//
+// (2026-10-15 二版) 页面加卡片: 每个根目录一张(主标签=路径, 副标签=占用),
+// 与 shellpp 的清理页同形态。行0=总量状态, 行1..4=四张卡, 行5=清理按钮。
+// 布局走 ctx.rows 槽 0..5(<= MAX_ROWS_PER_PAGE, 一屏装得下)。
 
 pub(crate) struct CachePage;
 
@@ -760,52 +767,63 @@ impl Page for CachePage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            // 首行文本: 刚出清理结果就展示结果(消费一次), 否则现场扫描当前缓存文件数
-            if st_rd!(CACHE_HAS_RESULT) == 0 {
-                let mut files = 0u32;
-                let mut fail = 0u32;
-                cache_walk(false, &mut files, &mut fail);
-                st_wr!(CACHE_FILES, files);
-                cache_fmt_msg(if files == 0 { 2 } else { 0 }, files, 0, 0);
+            // 首行文本: 刚出清理结果就展示结果(消费一次), 否则现场扫描
+            if st_rd!(crate::cacheclean::CC_HAS_RESULT) == 0 {
+                crate::cacheclean::scan_msg();
             } else {
-                st_wr!(CACHE_HAS_RESULT, 0);
+                st_wr!(crate::cacheclean::CC_HAS_RESULT, 0);
             }
-            let msgp = core::ptr::addr_of!(CACHE_MSG) as *const u8;
-            let msg = core::slice::from_raw_parts(msgp, cstr_len(msgp) + 1);
+            let msg = crate::cacheclean::msg();
             let r0 = build_row(ctx, ctx.title, 0, &RowSpec::display(msg, core::ptr::null()));
-            let anchor = if r0 != 0 { r0 } else { ctx.title };
-            let r1 = build_row(ctx, anchor, 1,
-                &RowSpec::clickable("开始清理\0".as_bytes()));
-            if r1 == 0 { return Err(PageError::RowFailed(1)); }
+            let mut last = if r0 != 0 { r0 } else { ctx.title };
+            // 四张路径卡片(不可点: 主标签=路径, 副标签=占用)
+            let mut r = 1usize;
+            while r <= crate::cacheclean::ROOT_N {
+                let spec = RowSpec::display(crate::cacheclean::root_path(r - 1),
+                                            crate::cacheclean::root_usage(r - 1).as_ptr());
+                let card = build_row(ctx, last, r, &spec);
+                if card != 0 { last = card; }
+                r += 1;
+            }
+            let label: &[u8] = if st_rd!(crate::cacheclean::CC_ARM) != 0 {
+                "再次点击确认清理\0".as_bytes()
+            } else {
+                "开始清理\0".as_bytes()
+            };
+            let r5 = build_row(ctx, last, 5, &RowSpec::clickable(label));
+            if r5 == 0 { return Err(PageError::RowFailed(5)); }
             Ok(())
         }
     }
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            if idx == 1 { st_wr!(CLEAN_REQ, 1); }   // 清理由 tick 执行(不在事件回调里做长 FS 操作)
+            if idx != 5 { return; }
+            if st_rd!(crate::cacheclean::CC_ARM) == 0 {
+                // 第一次点: 武装确认(只改行文本, 不在事件回调做长 FS 操作)
+                st_wr!(crate::cacheclean::CC_ARM, 1);
+                let rows = page_rows_ptr(12);
+                let r1 = read_volatile(rows.add(5));   // 行5 = 清理按钮(1..4 是路径卡片)
+                if r1 != 0 {
+                    fw_api::row_update(r1, fw_api::NONE_PTR,
+                        "再次点击确认清理\0".as_bytes().as_ptr(), fw_api::NONE_PTR, 0, 0);
+                }
+            } else {
+                st_wr!(crate::cacheclean::CC_REQ, 1);   // 清理由 tick 执行
+            }
         }
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { st_rd!(CLEAN_REQ) != 0 }
+        unsafe { st_rd!(crate::cacheclean::CC_REQ) != 0 }
     }
 
     fn tick(&self) {
         unsafe {
-            if st_rd!(CLEAN_REQ) == 0 { return; }
-            st_wr!(CLEAN_REQ, 0);
-            // 释放量 = 数据分区"已用"的前后差(/proc/fs/usage, 最大容量那行)
-            let before = fs_used_mb();
-            let mut files = 0u32;
-            let mut fail = 0u32;
-            cache_walk(true, &mut files, &mut fail);
-            let after = fs_used_mb();
-            let freed = if before == u32::MAX || after == u32::MAX || after >= before {
-                0
-            } else { before - after };
-            cache_fmt_msg(1, files, fail, freed);
-            st_wr!(CACHE_HAS_RESULT, 1);
+            if st_rd!(crate::cacheclean::CC_REQ) == 0 { return; }
+            st_wr!(crate::cacheclean::CC_REQ, 0);
+            crate::cacheclean::clean();
+            st_wr!(crate::cacheclean::CC_HAS_RESULT, 1);
             render_req(12);
         }
     }
@@ -1078,14 +1096,104 @@ impl Page for IconSubPage {
     }
 }
 
+// ===== 页1: 应用管理(Shell++ shellpp-ii 核心逻辑移植, 见 appmgr.rs) =====
+//
+// (2026-10-15 二版) 列表形态改为**全量条目**: 去掉"更多"分页, 注册表里的每个应用
+// 一行复选框(勾 = 当前可见), 行数超过一屏靠 content 滚动(lvx_page_content 本就是
+// 可滚容器, content_pad_bottom 就是给滚动收尾用的)。
+// 行句柄/事件槽位约束: 条目行**不走 ctx.rows**(只有 12 格) —— 句柄自管在
+// appmgr::APP_ROWS, 事件槽号 = 条目下标 + 12(12..=51; 0..11 是 ctx.rows 的
+// 批量按钮/状态行, 条目复用会被派发成点按钮), 回调是 lib.rs 的 chaos_row_ev12..51。
+// 布局: 行0=一键隐藏全部 行1=一键显示全部 行2=状态 —— 放最上面, 列表再长也不怕
+// 按钮滚出屏幕; 之后是应用条目。
+
+pub(crate) struct AppMgrPage;
+
+impl Page for AppMgrPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "应用管理\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            crate::appmgr::ensure();
+            crate::appmgr::rows_reset();   // 旧对象树已随上次 content 销毁, 丢旧句柄
+            // 顶部三行(走 ctx.rows 槽 0..2)
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe9\x9a\x90\xe8\x97\x8f\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键隐藏全部
+                (1, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe6\x98\xbe\xe7\xa4\xba\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键显示全部
+                (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
+            ])?;
+            // 条目行(全量, 事件槽 = 下标; 句柄存 appmgr::APP_ROWS)
+            let mut prev = read_volatile(ctx.rows.add(2));
+            if prev == 0 { prev = ctx.title; }
+            let rows = crate::appmgr::rows_ptr();
+            let n = crate::appmgr::count();
+            let mut i = 0usize;
+            while i < n {
+                let r = fw_api::row_create(ctx.content,
+                    crate::appmgr::entry_primary(i), crate::appmgr::pkg_ptr(i),
+                    fw_api::trailing::CHECKBOX);
+                if r == 0 { return Err(PageError::RowFailed(i)); }
+                write_volatile(rows.add(i), r);
+                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);   // 事件槽 = 条目下标 + 12
+                // 复选框自己也挂一份(点到圈上也算点这一行, 与图标页同款)
+                let tobj = fw_api::row_trailing(r);
+                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                fw_api::obj_align_to(r, prev, 14, 0, 8);
+                prev = r;
+                // 勾选态: 勾 = 当前可见(原地补写)
+                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                    0, crate::appmgr::visible(i) as u8);
+                i += 1;
+            }
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            // 槽0/1 = 顶部批量按钮(ctx.rows); 条目事件槽 = 条目下标 + 12
+            // (0..11 被 ctx.rows 占用: 不错开的话点条目会被派发成点按钮 —— 2026-10-15 修)
+            if idx == 0 {
+                crate::appmgr::request_batch(true);
+                render_req(1);
+            } else if idx == 1 {
+                crate::appmgr::request_batch(false);
+                render_req(1);
+            } else if idx >= 12 {
+                let e = idx - 12;
+                if e < crate::appmgr::count() { crate::appmgr::click(e); }
+            }
+        }
+    }
+
+    fn needs_tick(&self) -> bool {
+        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() }
+    }
+
+    fn tick(&self) {
+        unsafe {
+            if crate::appmgr::batch_pending() {
+                crate::appmgr::do_batch();
+                render_req(1);
+            } else if crate::appmgr::has_req() {
+                crate::appmgr::do_op();
+                render_req(1);
+            }
+        }
+    }
+}
+
 // ===== 分发表 =====
 
 static PAGE_INFO: InfoPage = InfoPage;
 static PAGE_DIR: DirPage = DirPage;
+static PAGE_APPMGR: AppMgrPage = AppMgrPage;
 static PAGE_VIEWER: ViewerPage = ViewerPage;
 static PAGE_WF_LIST_8: WatchfaceListPage = WatchfaceListPage { pid: 8 };
 static PAGE_WF_LIST_9: WatchfaceListPage = WatchfaceListPage { pid: 9 };
-static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage { shake_en: AtomicU32::new(1) };
+static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage;
 static PAGE_BRIGHT: BrightnessPage = BrightnessPage { req: AtomicU32::new(0), req_val: AtomicU32::new(0) };
 static PAGE_CACHEP: CachePage = CachePage;
 static PAGE_BEAUTIFY: BeautifyPage = BeautifyPage;
@@ -1139,7 +1247,7 @@ impl Page for AboutPage {
     fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "关于\0".as_bytes()); } }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe { build_rows(ctx, ctx.title, &[
-            (0, RowSpec::display("Chaos\0".as_bytes(), "v1.0.0\0".as_bytes().as_ptr())),
+            (0, RowSpec::display("Chaos\0".as_bytes(), "v1.78.91\0".as_bytes().as_ptr())),
             (1, RowSpec::display(about_build_time(), "当前Chaos编译时间\0".as_bytes().as_ptr())),
             (2, RowSpec::display(about_firmware(), "运行固件\0".as_bytes().as_ptr())),
             (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -1152,8 +1260,8 @@ impl Page for AboutPage {
 
 pub(crate) static PAGE_TABLE: [&dyn Page; 15] = [
     &PAGE_INFO,       // 0
-    &PAGE_DIR,        // 1  目录 1 级(/)
-    &PAGE_DIR,        // 2  目录 2 级
+    &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
+    &PAGE_DIR,        // 2  目录 2 级(不可达, 保留注册)
     &PAGE_DIR,        // 3  目录 3 级(文件管理最深一级)
     &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)

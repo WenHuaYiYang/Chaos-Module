@@ -15,6 +15,8 @@ mod font_hot;
 mod icon_apply;
 mod res_hook;
 mod settings_entry;
+mod appmgr;
+mod cacheclean;
 mod confirm_pop;
 #[allow(dead_code)]
 mod background_pixels;
@@ -128,6 +130,51 @@ chaos_row_cb!(chaos_row_ev8, 8);
 chaos_row_cb!(chaos_row_ev9, 9);
 chaos_row_cb!(chaos_row_ev10, 10);   // slot10 = 返回行(表盘页/轮换页)
 chaos_row_cb!(chaos_row_ev11, 11);
+// 12..=51: 应用管理页的全量条目行(事件槽 = 条目下标 + 12; 0..11 是 ctx.rows
+// 顶部按钮/状态行, 条目复用会被派发成点按钮 —— 2026-10-15 修的槽位冲突)。
+// 这些槽位**不走 ctx.rows**(PAGES[pid].rows 只有 MAX_ROWS_PER_PAGE=12 个,
+// build_row 写它会被拒), 行句柄由 appmgr.rs 自管的 APP_ROWS 持有;
+// 槽号只进事件派发(chaos_row_dispatch -> AppMgrPage::on_click)。
+chaos_row_cb!(chaos_row_ev12, 12);
+chaos_row_cb!(chaos_row_ev13, 13);
+chaos_row_cb!(chaos_row_ev14, 14);
+chaos_row_cb!(chaos_row_ev15, 15);
+chaos_row_cb!(chaos_row_ev16, 16);
+chaos_row_cb!(chaos_row_ev17, 17);
+chaos_row_cb!(chaos_row_ev18, 18);
+chaos_row_cb!(chaos_row_ev19, 19);
+chaos_row_cb!(chaos_row_ev20, 20);
+chaos_row_cb!(chaos_row_ev21, 21);
+chaos_row_cb!(chaos_row_ev22, 22);
+chaos_row_cb!(chaos_row_ev23, 23);
+chaos_row_cb!(chaos_row_ev24, 24);
+chaos_row_cb!(chaos_row_ev25, 25);
+chaos_row_cb!(chaos_row_ev26, 26);
+chaos_row_cb!(chaos_row_ev27, 27);
+chaos_row_cb!(chaos_row_ev28, 28);
+chaos_row_cb!(chaos_row_ev29, 29);
+chaos_row_cb!(chaos_row_ev30, 30);
+chaos_row_cb!(chaos_row_ev31, 31);
+chaos_row_cb!(chaos_row_ev32, 32);
+chaos_row_cb!(chaos_row_ev33, 33);
+chaos_row_cb!(chaos_row_ev34, 34);
+chaos_row_cb!(chaos_row_ev35, 35);
+chaos_row_cb!(chaos_row_ev36, 36);
+chaos_row_cb!(chaos_row_ev37, 37);
+chaos_row_cb!(chaos_row_ev38, 38);
+chaos_row_cb!(chaos_row_ev39, 39);
+chaos_row_cb!(chaos_row_ev40, 40);
+chaos_row_cb!(chaos_row_ev41, 41);
+chaos_row_cb!(chaos_row_ev42, 42);
+chaos_row_cb!(chaos_row_ev43, 43);
+chaos_row_cb!(chaos_row_ev44, 44);
+chaos_row_cb!(chaos_row_ev45, 45);
+chaos_row_cb!(chaos_row_ev46, 46);
+chaos_row_cb!(chaos_row_ev47, 47);
+chaos_row_cb!(chaos_row_ev48, 48);
+chaos_row_cb!(chaos_row_ev49, 49);
+chaos_row_cb!(chaos_row_ev50, 50);
+chaos_row_cb!(chaos_row_ev51, 51);
 
 
 

@@ -309,11 +309,9 @@ pub static mut SHAKE_COOL: u32 = 0;                     // 冷却 tick
 // 数据行组件句柄(0=存储行 1=内存行): [行, 数值标签, 进度条]
 pub static mut DR_HANDLES: [[u32; 3]; 2] = [[0; 3]; 2];
 
-// 页12 缓存清理: 点击置 CLEAN_REQ, tick 里执行(不在事件回调做长 FS 操作)
-pub static mut CACHE_MSG: [u8; 64] = [0; 64];     // 首行文本(扫描结果或清理结果)
-pub static mut CACHE_FILES: u32 = 0;              // 扫描/清理的文件数
-pub static mut CLEAN_REQ: u32 = 0;                // 1=请求清理
-pub static mut CACHE_HAS_RESULT: u32 = 0;         // 1=CACHE_MSG 是刚出的清理结果(渲染消费一次)
+// (2026-10-15) 页12 缓存清理旧状态已退役(原 CACHE_MSG/CACHE_FILES/CLEAN_REQ/
+// CACHE_HAS_RESULT), 新状态在 cacheclean.rs(CC_MSG/CC_ARM/CC_REQ/CC_HAS_RESULT);
+// 应用管理状态在 appmgr.rs。
 
 /// 字体创建失败时固件回退使用的 flash 静态默认字体(`LV_FONT_DEFAULT`)。
 /// 依据: `vg_font_create_core`(0x0C8603B0) 的 param error / check 失败两条分支

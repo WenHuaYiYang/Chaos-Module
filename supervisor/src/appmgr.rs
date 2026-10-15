@@ -1,0 +1,881 @@
+// 应用管理(核心逻辑移植自 Shell++ shellpp-ii, 精简版)
+//
+// 注册表(同固件 p67tc 3.101.043, 与 shellpp 043 target 一致):
+//   /data/apps.json       可见应用
+//   /data/apps.json_hide  隐藏应用(可选, 不存在 = 没有隐藏过)
+// 结构: 顶层 object, "InstalledApps": [ {..}, .. ]; 条目字段:
+//   "package"  包名(身份字段)
+//   "names"    显示名数组: [ { "lang": "defaults", "value": "Corona" }, .. ]
+//              (lang=="defaults" 优先, 否则取数组里第一个能读到的 value)
+//   "name" | "appName" | "label" | "title"  显示名(兼容字段, 优先级高于 names)
+//   "hideFlag" bool / "locked" bool
+//
+// 隐藏 = 对象从可见注册表搬到隐藏注册表(hideFlag 重建为 true);
+// 显示 = 反向(搬回并摘除 hideFlag)。其余字段原样保留, 未知顶层键原样复制。
+//
+// 即时生效(2026-10-15, Ghidra 取证见 fw_api::app_launcher_del/add 注释):
+// 注册表写回成功后, 按包名在注册表(APP_REGISTRY 链)里找到 app_id, 再调
+// app_launcher_del(app_id) / app_launcher_add(app_id) 让桌面立刻摘/挂图标。
+// 固件的"隐藏应用"命令(cmd 0x1a)就是同一条 del; 重启后的持久态由注册表文件决定。
+// 找不到注册表节点(应用此刻不在册)时只写文件, 不调固件调用 —— 不猜。
+//
+// 写回策略: 内存重组后 open(WRONLY|CREAT) 原位写回; 新内容比原文短时用空格
+// 填充到原长度(尾部空白是合法 JSON)。**不用 truncate/rename** —— 固件侧没有
+// 拿到实证地址, 这里只允许已真机验证过的 open/read/write/close/remove。
+//
+// 安全红线:
+//   * 对象溢出/缺 package/条目超上限 => 列表标 truncated, 拒绝一切改写
+//     (改写只保留有记录的对象, 未记录的对象会被丢掉, 所以截断时绝不能写)。
+//   * 单个被搬运对象 > OBJ_CAP => 拒绝该次操作。
+//   * 操作在 tick 里执行(不在事件回调做文件 IO), 与缓存清理同一套模式。
+
+use crate::*;
+use core::ptr::{read_volatile, write_volatile};
+
+pub(crate) const VIS_PATH: &[u8] = b"/data/apps.json\0";
+pub(crate) const HID_PATH: &[u8] = b"/data/apps.json_hide\0";
+
+pub(crate) const REG_CAP: usize = 10240; // 单个注册表文件字节上限
+pub(crate) const APP_MAX: usize = 40;    // 条目上限(两份注册表合计)
+const OBJ_CAP: usize = 1536;             // 单个被搬运对象的字节上限
+
+// ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
+pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
+pub(crate) static mut E_NAME: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];
+static mut E_OFF: [u32; APP_MAX] = [0; APP_MAX]; // 对象在本次载入的 REG_BUF 内的起点
+static mut E_LEN: [u32; APP_MAX] = [0; APP_MAX];
+static mut E_SRC: [u8; APP_MAX] = [0; APP_MAX];  // 0=可见 1=隐藏
+static mut E_LOCK: [u8; APP_MAX] = [0; APP_MAX];
+pub(crate) static mut APP_N: usize = 0;
+static mut APP_LOADED: u32 = 0;
+pub(crate) static mut APP_MSG: [u8; 96] = [0; 96];
+
+// ===== 行句柄(页1 全量条目行; 批量按钮/状态行走 ctx.rows 槽0/1/2) =====
+// 条目行**不走 ctx.rows**(PAGES[pid].rows 只有 12 格, build_row 拒绝更高槽位),
+// 句柄自管; 事件槽号 = 条目下标 + 12(12..=51, 回调见 lib.rs chaos_row_ev12..51)。
+// 0..11 必须留给 ctx.rows —— 条目复用会让点条目被派发成点按钮(槽位冲突, 已修)。
+// 重建式渲染开始时统一清零(对象树已随旧 content 销毁, 只丢句柄不删对象)。
+const APP_ROWS_N: usize = APP_MAX;
+static mut APP_ROWS: [u32; APP_ROWS_N] = [0; APP_ROWS_N];
+
+pub(crate) unsafe fn rows_reset() {
+    let p = core::ptr::addr_of_mut!(APP_ROWS) as *mut u32;
+    let mut i = 0usize;
+    while i < APP_ROWS_N { write_volatile(p.add(i), 0); i += 1; }
+}
+
+pub(crate) unsafe fn rows_ptr() -> *mut u32 { core::ptr::addr_of_mut!(APP_ROWS) as *mut u32 }
+
+/// 条目行主标签(显示名)指针 —— E_NAME 是静态缓冲, 行控件可直接持有
+pub(crate) unsafe fn entry_primary(i: usize) -> *const u8 {
+    let p = core::ptr::addr_of!(E_NAME) as *const u8;
+    p.add(i * 32)
+}
+
+// ===== 批量操作队列(一键隐藏/显示全部; tick 消费) =====
+static mut REQ_BATCH: u32 = 0;                  // 0=无 1=全部隐藏 2=全部显示
+static mut BATCH_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
+static mut BATCH_LOCK: [u8; APP_MAX] = [0; APP_MAX];  // 入队时的 locked 快照
+static mut BATCH_N: usize = 0;
+static mut BATCH_CURSOR: usize = 0;
+
+// ===== 请求(tick 消费) =====
+static mut REQ_OP: u32 = 0;      // 0=无 1=隐藏 2=显示
+static mut REQ_PKG: [u8; 44] = [0; 44];
+static mut REQ_NAME: [u8; 32] = [0; 32];
+
+// ===== 解析工作区 =====
+static mut REG_BUF: [u8; REG_CAP] = [0; REG_CAP];
+static mut REG_N: usize = 0;         // 本次载入字节数
+static mut HAVE_FILE: u32 = 0;       // 0=文件不存在(允许合成最小结构)
+static mut OVERSIZE: u32 = 0;        // 1=文件超过 REG_CAP
+static mut TRUNC: u32 = 0;           // 1=存在无法管理的对象(拒绝改写)
+static mut PARSE_BAD: u32 = 0;       // 1=本次 parse 失败
+// 顶层 key-value 跨度(键首引号到值结尾, 不含逗号)
+static mut TL_S: [u32; 8] = [0; 8];
+static mut TL_E: [u32; 8] = [0; 8];
+static mut TL_ISARR: [u8; 8] = [0; 8]; // 1=值是 InstalledApps 数组
+static mut TL_N: usize = 0;
+// 本次 parse 中要跳过的对象(改写时删除)
+static mut SKIP_OFF: usize = usize::MAX;
+static mut SKIP_LEN: usize = 0;
+// 被搬运对象的原始字节
+static mut OBJ_BUF: [u8; OBJ_CAP] = [0; OBJ_CAP];
+static mut OBJ_N: usize = 0;
+
+// ===== 小工具 =====
+
+unsafe fn cstr_len(s: *const u8) -> usize {
+    let mut n = 0usize;
+    while read_volatile(s.add(n)) != 0 { n += 1; }
+    n
+}
+
+pub(crate) unsafe fn count() -> usize { APP_N }
+
+pub(crate) unsafe fn msg() -> &'static [u8] {
+    let n = cstr_len(core::ptr::addr_of!(APP_MSG) as *const u8);
+    core::slice::from_raw_parts(core::ptr::addr_of!(APP_MSG) as *const u8, n + 1)
+}
+
+pub(crate) unsafe fn pkg_ptr(i: usize) -> *const u8 {
+    let p = core::ptr::addr_of!(E_PKG) as *const u8;
+    p.add(i * 44)
+}
+
+/// 条目当前是否可见(复选框态: 勾 = 可见)
+pub(crate) unsafe fn visible(i: usize) -> bool {
+    if i >= APP_N { return false; }
+    read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i)) == 0
+}
+
+pub(crate) unsafe fn invalidate() { APP_LOADED = 0; }
+
+pub(crate) unsafe fn has_req() -> bool { REQ_OP != 0 }
+
+/// 列表被截断时禁止一切改写
+unsafe fn write_blocked() -> bool { TRUNC != 0 || OVERSIZE != 0 || PARSE_BAD != 0 }
+
+// ===== 页面事件 =====
+
+/// 点了条目 e: 可见 => 请求隐藏; 隐藏 => 请求显示
+pub(crate) unsafe fn click(e: usize) {
+    if REQ_OP != 0 || REQ_BATCH != 0 || APP_LOADED == 0 || e >= APP_N { return; }
+    if write_blocked() { return; }
+    if read_volatile((core::ptr::addr_of!(E_LOCK) as *const u8).add(e)) != 0 {
+        wmsg("该应用已锁定\0"); return;
+    }
+    let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(e));
+    // 拷贝身份与显示名(操作与结果提示都用它)
+    let mut k = 0usize;
+    let pp = core::ptr::addr_of!(E_PKG) as *const u8;
+    while k < 43 { let c = read_volatile(pp.add(e * 44 + k)); write_volatile(REQ_PKG.as_mut_ptr().add(k), c); if c == 0 { break; } k += 1; }
+    write_volatile(REQ_PKG.as_mut_ptr().add(43), 0);
+    k = 0;
+    let np = core::ptr::addr_of!(E_NAME) as *const u8;
+    while k < 31 { let c = read_volatile(np.add(e * 32 + k)); write_volatile(REQ_NAME.as_mut_ptr().add(k), c); if c == 0 { break; } k += 1; }
+    write_volatile(REQ_NAME.as_mut_ptr().add(31), 0);
+    REQ_OP = if src == 0 { 1 } else { 2 };
+}
+
+/// 在固件应用注册表(APP_REGISTRY 链, 同 app_lookup/icon_apply 一条链)里按包名
+/// 找 app_id。节点: +0x04 链表 / +0x08 包名(堆串) / +0x10 u16 app_id。
+/// 返回 0 = 没找到(应用此刻不在册, 调用方不得拿 0 去调固件)。
+unsafe fn find_app_id(pkg: *const u8) -> u32 {
+    let head = crate::mem::rd32(fw_api::APP_REGISTRY as *const u32);
+    if head == 0 || crate::mem::safe_ptr(head) == false { return 0; }
+    let mut node = crate::mem::rd32((head + 4) as *const u32);
+    let mut guard = 0u32;
+    while crate::mem::safe_ptr(node) && node != head && guard < 512 {
+        guard += 1;
+        let np = crate::mem::rd32((node + 0x08) as *const u32);
+        if crate::mem::safe_ptr(np) && cstr_eq(np as *const u8, pkg) {
+            return crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+        }
+        node = crate::mem::rd32((node + 4) as *const u32);
+    }
+    0
+}
+
+/// 注册表写回成功后的即时生效: 摘/挂桌面图标。找不到节点就静默跳过(文件改动
+/// 仍会在下次重启生效, 与旧行为一致)。
+unsafe fn apply_immediate(hide: bool) {
+    let id = find_app_id(core::ptr::addr_of!(REQ_PKG) as *const u8);
+    if id == 0 { return; }
+    if hide { fw_api::app_launcher_del(id); } else { fw_api::app_launcher_add(id); }
+}
+
+/// tick: 执行挂起的隐藏/显示, 完成后重读列表(调用方随后 render_req)
+pub(crate) unsafe fn do_op() {
+    if REQ_OP == 0 { return; }
+    let hide = REQ_OP == 1;
+    REQ_OP = 0;
+    let ok = if hide { op_hide() } else { op_show() };
+    if ok {
+        apply_immediate(hide);
+        let mut w = W::new(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, 96);
+        w.s(if hide { "已隐藏 ".as_bytes() } else { "已显示 ".as_bytes() })
+         .s(cstr_slice(core::ptr::addr_of!(REQ_NAME) as *const u8))
+         .s("\0".as_bytes());
+        w.end();
+    } else {
+        wmsg("操作失败, 注册表未改动\0");
+    }
+    reload();
+}
+
+/// 一键批量: 把当前批的方向对应的全部条目拷进队列(快照), tick 里逐个执行。
+pub(crate) unsafe fn request_batch(hide_all: bool) {
+    if REQ_BATCH != 0 || REQ_OP != 0 || APP_LOADED == 0 { return; }
+    if write_blocked() { wmsg("列表不完整, 禁止改写\0"); return; }
+    BATCH_N = 0;
+    BATCH_CURSOR = 0;
+    let mut i = 0usize;
+    while i < APP_N && BATCH_N < APP_MAX {
+        let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i));
+        let want = if hide_all { 0u8 } else { 1u8 };
+        if src == want {
+            let pp = core::ptr::addr_of!(E_PKG) as *const u8;
+            let dp = (core::ptr::addr_of_mut!(BATCH_PKG) as *mut u8).add(BATCH_N * 44);
+            let mut k = 0usize;
+            while k < 43 { let c = read_volatile(pp.add(i * 44 + k)); write_volatile(dp.add(k), c); if c == 0 { break; } k += 1; }
+            write_volatile(dp.add(43), 0);
+            // 锁定位在入队时快照(批量循环里 capture 会重置 E_*, 不能再回头查)
+            write_volatile((core::ptr::addr_of_mut!(BATCH_LOCK) as *mut u8).add(BATCH_N),
+                read_volatile((core::ptr::addr_of!(E_LOCK) as *const u8).add(i)));
+            BATCH_N += 1;
+        }
+        i += 1;
+    }
+    if BATCH_N == 0 {
+        wmsg(if hide_all { "没有可见应用\0" } else { "没有隐藏应用\0" });
+        return;
+    }
+    REQ_BATCH = if hide_all { 1 } else { 2 };
+}
+
+pub(crate) unsafe fn batch_pending() -> bool { REQ_BATCH != 0 }
+
+/// tick: 执行批量队列。每个条目一次 capture+写回(单条 op 的完整流程),
+/// 全部跑完或遇到失败即收尾。
+pub(crate) unsafe fn do_batch() {
+    if REQ_BATCH == 0 { return; }
+    let hide = REQ_BATCH == 1;
+    let mut done = 0usize;
+    let mut failed = 0usize;
+    while BATCH_CURSOR < BATCH_N {
+        let bp = (core::ptr::addr_of!(BATCH_PKG) as *const u8).add(BATCH_CURSOR * 44);
+        if read_volatile((core::ptr::addr_of!(BATCH_LOCK) as *const u8).add(BATCH_CURSOR)) != 0 {
+            BATCH_CURSOR += 1; continue;   // 锁定的应用批量不碰(与单点同一语义)
+        }
+        let ok = if hide { op_hide_pkg(bp) } else { op_show_pkg(bp) };
+        BATCH_CURSOR += 1;
+        if ok {
+            done += 1;
+            // 即时生效(队列包名不在 REQ_PKG, 直接按包名找)
+            let id = find_app_id(bp);
+            if id != 0 {
+                if hide { fw_api::app_launcher_del(id); } else { fw_api::app_launcher_add(id); }
+            }
+        } else {
+            failed += 1;
+            break;   // 文件态不可信, 停止批量(与单条操作同一保守策略)
+        }
+    }
+    REQ_BATCH = 0;
+    let mut w = W::new(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, 96);
+    w.s(if hide { "已隐藏 ".as_bytes() } else { "已显示 ".as_bytes() })
+     .n(done as u32).s(" 个".as_bytes());
+    if failed != 0 { w.s("(中途失败)\0".as_bytes()); } else { w.s("\0".as_bytes()); }
+    w.end();
+    reload();
+}
+
+unsafe fn cstr_slice(p: *const u8) -> &'static [u8] {
+    core::slice::from_raw_parts(p, cstr_len(p) + 1)
+}
+
+unsafe fn wmsg(s: &str) {
+    put_str(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, s.as_bytes());
+}
+
+// ===== JSON 扫描(base/len 参数化, REG_BUF 与 OBJ_BUF 共用) =====
+
+#[inline(always)]
+unsafe fn s_peek(base: *const u8, len: usize, p: usize) -> u8 {
+    if p < len { read_volatile(base.add(p)) } else { 0 }
+}
+
+#[inline(always)]
+unsafe fn s_ws(base: *const u8, len: usize, p: &mut usize) {
+    while *p < len {
+        let c = read_volatile(base.add(*p));
+        if c != b' ' && c != b'\t' && c != b'\n' && c != b'\r' { break; }
+        *p += 1;
+    }
+}
+
+/// 跳过一个字符串(*p 在开引号)。返回 false = 坏。
+unsafe fn s_string_skip(base: *const u8, len: usize, p: &mut usize) -> bool {
+    if s_peek(base, len, *p) != b'"' { return false; }
+    *p += 1;
+    while *p < len {
+        let c = read_volatile(base.add(*p)); *p += 1;
+        if c == b'\\' { if *p < len { *p += 1; continue; } return false; }
+        if c == b'"' { return true; }
+    }
+    false
+}
+
+/// 跳过任意 JSON 值(深度计数, 字符串感知)。返回 false = 坏。
+unsafe fn s_value_skip(base: *const u8, len: usize, p: &mut usize) -> bool {
+    s_ws(base, len, p);
+    let c = s_peek(base, len, *p);
+    if c == b'"' { return s_string_skip(base, len, p); }
+    if c == b'{' || c == b'[' {
+        let mut depth = 0u32;
+        loop {
+            if *p >= len { return false; }
+            let ch = read_volatile(base.add(*p)); *p += 1;
+            if ch == b'"' {
+                *p -= 1;
+                if !s_string_skip(base, len, p) { return false; }
+                continue;
+            }
+            if ch == b'{' || ch == b'[' { depth += 1; }
+            else if ch == b'}' || ch == b']' {
+                depth -= 1;
+                if depth == 0 { return true; }
+            }
+        }
+    }
+    // true / false / null / 数字: 吃到分隔符为止
+    while *p < len {
+        let ch = read_volatile(base.add(*p));
+        if ch == b',' || ch == b'}' || ch == b']' || ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' { break; }
+        *p += 1;
+    }
+    true
+}
+
+/// 读字符串到 dst(带最小 unescape)。0=ok 1=溢出(串本身已跳过) 2=坏。
+unsafe fn s_string_read(base: *const u8, len: usize, dst: *mut u8, cap: usize, p: &mut usize) -> u8 {
+    if s_peek(base, len, *p) != b'"' { return 2; }
+    *p += 1;
+    let mut o = 0usize;
+    let mut over = false;
+    loop {
+        if *p >= len { return 2; }
+        let c = read_volatile(base.add(*p)); *p += 1;
+        if c == b'"' { break; }
+        let mut ch = c;
+        if c == b'\\' {
+            if *p >= len { return 2; }
+            let e = read_volatile(base.add(*p)); *p += 1;
+            ch = match e {
+                b'"' | b'\\' | b'/' => e,
+                b'n' => 0x0A, b't' => 0x09, b'r' => 0x0D, b'b' => 0x08, b'f' => 0x0C,
+                b'u' => { if *p + 4 > len { return 2; } *p += 4; 0x20 }
+                _ => return 2,
+            };
+        }
+        if o + 1 < cap { write_volatile(dst.add(o), ch); o += 1; } else { over = true; }
+    }
+    write_volatile(dst.add(o), 0);
+    if over { 1 } else { 0 }
+}
+
+unsafe fn key_is(key: *const u8, lit: &[u8]) -> bool {
+    let n = cstr_len(key);
+    if n + 1 != lit.len() { return false; }
+    let mut i = 0usize;
+    while i < n { if read_volatile(key.add(i)) != lit[i] { return false; } i += 1; }
+    true
+}
+
+// ===== 载入与解析 =====
+
+/// 把 path 读进 REG_BUF。false = 文件不存在(合法: 隐藏注册表可选)。
+unsafe fn load_file(path: *const u8) -> bool {
+    HAVE_FILE = 0;
+    OVERSIZE = 0;
+    let fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
+    if fd < 0 { REG_N = 0; return false; }
+    let mut n = 0usize;
+    while n < REG_CAP {
+        let got = fw_api::read(fd, REG_BUF.as_mut_ptr().add(n), (REG_CAP - n) as u32);
+        if got <= 0 { break; }
+        n += got as usize;
+    }
+    if n == REG_CAP {
+        // 再探一字节判断是否真超限
+        let mut probe = [0u8; 1];
+        if fw_api::read(fd, probe.as_mut_ptr(), 1) > 0 { OVERSIZE = 1; }
+    }
+    fw_api::close(fd);
+    REG_N = n;
+    HAVE_FILE = 1;
+    true
+}
+
+/// 解析一个应用对象(*p 在 '{'), 抽字段并登记条目。返回 0=ok(到达 '}' 之后)。
+unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
+    let base = REG_BUF.as_ptr();
+    let len = REG_N;
+    let start = *p;
+    let mut pkg = [0u8; 44];
+    let mut name = [0u8; 32];
+    let mut name_pri = 9u8;
+    let mut has_pkg = false;
+    let mut pkg_over = false;
+    let mut hidden = 0u8;
+    let mut locked = 0u8;
+    let mut key = [0u8; 20];
+    *p += 1; // '{'
+    loop {
+        s_ws(base, len, p);
+        let c = s_peek(base, len, *p);
+        if c == b'}' { *p += 1; break; }
+        if c == b',' { *p += 1; continue; }
+        let kr = s_string_read(base, len, key.as_mut_ptr(), 20, p);
+        if kr == 2 { return 2; }
+        s_ws(base, len, p);
+        if s_peek(base, len, *p) != b':' { return 2; }
+        *p += 1;
+        s_ws(base, len, p);
+        let known = kr == 0;
+        if known && key_is(key.as_ptr(), b"package\0") {
+            let r = s_string_read(base, len, pkg.as_mut_ptr(), 44, p);
+            if r == 2 { return 2; }
+            if r == 0 { has_pkg = true; } else { pkg_over = true; }
+        } else if known && (key_is(key.as_ptr(), b"name\0") || key_is(key.as_ptr(), b"appName\0")
+            || key_is(key.as_ptr(), b"label\0") || key_is(key.as_ptr(), b"title\0")) {
+            // 优先级: name(0) < appName(1) < label(2) < title(3); 重复键先到先得
+            let pri = if key_is(key.as_ptr(), b"name\0") { 0u8 }
+                else if key_is(key.as_ptr(), b"appName\0") { 1u8 }
+                else if key_is(key.as_ptr(), b"label\0") { 2u8 } else { 3u8 };
+            let mut tmp = [0u8; 32];
+            let r = s_string_read(base, len, tmp.as_mut_ptr(), 32, p);
+            if r == 0 && pri < name_pri {
+                let mut k = 0usize;
+                while k < 32 { name[k] = tmp[k]; if tmp[k] == 0 { break; } k += 1; }
+                name_pri = pri;
+            }
+        } else if known && key_is(key.as_ptr(), b"names\0") {
+            // names: [ { "lang": "defaults", "value": "Corona" }, .. ]
+            // 档位: lang=="defaults"=4, 其它 lang=5(只在还没有任何名字时收)。
+            // 兼容字段 name/appName/label/title(0..3) 仍然优先。
+            if s_peek(base, len, *p) != b'[' { return 2; }
+            *p += 1;
+            let mut nfirst = true;
+            loop {
+                s_ws(base, len, p);
+                let nc = s_peek(base, len, *p);
+                if nc == b']' { *p += 1; break; }
+                if nc == 0 { return 2; }
+                if !nfirst {
+                    if nc != b',' { return 2; }
+                    *p += 1;
+                    s_ws(base, len, p);
+                }
+                nfirst = false;
+                s_ws(base, len, p);
+                if s_peek(base, len, *p) != b'{' {
+                    // 非对象条目(容错): 整个跳过
+                    if !s_value_skip(base, len, p) { return 2; }
+                    continue;
+                }
+                *p += 1;
+                let mut is_def = false;
+                let mut val_ok = false;
+                let mut tmp = [0u8; 32];
+                let mut k2 = [0u8; 20];
+                loop {
+                    s_ws(base, len, p);
+                    let c2 = s_peek(base, len, *p);
+                    if c2 == b'}' { *p += 1; break; }
+                    if c2 == b',' { *p += 1; continue; }
+                    if c2 == 0 { return 2; }
+                    let kr2 = s_string_read(base, len, k2.as_mut_ptr(), 20, p);
+                    if kr2 == 2 { return 2; }
+                    s_ws(base, len, p);
+                    if s_peek(base, len, *p) != b':' { return 2; }
+                    *p += 1;
+                    s_ws(base, len, p);
+                    if kr2 == 0 && key_is(k2.as_ptr(), b"lang\0") {
+                        let mut lg = [0u8; 16];
+                        let r = s_string_read(base, len, lg.as_mut_ptr(), 16, p);
+                        if r == 2 { return 2; }
+                        if r == 0 && (cstr_eq(lg.as_ptr(), b"defaults\0".as_ptr()) || cstr_eq(lg.as_ptr(), b"default\0".as_ptr())) {
+                            is_def = true;
+                        }
+                    } else if kr2 == 0 && key_is(k2.as_ptr(), b"value\0") {
+                        let r = s_string_read(base, len, tmp.as_mut_ptr(), 32, p);
+                        if r == 0 { val_ok = true; } else if r == 2 { return 2; }
+                    } else {
+                        if !s_value_skip(base, len, p) { return 2; }
+                    }
+                }
+                if val_ok && (is_def || name_pri >= 5) {
+                    let mut k = 0usize;
+                    while k < 32 { name[k] = tmp[k]; if tmp[k] == 0 { break; } k += 1; }
+                    name_pri = if is_def { 4 } else { 5 };
+                }
+            }
+        } else if known && key_is(key.as_ptr(), b"hideFlag\0") {
+            hidden = if s_peek(base, len, *p) == b't' { 1 } else { 0 };
+            if !s_value_skip(base, len, p) { return 2; }
+        } else if known && key_is(key.as_ptr(), b"locked\0") {
+            locked = if s_peek(base, len, *p) == b't' { 1 } else { 0 };
+            if !s_value_skip(base, len, p) { return 2; }
+        } else {
+            if !s_value_skip(base, len, p) { return 2; }
+        }
+    }
+    let end = *p;
+    // 登记(超出上限 / 缺身份 / 身份溢出 => 截断, 拒绝改写)
+    if APP_N >= APP_MAX || !has_pkg || pkg_over {
+        TRUNC = 1;
+        return 0;
+    }
+    let i = APP_N;
+    let mut k = 0usize;
+    while k < 44 { E_PKG[i][k] = pkg[k]; if pkg[k] == 0 { break; } k += 1; }
+    // 显示名缺省回退 = 包名; 锁定条目在名字尾部标注
+    if name[0] == 0 {
+        let mut k = 0usize;
+        while k < 31 { name[k] = pkg[k]; if pkg[k] == 0 { break; } k += 1; }
+        name[31] = 0;
+    } else if locked != 0 {
+        let n0 = cstr_len(name.as_ptr());
+        let tag: &[u8] = " [锁]".as_bytes();
+        let mut o = n0;
+        let mut t = 0usize;
+        while o < 30 && t < tag.len() { name[o] = tag[t]; o += 1; t += 1; }
+        name[o] = 0;
+    }
+    let mut k = 0usize;
+    while k < 32 { E_NAME[i][k] = name[k]; k += 1; }
+    E_OFF[i] = start as u32;
+    E_LEN[i] = (end - start) as u32;
+    E_SRC[i] = src;
+    E_LOCK[i] = locked;
+    // 隐藏注册表里的对象视作已隐藏(hideFlag 仅为固件约定, 展示态以所在文件为准)
+    let _ = hidden;
+    APP_N += 1;
+    0
+}
+
+/// 解析 REG_BUF 里的注册表(顶层 object)。0=ok 2=坏。
+/// 条目写入 E_*; 顶层 kv 跨度写入 TL_*(改写用)。
+unsafe fn parse_registry(src: u8) -> u8 {
+    TL_N = 0;
+    PARSE_BAD = 0;
+    if HAVE_FILE == 0 || REG_N == 0 {
+        // 文件不存在或空文件 = 空注册表(043 宽松读取语义)
+        if REG_N == 0 { HAVE_FILE = 0; }
+        return 0;
+    }
+    if OVERSIZE != 0 { PARSE_BAD = 1; return 2; }
+    let base = REG_BUF.as_ptr();
+    let len = REG_N;
+    let mut p = 0usize;
+    s_ws(base, len, &mut p);
+    if s_peek(base, len, p) != b'{' { PARSE_BAD = 1; return 2; }
+    p += 1;
+    let mut first = true;
+    let mut found = false;
+    loop {
+        s_ws(base, len, &mut p);
+        let c = s_peek(base, len, p);
+        if c == b'}' { break; }
+        if c == 0 { PARSE_BAD = 1; return 2; }
+        if !first {
+            if c != b',' { PARSE_BAD = 1; return 2; }
+            p += 1;
+            s_ws(base, len, &mut p);
+        }
+        first = false;
+        let ks = p;
+        let mut key = [0u8; 20];
+        let kr = s_string_read(base, len, key.as_mut_ptr(), 20, &mut p);
+        if kr == 2 { PARSE_BAD = 1; return 2; }
+        s_ws(base, len, &mut p);
+        if s_peek(base, len, p) != b':' { PARSE_BAD = 1; return 2; }
+        p += 1;
+        s_ws(base, len, &mut p);
+        let _vs = p;
+        let mut is_arr = false;
+        if kr == 0 && key_is(key.as_ptr(), b"InstalledApps\0") {
+            if found { PARSE_BAD = 1; return 2; }   // 重复键 = 坏
+            found = true;
+            if s_peek(base, len, p) != b'[' { PARSE_BAD = 1; return 2; }
+            p += 1;
+            is_arr = true;
+            let mut efirst = true;
+            loop {
+                s_ws(base, len, &mut p);
+                let ec = s_peek(base, len, p);
+                if ec == b']' { p += 1; break; }
+                if ec == 0 { PARSE_BAD = 1; return 2; }
+                if !efirst {
+                    if ec != b',' { PARSE_BAD = 1; return 2; }
+                    p += 1;
+                    s_ws(base, len, &mut p);
+                }
+                efirst = false;
+                s_ws(base, len, &mut p);
+                if s_peek(base, len, p) != b'{' { PARSE_BAD = 1; return 2; }
+                let rc = scan_object(&mut p, src);
+                if rc != 0 { PARSE_BAD = 1; return 2; }
+            }
+        } else {
+            if !s_value_skip(base, len, &mut p) { PARSE_BAD = 1; return 2; }
+        }
+        let ve = p;
+        if TL_N >= 8 { PARSE_BAD = 1; return 2; }
+        TL_S[TL_N] = ks as u32;
+        TL_E[TL_N] = ve as u32;
+        TL_ISARR[TL_N] = is_arr as u8;
+        TL_N += 1;
+    }
+    if p > len { PARSE_BAD = 1; return 2; }
+    0
+}
+
+/// (重)读两份注册表, 重建展示列表。
+pub(crate) unsafe fn reload() {
+    APP_N = 0;
+    TRUNC = 0;
+    PARSE_BAD = 0;
+    OVERSIZE = 0;
+    let mut bad = 0u32;
+    // 可见注册表(应存在; 缺失 = 空列表, 043 宽松语义)
+    if load_file(VIS_PATH.as_ptr()) {
+        if parse_registry(0) != 0 { bad = 1; }
+    }
+    // 隐藏注册表(可选; 一份坏不丢另一份已读到的条目)
+    if load_file(HID_PATH.as_ptr()) {
+        if parse_registry(1) != 0 { bad = 1; }
+    }
+    if OVERSIZE != 0 {
+        wmsg("注册表过大, 只读\0");
+    } else if bad != 0 {
+        wmsg("注册表解析失败\0");
+    } else if TRUNC != 0 {
+        wmsg("列表已截断, 禁止改写\0");
+    } else if APP_N == 0 {
+        wmsg("没有可管理的应用\0");
+    } else {
+        wmsg("点应用切换显示/隐藏\0");
+    }
+    APP_LOADED = 1;
+}
+
+pub(crate) unsafe fn ensure() {
+    if APP_LOADED == 0 { reload(); }
+}
+
+// ===== 改写 =====
+
+/// 把当前 REG_BUF(已 parse) 重组进自身前部并返回新长度。
+/// skip: 跳过的对象跨度; append: 0=不追加 1=追加原样(摘 hideFlag) 2=追加并写 hideFlag:true。
+/// 不变量: 写指针永远 <= 读指针(只删不增, 追加字节来自 OBJ_BUF), 原位覆盖安全。
+unsafe fn serialize(skip_off: usize, skip_len: usize, append: u8) -> usize {
+    let old = REG_N;
+    let src = REG_BUF.as_ptr();
+    let mut w = 0usize;
+    macro_rules! putb {
+        ($b:expr) => {{
+            if w + 1 >= REG_CAP { return 0; }
+            REG_BUF[w] = $b; w += 1;
+        }};
+    }
+    macro_rules! copy {
+        ($from:expr, $n:expr) => {{
+            let n = $n;
+            if w + n >= REG_CAP { return 0; }
+            let mut i = 0usize;
+            while i < n { REG_BUF[w] = read_volatile(src.add($from + i)); w += 1; i += 1; }
+        }};
+    }
+    macro_rules! lit {
+        ($s:expr) => {{
+            let s: &[u8] = $s;
+            if w + s.len() >= REG_CAP { return 0; }
+            let mut i = 0usize;
+            while i < s.len() { REG_BUF[w] = s[i]; w += 1; i += 1; }
+        }};
+    }
+    putb!(b'{');
+    if TL_N == 0 && HAVE_FILE == 0 {
+        // 隐藏注册表不存在: 合成最小结构
+        lit!(b"\"InstalledApps\":[".as_slice());
+        if append != 0 { if !write_obj(&mut w, append == 2) { return 0; } }
+        lit!(b"]}".as_slice());
+    } else {
+        let mut first = true;
+        let mut k = 0usize;
+        while k < TL_N {
+            if !first { putb!(b','); }
+            first = false;
+            if TL_ISARR[k] != 0 {
+                lit!(b"\"InstalledApps\":[".as_slice());
+                let mut ifirst = true;
+                let mut i = 0usize;
+                while i < APP_N {
+                    let o = E_OFF[i] as usize;
+                    let l = E_LEN[i] as usize;
+                    if !(o == skip_off && l == skip_len) {
+                        if !ifirst { putb!(b','); }
+                        ifirst = false;
+                        copy!(o, l);
+                    }
+                    i += 1;
+                }
+                if append != 0 {
+                    if !ifirst { putb!(b','); }
+                    if !write_obj(&mut w, append == 2) { return 0; }
+                }
+                lit!(b"]".as_slice());
+            } else {
+                copy!(TL_S[k] as usize, (TL_E[k] as usize) - (TL_S[k] as usize));
+            }
+            k += 1;
+        }
+        putb!(b'}');
+    }
+    // 原位写回: 短于原文的部分用空格补齐(尾部空白是合法 JSON)
+    while w < old { REG_BUF[w] = b' '; w += 1; }
+    w
+}
+
+/// 把 OBJ_BUF 里的对象写进 REG_BUF[w..], 摘除 hideFlag; need_flag=true 时补 "hideFlag":true。
+unsafe fn write_obj(w: &mut usize, need_flag: bool) -> bool {
+    let base = OBJ_BUF.as_ptr();
+    let len = OBJ_N;
+    if len == 0 || s_peek(base, len, 0) != b'{' { return false; }
+    macro_rules! putb {
+        ($b:expr) => {{
+            if *w + 1 >= REG_CAP { return false; }
+            REG_BUF[*w] = $b; *w += 1;
+        }};
+    }
+    macro_rules! copyo {
+        ($from:expr, $n:expr) => {{
+            let n = $n;
+            if *w + n >= REG_CAP { return false; }
+            let mut i = 0usize;
+            while i < n { REG_BUF[*w] = read_volatile(base.add($from + i)); *w += 1; i += 1; }
+        }};
+    }
+    putb!(b'{');
+    let mut p = 1usize;
+    let mut first = true;
+    let mut key = [0u8; 20];
+    loop {
+        s_ws(base, len, &mut p);
+        let c = s_peek(base, len, p);
+        if c == b'}' { break; }
+        if c == b',' { p += 1; continue; }
+        if c == 0 { return false; }
+        let ks = p;
+        let kr = s_string_read(base, len, key.as_mut_ptr(), 20, &mut p);
+        if kr == 2 { return false; }
+        s_ws(base, len, &mut p);
+        if s_peek(base, len, p) != b':' { return false; }
+        p += 1;
+        s_ws(base, len, &mut p);
+        let _vs = p;
+        if !s_value_skip(base, len, &mut p) { return false; }
+        let ve = p;
+        // hideFlag 一律摘除, 由 need_flag 决定是否重写
+        if kr == 0 && key_is(key.as_ptr(), b"hideFlag\0") { continue; }
+        if !first { putb!(b','); }
+        first = false;
+        copyo!(ks, ve - ks);
+    }
+    if need_flag {
+        if !first { putb!(b','); }
+        let s: &[u8] = b"\"hideFlag\":true";
+        let mut i = 0usize;
+        while i < s.len() { putb!(s[i]); i += 1; }
+    }
+    putb!(b'}');
+    true
+}
+
+/// 把 path 用 REG_BUF[0..n] 原位覆盖(WRONLY|CREAT, 与全模块写组合一致)。
+unsafe fn write_file(path: *const u8, n: usize) -> bool {
+    if n == 0 { return false; }
+    let fd = fw_api::open(path, fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { return false; }
+    let mut off = 0usize;
+    let mut ok = true;
+    while off < n {
+        let got = fw_api::write(fd, REG_BUF.as_ptr().add(off), (n - off) as u32);
+        if got <= 0 { ok = false; break; }
+        off += got as usize;
+    }
+    fw_api::close(fd);
+    ok
+}
+
+/// 从 src 注册表(0=可见 1=隐藏)里按包名找到对象, 原始字节拷进 OBJ_BUF,
+/// 并记下它的跨度(Skip)。成功返回 true(REG_BUF 保持该文件已 parse 状态)。
+/// 注意: 这里清零 APP_N —— capture 的 parse 必须是"单文件隔离"的,
+/// serialize 只允许遍历当前 parse 的对象跨度。
+unsafe fn capture(pkg: *const u8, src: u8) -> bool {
+    let path = if src == 0 { VIS_PATH.as_ptr() } else { HID_PATH.as_ptr() };
+    APP_N = 0;
+    if !load_file(path) { return false; }
+    if parse_registry(src) != 0 { return false; }
+    let mut i = 0usize;
+    while i < APP_N {
+        if E_SRC[i] == src {
+            let pp = core::ptr::addr_of!(E_PKG) as *const u8;
+            if cstr_eq(pp.add(i * 44), pkg) {
+                let o = E_OFF[i] as usize;
+                let l = E_LEN[i] as usize;
+                if l == 0 || l > OBJ_CAP { return false; }
+                let mut k = 0usize;
+                while k < l { OBJ_BUF[k] = read_volatile(REG_BUF.as_ptr().add(o + k)); k += 1; }
+                OBJ_N = l;
+                SKIP_OFF = o;
+                SKIP_LEN = l;
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+unsafe fn cstr_eq(a: *const u8, b: *const u8) -> bool {
+    let mut i = 0usize;
+    loop {
+        let ca = read_volatile(a.add(i));
+        let cb = read_volatile(b.add(i));
+        if ca != cb { return false; }
+        if ca == 0 { return true; }
+        i += 1;
+    }
+}
+
+/// 隐藏: 对象 可见 -> 隐藏(hideFlag:true)。先写隐藏注册表, 再从可见注册表删除。
+unsafe fn op_hide() -> bool { op_hide_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
+
+unsafe fn op_hide_pkg(pkg: *const u8) -> bool {
+    if write_blocked() { return false; }
+    if !capture(pkg, 0) { return false; }
+    // 1) 隐藏注册表: 追加(可能不存在 => 合成最小结构)
+    load_file(HID_PATH.as_ptr());
+    APP_N = 0;
+    if parse_registry(1) != 0 { return false; }
+    let n = serialize(usize::MAX, 0, 2);
+    if n == 0 || !write_file(HID_PATH.as_ptr(), n) { return false; }
+    // 2) 可见注册表: 删除该对象
+    if !capture(pkg, 0) { return false; }
+    let n = serialize(SKIP_OFF, SKIP_LEN, 0);
+    if n == 0 || !write_file(VIS_PATH.as_ptr(), n) { return false; }
+    true
+}
+
+/// 显示: 对象 隐藏 -> 可见(摘 hideFlag)。先写可见注册表, 再从隐藏注册表删除。
+unsafe fn op_show() -> bool { op_show_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
+
+unsafe fn op_show_pkg(pkg: *const u8) -> bool {
+    if write_blocked() { return false; }
+    if !capture(pkg, 1) { return false; }
+    // 1) 可见注册表: 追加
+    if !load_file(VIS_PATH.as_ptr()) { return false; }
+    APP_N = 0;
+    if parse_registry(0) != 0 { return false; }
+    let n = serialize(usize::MAX, 0, 1);
+    if n == 0 || !write_file(VIS_PATH.as_ptr(), n) { return false; }
+    // 2) 隐藏注册表: 删除该对象
+    if !capture(pkg, 1) { return false; }
+    let n = serialize(SKIP_OFF, SKIP_LEN, 0);
+    if n == 0 || !write_file(HID_PATH.as_ptr(), n) { return false; }
+    true
+}

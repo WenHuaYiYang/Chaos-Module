@@ -616,10 +616,22 @@ pub(crate) unsafe fn refresh_cache() {
 pub(crate) unsafe fn pending() -> bool { st_rd!(RH_CACHE_BUSY) != 0 }
 
 /// 每拍最多退役一个源路径，动画帧逐个展开。
+///
+/// 两条终止纪律(2026-10-15 修"图标页点别的包永远切不动"的根因)：
+///   * 息屏只是**暂停**(跑批同样停)，亮屏接着来 —— BUSY 保持不动；
+///   * 缓存实例不在位 = 无事可做，当场把 BUSY 作废。
+/// 旧代码在 `RH_ON == 0`(让位 Corona / 用户关掉资源钩子开关)时直接 return，
+/// BUSY 永远不清；而 icon_apply 的跑批收尾(step_apply/step_restore)与点击门
+/// (click_entry)都等 pending() 归零 => IC_STATE 卡死在 2/3，图标页从此点不动。
+/// 退役本身只是 fw_img_free_by_path 按路径逐出缓存，不依赖钩子在不在位；
+/// 让位后照跑还有个附带好处：此前被我们重定向过的缓存条目一并逐出，界面干净回到系统原图标。
 unsafe fn refresh_cache_step() {
-    if !pending() || !fw_api::screen_is_on() || st_rd!(RH_ON) == 0 { return; }
+    if !pending() || !fw_api::screen_is_on() { return; }
     if !plausible_ptr(rd32(IMAGE_CACHE_SLOT as *const u32))
-        || !plausible_ptr(rd32(HEADER_CACHE_SLOT as *const u32)) { return; }
+        || !plausible_ptr(rd32(HEADER_CACHE_SLOT as *const u32)) {
+        st_wr!(RH_CACHE_BUSY, 0);
+        return;
+    }
     let mut k = st_rd!(RH_CACHE_RULE) as usize;
     while k < RULES.len() {
         let rule = &RULES[k];

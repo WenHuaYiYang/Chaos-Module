@@ -514,7 +514,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
 // 要做"先删后建"必须先确认 lv_timer_delete 的地址, 在那之前只建一次。
 pub(crate) unsafe fn shake_arm() {
     if st_rd!(BOOT_DELAY) != 0 { return; }
-    // 开关在重启后从持久化文件恢复；文件缺失时保持默认开启。
+    // 开关在重启后从持久化文件恢复；文件缺失时保持默认关闭(SHAKE_EN 初值 0)。
     let path = b"/data/chaos/shake.cfg\0";
     let fd = fw_api::open(path.as_ptr(), fw_api::oflag::RDONLY, 0);
     if fd >= 0 {
