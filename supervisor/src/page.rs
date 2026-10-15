@@ -1143,8 +1143,10 @@ impl Page for AppMgrPage {
                 fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
                 // 勾选态: 勾 = 当前可见(原地补写)
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                    0, crate::appmgr::visible(i) as u8);
+                // secondary 必须原样再传: row_update 对 secondary=NULL 的语义是"清空并隐藏"
+                // 已存在的副标签(0x0C4C8904 反编译实证), 传 NONE 会把 row_create 建出的包名洗掉
+                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                    crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
                 i += 1;
             }
             Ok(())

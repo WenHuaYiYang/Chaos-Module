@@ -30,12 +30,14 @@ pub unsafe extern "C" fn row_trailing(row: Obj) -> Obj {
 ///
 /// 参数归属（0x0C4C8904 反汇编实证，按"三个文本槽"理解是错的）：
 /// - `a1` → `row+0x34`：`row_create` 从不创建这条标签（写它无效）
-/// - `primary` → `row+0x3c`：**主标签**
-/// - `secondary` → `row+0x40`：**副标签**（传 `NONE_PTR` 才不建；传空串会惰性创建出空行）
+/// - `primary` → `row+0x3c`：**主标签**（NULL = 完全跳过，不动已有标签）
+/// - `secondary` → `row+0x40`：**副标签**；**NULL 语义与 primary 不对称**——
+///   副标签已存在时会 `set_text(label,NULL)` 清空文本并加隐藏旗标（= 洗掉副标题，
+///   2026-10-15 设备实测踩坑）；副标签不存在才是不建。要保副标题必须原样再传文本。
 /// - `badge` → int32，`row+0x54`
 /// - `selected` → trailing 选中态：非 0 → 选中（switch 为"开"、复选框为"勾选"）
 ///
-/// **不用的文本槽一律传 `NONE_PTR`。**
+/// **没有副标题的行文本槽才传 `NONE_PTR`；有副标题的行 update 时必须重传文本。**
 pub unsafe extern "C" fn row_update(
     row: Obj,
     a1: Cp,
