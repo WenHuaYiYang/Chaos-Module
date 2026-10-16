@@ -22,6 +22,13 @@ static mut WATCHED_ROOT: u32 = 0;
 static mut WATCHED_ROOTS: [u32; 4] = [0; 4];
 static mut MUTATING: u32 = 0;
 static mut PERSIST_LOADED: u32 = 0;
+// 实时背景模糊(跟随表盘): 表盘 identity 变化时自动重生成静态模糊, 免手动点"生成"。
+// 注意语义: 这是"事件触发的自动刷新", 不是逐帧 GPU 模糊 —— 固件 GPU(VGLite)没有
+// 可从模块安全调用的模糊入口(取证见 Ghidra/blur-gpu-feasibility.md), 逐帧方案被否。
+static mut RT_LOADED: u32 = 0;
+static mut RT_ON: u32 = 0;
+static mut RT_WF: u32 = 0;    // 上次见到的表盘 identity(基线)
+static mut RT_VALID: u32 = 0; // 基线是否已校准(打开开关后第一次见到表盘时校准)
 // 模块注入后给其他模块留出启动窗口，约 50 * 50ms = 2.5 秒。
 static mut BOOT_DELAY: u32 = 0;
 
@@ -38,6 +45,7 @@ unsafe fn load_mode() {
     // masked_targets(), 不在这读文件的话 MASK 永远是静态默认 0x0F(全开),
     // 表现为"关了区域重启后又被全局模糊"(2026-10-16 真机踩坑)。
     crate::blur_zone::ensure_loaded();
+    load_rt();
     let fd = fw_api::open(b"/data/chaos/background.cfg\0".as_ptr(), fw_api::oflag::RDONLY, 0);
     if fd < 0 { return; }
     let mut v = 0u8;
@@ -249,6 +257,55 @@ pub(crate) unsafe fn remount() {
     }
 }
 
+// ===== 实时背景模糊(跟随表盘) =====
+
+const RT_CFG: &[u8] = b"/data/chaos/bg_realtime.cfg\0";
+
+/// once 加载开关(load_mode 的 once 路径里调, 重启后保持)
+unsafe fn load_rt() {
+    if RT_LOADED != 0 { return; }
+    RT_LOADED = 1;
+    let fd = fw_api::open(RT_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd >= 0 {
+        let mut v = 0u8;
+        if fw_api::read(fd, &mut v as *mut u8, 1) == 1 && v <= 1 { st_wr!(RT_ON, v as u32); }
+        fw_api::close(fd);
+    }
+}
+
+pub(crate) unsafe fn realtime_on() -> u32 { st_rd!(RT_ON) }
+
+/// 翻开关并持久化; 打开时清基线 —— 翻开关本身不该立刻触发生成,
+/// 而是等下一次表盘 identity 真的变化(或先校准基线)。
+pub(crate) unsafe fn set_realtime(on: u32) {
+    st_wr!(RT_ON, on);
+    if on != 0 { st_wr!(RT_VALID, 0); }
+    let v = on as u8;
+    let fd = fw_api::open(RT_CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd >= 0 { let _ = fw_api::write(fd, &v as *const u8, 1); fw_api::close(fd); }
+    st_wr!(DIRTY, 1);
+}
+
+/// 表盘跟随检测: 只在静态背景(mode 1)且人在表盘上时看 identity。
+/// identity 变了 → 登记生成请求, 由既有"返回表盘后生效"链路重生成。
+/// 生成是分批的(表盘像素抓取 + 模糊), 一次触发只跑一轮, 不会连续烧 CPU。
+unsafe fn realtime_follow() {
+    if st_rd!(RT_ON) == 0 { return; }
+    if fw_api::watchface_is_on() == 0 { return; }
+    let id = fw_api::background_watchface_identity();
+    if id == 0 { return; }
+    if st_rd!(RT_VALID) == 0 {
+        st_wr!(RT_VALID, 1);
+        st_wr!(RT_WF, id);
+        return;
+    }
+    if id != st_rd!(RT_WF) {
+        st_wr!(RT_WF, id);
+        st_wr!(GENERATE, 1);
+        st_wr!(REQUEST, 1);
+    }
+}
+
 pub(crate) unsafe fn status() -> &'static [u8] {
     if st_rd!(REQUEST) != 0 && st_rd!(MODE) != 0
         && fw_api::top_app_id() != fw_api::HOME_APP_ID {
@@ -339,6 +396,9 @@ pub(crate) unsafe fn tick() {
         if crate::background_surfaces::pending() { let _ = crate::background_surfaces::tick(Some(parents)); }
         return;
     }
+    // 实时背景模糊: 必须在算 generate **之前**看表盘有没有换 —— GENERATE 置位
+    // 晚一拍的话本 tick 会走"重挂旧图"分支, 新表盘的模糊永远出不来。
+    realtime_follow();
     let generate = st_rd!(GENERATE) != 0 || st_rd!(SOURCE_MODE) != mode
         || SCENE.descriptor() == 0;
     // 只有生成需要表盘可见；已有静态图在其他主界面页面也可立即重挂。

@@ -927,20 +927,23 @@ impl Page for BlurPage {
         unsafe {
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                (1, RowSpec::switch("持续复用静态背景\0".as_bytes())),
-                (2, RowSpec::clickable("生成或更新表盘背景\0".as_bytes())),
-                (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
-                (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (5, RowSpec::clickable("模糊区域\0".as_bytes())),
+                (1, RowSpec::switch("静态背景图(表盘)\0".as_bytes())),
+                (2, RowSpec::switch("自动截取替换图片\0".as_bytes())),
+                (3, RowSpec::clickable("手动生成或更新表盘背景\0".as_bytes())),
+                (4, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
+                (5, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (6, RowSpec::clickable("模糊区域\0".as_bytes())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            // 勾选态原地写(不重建整页): 行 0/1 是两档单选, 行 3 是实验性那一档的开关
+            // 勾选态原地写(不重建整页): 行 0/1 是两档单选(档位), 行 2/4 是开关
             let sel = crate::background_home::mode() as usize;
             for i in 0..2 {
                 fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)), fw_api::NONE_PTR,
                     fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (i == sel) as u8);
             }
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)), fw_api::NONE_PTR,
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)), fw_api::NONE_PTR,
                 fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (sel == 3) as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, crate::background_home::realtime_on() as u8);
             Ok(())
         }
     }
@@ -949,15 +952,15 @@ impl Page for BlurPage {
         unsafe {
             match idx {
                 0 => crate::background_home::request(0),
-                2 => crate::background_home::generate(),
-                5 => nav_goto(crate::blur_zone::PAGE_PID, 0),
+                3 => crate::background_home::generate(),
+                6 => nav_goto(crate::blur_zone::PAGE_PID, 0),
                 11 => nav_back(),
                 _ => {}
             }
         }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 3 }
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 2 || idx == 4 }
 
     fn on_switch(&self, idx: usize) {
         unsafe {
@@ -965,7 +968,11 @@ impl Page for BlurPage {
                 crate::background_home::request(
                     if crate::background_home::mode() == 1 { 0 } else { 1 });
             }
-            if idx == 3 {
+            if idx == 2 {
+                crate::background_home::set_realtime(
+                    if crate::background_home::realtime_on() != 0 { 0 } else { 1 });
+            }
+            if idx == 4 {
                 crate::background_home::request(
                     if crate::background_home::mode() == 3 { 0 } else { 3 });
             }
