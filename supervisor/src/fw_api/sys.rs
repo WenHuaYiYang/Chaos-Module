@@ -282,6 +282,21 @@ pub unsafe extern "C" fn fw_img_free_by_path(path: u32) {
     f(path)
 }
 
+/// 触觉反馈公共入口：`vibrate(type)`，0x0C4C56CC。STATIC_CONFIRMED(调用点实证)。
+///
+/// 取证(2026-10-16, capstone, 见 Ghidra/vibration-feasibility.md)：
+/// - launcher 翻页动画完成回调 0x0C500668 尾部 `movs r0,#0xD; bl 0x0C4C56CC`
+///   —— **全固件对它的 BL 调用点只有这一处**，type=0x0D 即"滑动翻页"官方效果；
+/// - 内部：`bl 0x0C5EAF84` 读全局 **0x2011942E**(系统震动开关, 非0=直接返回，
+///   即自动跟随用户"震动"设置) → `bl 0x0CAA0BC4` 读 **0x200EB921**(模式,
+///   ==2 用 2 否则 1) → `bl 0x0C3DB948(type, mode, 0)` 分发到 lra(/dev/lra0) 驱动链；
+/// - 固件自己的震动也是定时器上下文驱动("Vibration timeout timer created")，
+///   与 chaos tick 同上下文，非回调禁区。
+pub unsafe extern "C" fn vibrate(vib_type: u32) {
+    let f: unsafe extern "C" fn(u32) = transmute(0x0C4C_56CDusize);
+    f(vib_type)
+}
+
 /// 桌面记录链表头(当前页)。`fw_list_head(LAUNCHER_DESKTOP_LIST) == 0` 表示此刻没有
 /// 桌面记录(例如我们正待在自己的应用里, 桌面页没在用) —— 这时 `launcher_refresh_app`
 /// 会在 0x0C513BD0 `cmp r0,#0 / beq` 直接早退: 只换指针不刷新界面 —— 换图标时

@@ -32,6 +32,107 @@ static mut RT_VALID: u32 = 0; // 基线是否已校准(打开开关后第一次�
 // 模块注入后给其他模块留出启动窗口，约 50 * 50ms = 2.5 秒。
 static mut BOOT_DELAY: u32 = 0;
 
+// ===== launcher 滑动震动(两个独立开关) =====
+// 逻辑借鉴 11(q66u 4.100.071) 的 persist.vibrate_launcher_state /
+// persist.vibrate_back_state 两个设置(那代框架 10 Pro 没有, 触发自己做)。
+// 震动走 fw_api::vibrate(0xD) = 固件官方翻页效果(0x0C4C56CC, 内部跟随系统震动开关)。
+//
+// * 滑动列表震动: 轮询 launcher 翻页状态机字节 **0x2010FD9D**。
+//   固件自己两处用它判定翻页(0x0C500472 滑动完成处理器写它并 vibrate(0x13);
+//   翻页动画回调 0x0C500668 里值>1 才 vibrate(0xD)) —— 值变化且 >1 = 滑过一页。
+//   (SCROLL 事件计数方案作废: 连续 SCROLL 事件(码11)根本不到挂回调的根上,
+//    真机 2026-10-16 实测恒 0, 阈值全拦 = 屁用没有。)
+// * 右滑返回震动: 前台 app 切回 HOME(右滑返回/退出应用的落点都是进 launcher)震一次。
+// 持久化 /data/chaos/swipe_vib.cfg 2 字节: [滑动列表, 右滑返回], 默认全关。
+static mut SV_LOADED: u32 = 0;
+static mut SV_LIST_ON: u32 = 0;
+static mut SV_BACK_ON: u32 = 0;
+static mut SV_REQ: u32 = 0;          // bit0=列表翻越 bit1=右滑返回/进 launcher
+static mut SV_PAGE_LAST: u8 = 0;     // 上次 tick 的翻页状态机值
+static mut SV_PAGE_VALID: u32 = 0;
+static mut SV_LAST_TOP: u32 = 0;     // 上一 tick 前台 app id
+static mut SV_TOP_VALID: u32 = 0;
+static mut VIB_TEST_REQ: u32 = 0;
+
+const SV_CFG: &[u8] = b"/data/chaos/swipe_vib.cfg\0";
+/// launcher 翻页状态机字节(见上; 固件两处震动判定都看它)
+const SV_PAGE_STATE: u32 = 0x2010_FD9D;
+
+unsafe fn load_sv() {
+    if SV_LOADED != 0 { return; }
+    SV_LOADED = 1;
+    let fd = fw_api::open(SV_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd >= 0 {
+        let mut v = [0u8; 2];
+        if fw_api::read(fd, v.as_mut_ptr(), 2) == 2 {
+            if v[0] <= 1 { st_wr!(SV_LIST_ON, v[0] as u32); }
+            if v[1] <= 1 { st_wr!(SV_BACK_ON, v[1] as u32); }
+        }
+        fw_api::close(fd);
+    }
+}
+
+pub(crate) unsafe fn swipe_list_on() -> u32 { st_rd!(SV_LIST_ON) }
+pub(crate) unsafe fn swipe_back_on() -> u32 { st_rd!(SV_BACK_ON) }
+
+pub(crate) unsafe fn set_swipe_vib(list: bool, on: u32) {
+    if list { st_wr!(SV_LIST_ON, on); } else { st_wr!(SV_BACK_ON, on); }
+    let v = [st_rd!(SV_LIST_ON) as u8, st_rd!(SV_BACK_ON) as u8];
+    let fd = fw_api::open(SV_CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd >= 0 { let _ = fw_api::write(fd, v.as_ptr(), 2); fw_api::close(fd); }
+}
+
+pub(crate) unsafe fn vib_test_req() { st_wr!(VIB_TEST_REQ, 1); }
+
+
+
+/// tick: 右滑返回/进 launcher = 前台 app 切回 HOME
+unsafe fn sv_back_tick() {
+    if st_rd!(SV_BACK_ON) == 0 { return; }
+    let top = fw_api::top_app_id();
+    if st_rd!(SV_TOP_VALID) == 0 {
+        st_wr!(SV_TOP_VALID, 1);
+        st_wr!(SV_LAST_TOP, top);
+        return;
+    }
+    if top != st_rd!(SV_LAST_TOP) {
+        let prev = st_rd!(SV_LAST_TOP);
+        st_wr!(SV_LAST_TOP, top);
+        if top == fw_api::HOME_APP_ID && prev != fw_api::HOME_APP_ID {
+            st_wr!(SV_REQ, st_rd!(SV_REQ) | 2);
+        }
+    }
+}
+
+/// tick: 滑动列表震动 = 翻页状态机字节变化且 >1(与固件自己的判定一致)
+unsafe fn sv_list_tick() {
+    if st_rd!(SV_LIST_ON) == 0 { return; }
+    let v = crate::mem::rd8(SV_PAGE_STATE as *const u8);
+    if st_rd!(SV_PAGE_VALID) == 0 {
+        st_wr!(SV_PAGE_VALID, 1);
+        st_wr!(SV_PAGE_LAST, v);
+        return;
+    }
+    if v != st_rd!(SV_PAGE_LAST) {
+        st_wr!(SV_PAGE_LAST, v);
+        if v > 1 { st_wr!(SV_REQ, st_rd!(SV_REQ) | 1); }
+    }
+}
+
+unsafe fn vib_tick() {
+    sv_list_tick();
+    sv_back_tick();
+    let req = st_rd!(SV_REQ);
+    if req != 0 {
+        st_wr!(SV_REQ, 0);
+        fw_api::vibrate(0xD);
+    }
+    if st_rd!(VIB_TEST_REQ) != 0 {
+        st_wr!(VIB_TEST_REQ, 0);
+        fw_api::vibrate(0xD);
+    }
+}
+
 unsafe fn persist_mode(mode: u32) {
     let path = b"/data/chaos/background.cfg\0";
     let fd = fw_api::open(path.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
@@ -46,6 +147,7 @@ unsafe fn load_mode() {
     // 表现为"关了区域重启后又被全局模糊"(2026-10-16 真机踩坑)。
     crate::blur_zone::ensure_loaded();
     load_rt();
+    load_sv();
     let fd = fw_api::open(b"/data/chaos/background.cfg\0".as_ptr(), fw_api::oflag::RDONLY, 0);
     if fd < 0 { return; }
     let mut v = 0u8;
@@ -68,7 +170,8 @@ unsafe extern "C" fn structure_changed(event: u32) {
     }
     if !watched { return; }
     let code = rd16((event + 8) as *const u16) & 0x7FFF;
-    if code == 0x24 && current == rd32((event + 4) as *const u32) {
+    let target = rd32((event + 4) as *const u32);
+    if code == 0x24 && current == target {
         if current == st_rd!(WATCHED_ROOT) { st_wr!(WATCHED_ROOT, 0); }
         let mut roots = st_rd!(WATCHED_ROOTS);
         for root in &mut roots { if *root == current { *root = 0; } }
@@ -341,6 +444,7 @@ pub(crate) unsafe fn tick() {
     }
     load_mode();
     consume_deleted();
+    vib_tick();   // 滑动震动 + 震动测试
     if !crate::font_apply::quiet() { return; }
     if fw_api::screen_is_on() && crate::background_surfaces::pending() {
         let Some(full) = fw_api::background_home_targets() else { return; };

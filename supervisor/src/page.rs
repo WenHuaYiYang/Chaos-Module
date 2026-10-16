@@ -193,6 +193,7 @@ impl Page for InfoPage {
                 (6, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化
                 (7, RowSpec::clickable(b"\xe7\xbc\x93\xe5\xad\x98\xe6\xb8\x85\xe7\x90\x86\0")), // 缓存清理(页12, Shell++ 逻辑重写)
                 (8, RowSpec::clickable("关于 ".as_bytes())),
+                (9, RowSpec::clickable("震动\0".as_bytes())),
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -220,6 +221,7 @@ impl Page for InfoPage {
                 6 => nav_goto(13, 0),
                 7 => nav_goto(12, 0),
                 8 => nav_goto(14, 0),
+                9 => nav_goto(16, 0),
                 _ => {} // 行0-2 是数据行
             }
         }
@@ -1197,6 +1199,57 @@ impl Page for AppMgrPage {
     }
 }
 
+// ===== 页16: 主页 -> 震动 =====
+//
+// 行0 = "滑动列表震动"(launcher 根 SCROLL_END + 拖拽距离过滤, 见 background_home.rs);
+// 行1 = "右滑返回震动"(前台 app 切回 HOME 震一次); 行2 = "测试震动";
+// 行11 = 返回。两个开关独立持久化 /data/chaos/swipe_vib.cfg, 默认全关。
+pub(crate) struct VibPage;
+
+impl Page for VibPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "震动\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::switch("滑动列表震动\0".as_bytes())),
+                (1, RowSpec::switch("右滑返回震动\0".as_bytes())),
+                (2, RowSpec::clickable("测试震动\0".as_bytes())),
+                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::background_home::swipe_list_on() as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::background_home::swipe_back_on() as u8);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx == 2 { crate::background_home::vib_test_req(); }
+            else if idx == 11 { nav_back(); }
+        }
+    }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 0 || idx == 1 }
+
+    fn on_switch(&self, idx: usize) {
+        unsafe {
+            if idx == 0 {
+                crate::background_home::set_swipe_vib(true,
+                    if crate::background_home::swipe_list_on() != 0 { 0 } else { 1 });
+            } else if idx == 1 {
+                crate::background_home::set_swipe_vib(false,
+                    if crate::background_home::swipe_back_on() != 0 { 0 } else { 1 });
+            }
+        }
+    }
+}
+
 // ===== 分发表 =====
 
 static PAGE_INFO: InfoPage = InfoPage;
@@ -1211,6 +1264,7 @@ static PAGE_CACHEP: CachePage = CachePage;
 static PAGE_BEAUTIFY: BeautifyPage = BeautifyPage;
 static PAGE_BLURP: BlurPage = BlurPage;
 static PAGE_ZONEP: BlurZonePage = BlurZonePage;
+static PAGE_VIBP: VibPage = VibPage;
 static PAGE_FONTLIST: FontListPage = FontListPage;
 static PAGE_ICONSUB: IconSubPage = IconSubPage;
 static PAGE_ABOUT: AboutPage = AboutPage;
@@ -1321,7 +1375,7 @@ impl Page for BlurZonePage {
     }
 }
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 16] = [
+pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
     &PAGE_DIR,        // 2  目录 2 级(不可达, 保留注册)
@@ -1338,4 +1392,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 16] = [
     &PAGE_BEAUTIFY,     // 13
     &PAGE_ABOUT,        // 14
     &PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
+    &PAGE_VIBP,         // 16 主页 -> 震动
 ];
