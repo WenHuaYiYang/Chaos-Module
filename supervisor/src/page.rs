@@ -192,8 +192,8 @@ impl Page for InfoPage {
                 (5, RowSpec::clickable(b"\xe4\xba\xae\xe5\xba\xa6\xe6\x8e\xa7\xe5\x88\xb6\0")), // 亮度
                 (6, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化
                 (7, RowSpec::clickable(b"\xe7\xbc\x93\xe5\xad\x98\xe6\xb8\x85\xe7\x90\x86\0")), // 缓存清理(页12, Shell++ 逻辑重写)
-                (8, RowSpec::clickable("关于 ".as_bytes())),
-                (9, RowSpec::clickable("震动\0".as_bytes())),
+                (8, RowSpec::clickable("震动\0".as_bytes())),
+                (9, RowSpec::clickable("关于 ".as_bytes())),
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -220,8 +220,8 @@ impl Page for InfoPage {
                 5 => nav_goto(11, 0),
                 6 => nav_goto(13, 0),
                 7 => nav_goto(12, 0),
-                8 => nav_goto(14, 0),
-                9 => nav_goto(16, 0),
+                8 => nav_goto(16, 0),
+                9 => nav_goto(14, 0),
                 _ => {} // 行0-2 是数据行
             }
         }

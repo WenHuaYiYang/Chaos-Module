@@ -37,37 +37,38 @@ static mut BOOT_DELAY: u32 = 0;
 // persist.vibrate_back_state 两个设置(那代框架 10 Pro 没有, 触发自己做)。
 // 震动走 fw_api::vibrate(0xD) = 固件官方翻页效果(0x0C4C56CC, 内部跟随系统震动开关)。
 //
-// * 滑动列表震动: 轮询 launcher 翻页状态机字节 **0x2010FD9D**。
-//   固件自己两处用它判定翻页(0x0C500472 滑动完成处理器写它并 vibrate(0x13);
-//   翻页动画回调 0x0C500668 里值>1 才 vibrate(0xD)) —— 值变化且 >1 = 滑过一页。
-//   (SCROLL 事件计数方案作废: 连续 SCROLL 事件(码11)根本不到挂回调的根上,
-//    真机 2026-10-16 实测恒 0, 阈值全拦 = 屁用没有。)
+// * 滑动列表震动: launcher 根上的**任意事件**(v1 原始方案, 真机实证会震 —— 滚动时
+//   磁贴回收/滚动事件都会到这; 而 SCROLL_END(10) 经实测根本不来, 码过滤全是死路),
+//   冷却 200ms 限频: 持续滑动 = 每 200ms 震一次(跟手节奏), 单次操作 = 震一次,
+//   停手即停(真机 2026-10-16 三轮迭代定稿)。
 // * 右滑返回震动: 前台 app 切回 HOME(右滑返回/退出应用的落点都是进 launcher)震一次。
 // 持久化 /data/chaos/swipe_vib.cfg 2 字节: [滑动列表, 右滑返回], 默认全关。
 static mut SV_LOADED: u32 = 0;
 static mut SV_LIST_ON: u32 = 0;
 static mut SV_BACK_ON: u32 = 0;
 static mut SV_REQ: u32 = 0;          // bit0=列表翻越 bit1=右滑返回/进 launcher
-static mut SV_PAGE_LAST: u8 = 0;     // 上次 tick 的翻页状态机值
-static mut SV_PAGE_VALID: u32 = 0;
+static mut SV_TICK: u32 = 0;         // 50ms 计数
+static mut SV_LAST_VIB: u32 = 0;     // 上次震动时刻(SV_TICK)
+static mut SV_LAST_VALID: u32 = 0;
 static mut SV_LAST_TOP: u32 = 0;     // 上一 tick 前台 app id
 static mut SV_TOP_VALID: u32 = 0;
 static mut VIB_TEST_REQ: u32 = 0;
 
 const SV_CFG: &[u8] = b"/data/chaos/swipe_vib.cfg\0";
-/// launcher 翻页状态机字节(见上; 固件两处震动判定都看它)
-const SV_PAGE_STATE: u32 = 0x2010_FD9D;
+/// 冷却: 两次震动最小间隔。tick 粒度 50ms, 80ms 不可整除 → 取 2 tick = 100ms
+/// (最接近的档位; 要精确 80ms 得引固件 ms 级时钟源, 暂不必)
+const SV_COOLDOWN: u32 = 2;
 
 unsafe fn load_sv() {
     if SV_LOADED != 0 { return; }
     SV_LOADED = 1;
     let fd = fw_api::open(SV_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
     if fd >= 0 {
+        // 兼容旧版 1 字节文件(只有滑动列表): 读到几个算几个, 缺的位保持默认关
         let mut v = [0u8; 2];
-        if fw_api::read(fd, v.as_mut_ptr(), 2) == 2 {
-            if v[0] <= 1 { st_wr!(SV_LIST_ON, v[0] as u32); }
-            if v[1] <= 1 { st_wr!(SV_BACK_ON, v[1] as u32); }
-        }
+        let n = fw_api::read(fd, v.as_mut_ptr(), 2);
+        if n >= 1 && v[0] <= 1 { st_wr!(SV_LIST_ON, v[0] as u32); }
+        if n >= 2 && v[1] <= 1 { st_wr!(SV_BACK_ON, v[1] as u32); }
         fw_api::close(fd);
     }
 }
@@ -104,23 +105,25 @@ unsafe fn sv_back_tick() {
     }
 }
 
-/// tick: 滑动列表震动 = 翻页状态机字节变化且 >1(与固件自己的判定一致)
-unsafe fn sv_list_tick() {
+/// structure_changed 里调: launcher 根上的任意事件 + 冷却。
+/// 真机 2026-10-16 定稿: 按事件码过滤(9/10/11)会让滑动完全不震 —— 滚动事件
+/// 就藏在 PRESSING/其它码里, 分不出; "按住不滑连震"是已知代价, 用户接受。
+pub(crate) unsafe fn swipe_scroll_evt(current: u32, target: u32) {
     if st_rd!(SV_LIST_ON) == 0 { return; }
-    let v = crate::mem::rd8(SV_PAGE_STATE as *const u8);
-    if st_rd!(SV_PAGE_VALID) == 0 {
-        st_wr!(SV_PAGE_VALID, 1);
-        st_wr!(SV_PAGE_LAST, v);
-        return;
-    }
-    if v != st_rd!(SV_PAGE_LAST) {
-        st_wr!(SV_PAGE_LAST, v);
-        if v > 1 { st_wr!(SV_REQ, st_rd!(SV_REQ) | 1); }
+    let roots = st_rd!(WATCHED_ROOTS);
+    let launcher = roots[0];
+    if launcher == 0 || (current != launcher && target != launcher) { return; }
+    let t = st_rd!(SV_TICK);
+    let last = st_rd!(SV_LAST_VIB);
+    if st_rd!(SV_LAST_VALID) == 0 || t.wrapping_sub(last) >= SV_COOLDOWN {
+        st_wr!(SV_REQ, st_rd!(SV_REQ) | 1);
+        st_wr!(SV_LAST_VIB, t);
+        st_wr!(SV_LAST_VALID, 1);
     }
 }
 
 unsafe fn vib_tick() {
-    sv_list_tick();
+    st_wr!(SV_TICK, st_rd!(SV_TICK).wrapping_add(1));
     sv_back_tick();
     let req = st_rd!(SV_REQ);
     if req != 0 {
@@ -171,6 +174,8 @@ unsafe extern "C" fn structure_changed(event: u32) {
     if !watched { return; }
     let code = rd16((event + 8) as *const u16) & 0x7FFF;
     let target = rd32((event + 4) as *const u32);
+    // launcher 滑动震动: 任意事件 + 冷却(见 swipe_scroll_evt)
+    swipe_scroll_evt(current, target);
     if code == 0x24 && current == target {
         if current == st_rd!(WATCHED_ROOT) { st_wr!(WATCHED_ROOT, 0); }
         let mut roots = st_rd!(WATCHED_ROOTS);
