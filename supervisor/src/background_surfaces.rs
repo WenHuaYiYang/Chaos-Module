@@ -297,7 +297,10 @@ unsafe fn scan_children(root: u32, object: u32, depth: u32) {
 
 pub(crate) unsafe fn enable(roots: [u32; 4]) {
     consume();
+    // roots[1] = 控制中心; 模糊区域关闭时为 0(见 background_home::masked_targets),
+    // obj_child_count(0) 是空指针解引用, 必须整段跳过。
     let control = roots[1];
+    if control != 0 {
     let count = fw_api::obj_child_count(control);
     if count <= CHILD_CAP {
         for index in 0..count {
@@ -323,6 +326,7 @@ pub(crate) unsafe fn enable(roots: [u32; 4]) {
                 }
             }
         }
+    }
     }
     page_background(roots[2]);
     page_background(roots[3]);

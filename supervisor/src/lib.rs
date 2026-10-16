@@ -26,6 +26,7 @@ mod background_home;
 mod background_pages;
 mod background_surfaces;
 mod background_assets;
+mod blur_zone;
 
 mod text;
 mod explorer;

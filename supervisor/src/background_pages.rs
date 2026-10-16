@@ -24,7 +24,9 @@ unsafe extern "C" fn page_aggregation_create(page: u32, root: u32, start: u32) -
 unsafe fn page_create(slot: usize, page: u32, root: u32, start: u32) -> i32 {
     let result = fw_api::background_page_invoke(
         fw_api::BACKGROUND_NOTIFY_CREATE_ORIGINALS[slot], page, root, start);
-    if crate::background_home::mode() != 0 {
+    // 模糊区域关闭"通知中心"时不登记页面根 —— 聚合页保持官方画面
+    // (PAGE_ROOTS 不登记, page_sync/enable_transparent 的页面分支自然全跳过)。
+    if crate::background_home::mode() != 0 && crate::blur_zone::on(3) {
         let descriptor_root = if safe_ptr(page) {
             rd32((page + 0x30) as *const u32)
         } else { 0 };
@@ -60,7 +62,7 @@ pub(crate) unsafe fn install() -> bool {
             st_wr!(HOOKED[slot], 1);
         }
         let existing = rd32((desc + 0x30) as *const u32);
-        if safe_ptr(existing) {
+        if safe_ptr(existing) && crate::blur_zone::on(3) {
             crate::background_surfaces::set_page_root(slot, existing);
         }
         any = rd32(address as *const u32) == callbacks[slot] || any;

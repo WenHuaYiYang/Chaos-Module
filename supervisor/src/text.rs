@@ -54,25 +54,69 @@ unsafe fn next_uint(src: *const u8, k: &mut usize, ok: &mut bool) -> u32 {
     v
 }
 
-// 取第 skip_lines 行之后的前两个数, 按字节 -> MB 写成 "aMB/bMB"
-unsafe fn pair_mb(src: *const u8, dst: *mut u8, skip_lines: u32) -> bool {
+// 内存三值解析(对齐 shellpp native_fs.c 的 memory_read_live_umem, 2026-10-16):
+// 小米固件把权威分配器统计放在 Umem 行, 形如 "total used free ... Umem" —— 标签在
+// 行尾, 且不保证是第 2 行(旧实现按固定行号取, 读到的不是 Umem 行, 数值全错)。
+// 逐行跟踪"本行前三个数 + Umem 匹配态", 换行/结尾时 Umem 命中且凑满三个数即命中。
+// 返回 (total, used, free), 单位字节。
+unsafe fn mem_umem(src: *const u8, n: usize) -> Option<(u32, u32, u32)> {
+    let mut numbers = [0u32; 3];
+    let mut nc = 0usize;        // 本行已收的数字个数
+    let mut nv = 0u32;          // 正在拼的数字
+    let mut active = false;     // 数字是否在拼
+    let mut st = 0u8;           // "Umem" 匹配进度 0..4
     let mut k = 0usize;
-    let mut ln = 0u32;
-    while ln < skip_lines {
-        let c = read_volatile(src.add(k));
-        if c == 0 { return false; }
-        if c == b'\n' { ln += 1; }
+    loop {
+        let c = if k < n { read_volatile(src.add(k)) } else { 0 };
         k += 1;
+        if c == b'\n' || c == b'\r' || c == 0 {
+            if active && nc < 3 { numbers[nc] = nv; nc += 1; }
+            if st == 4 && nc >= 3 { return Some((numbers[0], numbers[1], numbers[2])); }
+            if c == 0 { break; }
+            nv = 0; nc = 0; active = false; st = 0;
+            continue;
+        }
+        if c >= b'0' && c <= b'9' {
+            if !active { active = true; nv = 0; }
+            if nv <= 429496729 { nv = nv * 10 + (c - b'0') as u32; }
+        } else {
+            if active {
+                if nc < 3 { numbers[nc] = nv; nc += 1; }
+                nv = 0; active = false;
+            }
+            if st == 0 && c == b'U' { st = 1; }
+            else if st == 1 && c == b'm' { st = 2; }
+            else if st == 2 && c == b'e' { st = 3; }
+            else if st == 3 && c == b'm' { st = 4; }
+            else if c == b'U' { st = 1; }
+            else if c != b' ' && c != b'\t' { st = 0; }
+        }
     }
-    let mut ok1 = false;
-    let a = next_uint(src, &mut k, &mut ok1);
-    let mut ok2 = false;
-    let b = if ok1 { next_uint(src, &mut k, &mut ok2) } else { 0 };
-    if !ok1 || !ok2 { return false; }
-    // 两个数都不到 1MB 说明 取到的不是字节量, 交给调用方回退
-    if (a >> 20) == 0 && (b >> 20) == 0 { return false; }
+    None
+}
+
+// 字节量按 shellpp memory_append_kb 的口径写: >=1MB 显示一位小数 MB, 否则 KB
+unsafe fn mem_kb(w: &mut W, bytes: u32) {
+    let kb = bytes >> 10;
+    if kb >= 1024 {
+        let whole = kb / 1024;
+        let tenths = (kb % 1024) * 10 / 1024;
+        w.n(whole).c(b'.').n(tenths).s(b"MB");
+    } else {
+        w.n(kb).s(b"KB");
+    }
+}
+
+// 信息页内存行文本: "已用/总量 百分比%"(shellpp 同款)
+unsafe fn mem_mb(src: *const u8, n: usize, dst: *mut u8) -> bool {
+    let Some((total, used, _)) = mem_umem(src, n) else { return false; };
+    if total == 0 || used > total { return false; }
+    let pct = ((used as u64 * 100) / total as u64) as u32;
     let mut w = W::new(dst, 24);
-    w.n(a >> 20).s(b"MB/").n(b >> 20).s(b"MB");
+    mem_kb(&mut w, used);
+    w.c(b'/');
+    mem_kb(&mut w, total);
+    w.c(b' ').n(pct).c(b'%');
     w.end();
     true
 }
@@ -202,7 +246,7 @@ pub(crate) unsafe fn stat_name(idx: usize) -> *const u8 {
 pub(crate) unsafe fn stat_fill(idx: usize) {
     let dst = (core::ptr::addr_of_mut!(STAT_VAL) as *mut u8).add(idx * STAT_STRIDE);
     write_volatile(dst.add(0), 0);
-    let mut buf: [u8; 256] = [0; 256];
+    let mut buf: [u8; 512] = [0; 512];   // meminfo 可能有多行分配器统计, 256 不保险
     match idx {
         0 => {
             // 存储: 容量/已用都带单位后缀, 必须按单位还原(见 fs_usage_mb)
@@ -210,9 +254,9 @@ pub(crate) unsafe fn stat_fill(idx: usize) {
                 && !fs_usage_mb(buf.as_ptr(), dst) { first_line(buf.as_ptr(), dst); }
         }
         1 => {
-            // 首行是表头, 数据在第2行
-            if read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 256) > 0
-                && !pair_mb(buf.as_ptr(), dst, 1) { first_line(buf.as_ptr(), dst); }
+            // Umem 行(标签在行尾, 行号不固定), 解析见 mem_umem
+            let n = read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 512);
+            if n > 0 && !mem_mb(buf.as_ptr(), n, dst) { first_line(buf.as_ptr(), dst); }
         }
         _ => {
             // CPU 占用: /proc/cpuload, 固件格式 "%3ld.%01ld%%"(每 CPU 一行)
@@ -272,25 +316,14 @@ unsafe fn next_size(src: *const u8, k: &mut usize, ok: &mut bool) -> u64 {
 
 // 存储占用百分比 0..100。数据行 = "挂载点 容量 已用 可用 挂载点", 取首行前两个数,
 // 用 小/大 反推占用比(与列顺序无关)。这两行说的是下面的 storage_pct, 不是紧跟的 mem_pct。
-// 内存占用比 0..100: /proc/meminfo 第2行两个字节量, 用 第二个/第一个
+// 内存占用比 0..100: meminfo 的 Umem 行 已用/总量(mem_umem; 旧实现按固定行号取错行)
 pub(crate) unsafe fn mem_pct() -> u32 {
-    let mut buf: [u8; 256] = [0; 256];
-    if read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 256) == 0 { return 0; }
-    let mut k = 0usize;
-    // 跳过表头行
-    loop {
-        let c = read_volatile(buf.as_ptr().add(k));
-        if c == 0 || k >= 255 { return 0; }
-        k += 1;
-        if c == b'\n' { break; }
-    }
-    let mut ok = false;
-    let a = next_uint(buf.as_ptr(), &mut k, &mut ok);
-    if !ok || a == 0 { return 0; }
-    let mut ok2 = false;
-    let b = next_uint(buf.as_ptr(), &mut k, &mut ok2);
-    if !ok2 { return 0; }
-    let p = (b as u64 * 100 / a as u64) as u32;
+    let mut buf: [u8; 512] = [0; 512];
+    let n = read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 512);
+    if n == 0 { return 0; }
+    let Some((total, used, _)) = mem_umem(buf.as_ptr(), n) else { return 0; };
+    if total == 0 || used > total { return 0; }
+    let p = (used as u64 * 100 / total as u64) as u32;
     if p > 100 { 100 } else { p }
 }
 

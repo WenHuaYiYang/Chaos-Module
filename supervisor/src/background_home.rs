@@ -34,6 +34,10 @@ unsafe fn persist_mode(mode: u32) {
 unsafe fn load_mode() {
     if st_rd!(PERSIST_LOADED) != 0 { return; }
     st_wr!(PERSIST_LOADED, 1);
+    // 模糊区域掩码必须在这条 once 路径里一起装: 重启注入后第一次 attach 走的就是
+    // masked_targets(), 不在这读文件的话 MASK 永远是静态默认 0x0F(全开),
+    // 表现为"关了区域重启后又被全局模糊"(2026-10-16 真机踩坑)。
+    crate::blur_zone::ensure_loaded();
     let fd = fw_api::open(b"/data/chaos/background.cfg\0".as_ptr(), fw_api::oflag::RDONLY, 0);
     if fd < 0 { return; }
     let mut v = 0u8;
@@ -225,6 +229,26 @@ pub(crate) unsafe fn generate() {
 
 pub(crate) unsafe fn mode() -> u32 { st_rd!(MODE) }
 
+/// 按模糊区域掩码过滤目标面: 关闭的区域槽位置 0 —— SCENE/enable 全链都把
+/// parent==0 当"跳过", 于是该区域保持官方模糊画面(见 blur_zone.rs 槽位表)。
+/// 刷新快照的调用点**必须用全量 roots**(refresh_dirty_snapshots 内部会拿
+/// background_home_targets() 原样比对, 掩码后的数组比对不上会静默失效)。
+unsafe fn masked_targets(full: [u32; 4]) -> [u32; 4] {
+    [if crate::blur_zone::on(0) { full[0] } else { 0 },
+     if crate::blur_zone::on(1) { full[1] } else { 0 },
+     if crate::blur_zone::on(2) { full[2] } else { 0 },
+     if crate::blur_zone::on(3) { full[3] } else { 0 }]
+}
+
+/// 模糊区域开关变化后的重挂入口: 已在替换态就拆了按新掩码重装,
+/// 未启用背景(模式 0)则什么都不动(下次启用自然按新掩码来)。
+pub(crate) unsafe fn remount() {
+    if st_rd!(MODE) != 0 {
+        st_wr!(REQUEST, 1);
+        st_wr!(DIRTY, 1);
+    }
+}
+
 pub(crate) unsafe fn status() -> &'static [u8] {
     if st_rd!(REQUEST) != 0 && st_rd!(MODE) != 0
         && fw_api::top_app_id() != fw_api::HOME_APP_ID {
@@ -262,7 +286,8 @@ pub(crate) unsafe fn tick() {
     consume_deleted();
     if !crate::font_apply::quiet() { return; }
     if fw_api::screen_is_on() && crate::background_surfaces::pending() {
-        let changed = crate::background_surfaces::tick(fw_api::background_home_targets());
+        let Some(full) = fw_api::background_home_targets() else { return; };
+        let changed = crate::background_surfaces::tick(Some(masked_targets(full)));
         if changed != 0 && st_rd!(ATTACHED) != 0 {
             st_wr!(REFRESH, st_rd!(REFRESH) | changed);
         }
@@ -294,7 +319,10 @@ pub(crate) unsafe fn tick() {
     }
     if !install() { st_wr!(REQUEST, 0); set_status(5); return; }
     if !fw_api::screen_is_on() || fw_api::top_app_id() != fw_api::HOME_APP_ID { return; }
-    let Some(parents) = fw_api::background_home_targets() else { return; };
+    let Some(full) = fw_api::background_home_targets() else { return; };
+    // parents = 掩码后的数组(SCENE/enable/transparent 全链用); full 只喂给
+    // refresh_dirty_snapshots(内部按全量 targets 原样比对, 见 masked_targets 注释)。
+    let parents = masked_targets(full);
     if !watch_structure() { set_status(4); return; }
     if mode == 3 {
         if st_rd!(REQUEST) != 0 {
@@ -350,7 +378,7 @@ pub(crate) unsafe fn tick() {
     }
     if st_rd!(REFRESH) != 0 && st_rd!(ATTACHED) != 0
         && !crate::background_surfaces::pending() {
-        fw_api::background_home_refresh_dirty_snapshots(parents, st_rd!(REFRESH));
+        fw_api::background_home_refresh_dirty_snapshots(full, st_rd!(REFRESH));
         st_wr!(REFRESH, 0);
     }
 }

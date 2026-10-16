@@ -122,11 +122,14 @@ pub static PAGE_CACHE: [u8; 6] = *b"cache\0";
 pub static PAGE_FONTD: [u8; 6] = *b"fontd\0";
 pub static PAGE_ABOUT: [u8; 6] = *b"about\0";
 
+/// 页15: 系统模糊 -> 模糊区域(三级)。四个背景替换区域(启动器/控制中心/通知中心/小部件)的开关。
+pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 15;                   // 注册页数(页0..页13)
+pub const PAGE_COUNT: usize = 16;                   // 注册页数(页0..页15)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 435] = [0; 435];         // 14 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 464] = [0; 464];         // 16 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

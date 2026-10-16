@@ -915,6 +915,7 @@ impl Page for BeautifyPage {
 // 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
 // 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
 // 原"固定图片背景"那一档已删: 它只读 /data/chaos/background.bin, 而这文件从没有生成过。
+// 行5 = "模糊区域"入口(页15, blur_zone): 分区域启停背景替换(启动器/控制中心/通知中心/小部件)。
 pub(crate) struct BlurPage;
 
 impl Page for BlurPage {
@@ -930,6 +931,7 @@ impl Page for BlurPage {
                 (2, RowSpec::clickable("生成或更新表盘背景\0".as_bytes())),
                 (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
                 (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (5, RowSpec::clickable("模糊区域\0".as_bytes())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 勾选态原地写(不重建整页): 行 0/1 是两档单选, 行 3 是实验性那一档的开关
             let sel = crate::background_home::mode() as usize;
@@ -948,6 +950,7 @@ impl Page for BlurPage {
             match idx {
                 0 => crate::background_home::request(0),
                 2 => crate::background_home::generate(),
+                5 => nav_goto(crate::blur_zone::PAGE_PID, 0),
                 11 => nav_back(),
                 _ => {}
             }
@@ -1200,6 +1203,7 @@ static PAGE_BRIGHT: BrightnessPage = BrightnessPage { req: AtomicU32::new(0), re
 static PAGE_CACHEP: CachePage = CachePage;
 static PAGE_BEAUTIFY: BeautifyPage = BeautifyPage;
 static PAGE_BLURP: BlurPage = BlurPage;
+static PAGE_ZONEP: BlurZonePage = BlurZonePage;
 static PAGE_FONTLIST: FontListPage = FontListPage;
 static PAGE_ICONSUB: IconSubPage = IconSubPage;
 static PAGE_ABOUT: AboutPage = AboutPage;
@@ -1260,7 +1264,57 @@ impl Page for AboutPage {
     fn on_click(&self, idx: usize) { if idx == 5 { unsafe { nav_back(); } } }
 }
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 15] = [
+// ===== 页15: 系统模糊 -> 模糊区域(三级) =====
+//
+// 四个背景替换区域的开关(数据与持久化全在 blur_zone.rs, 这里只建行与派发):
+//   行0=启动器 行1=控制中心 行2=通知中心 行3=小部件 行11=返回。
+// 开 = 正常替换(默认); 关 = 该区域保持官方模糊画面。
+// 翻位后 blur_zone::set 持久化 + background_home::remount() 置 REQUEST,
+// 由背景 tick 的拆/装流程按新掩码统一重建(页面退出前就能看到拆装, 不用重启)。
+// 开关初态: 单排行, row_update 第 6 参原地补写(secondary 传 NONE 是安全的 ——
+// 这些行没有副标签, 详见 fw_api::row_update 注释)。
+pub(crate) struct BlurZonePage;
+
+impl Page for BlurZonePage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "模糊区域\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            crate::blur_zone::ensure_loaded();
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::switch("启动器\0".as_bytes())),
+                (1, RowSpec::switch("控制中心\0".as_bytes())),
+                (2, RowSpec::switch("小部件\0".as_bytes())),
+                (3, RowSpec::switch("通知中心\0".as_bytes())),
+                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
+            for i in 0..crate::blur_zone::REGION_N {
+                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)),
+                    fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                    0, crate::blur_zone::on(i) as u8);
+            }
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        if idx == 11 { unsafe { nav_back(); } }
+    }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx < crate::blur_zone::REGION_N }
+
+    fn on_switch(&self, idx: usize) {
+        unsafe {
+            if idx >= crate::blur_zone::REGION_N { return; }
+            if crate::blur_zone::set(idx, !crate::blur_zone::on(idx)) {
+                crate::background_home::remount();
+            }
+        }
+    }
+}
+
+pub(crate) static PAGE_TABLE: [&dyn Page; 16] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
     &PAGE_DIR,        // 2  目录 2 级(不可达, 保留注册)
@@ -1276,4 +1330,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 15] = [
     &PAGE_CACHEP,     // 12
     &PAGE_BEAUTIFY,     // 13
     &PAGE_ABOUT,        // 14
+    &PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
 ];
