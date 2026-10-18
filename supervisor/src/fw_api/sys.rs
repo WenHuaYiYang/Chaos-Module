@@ -39,7 +39,7 @@ pub const BRIGHT_STATE: u32 = 0x2013_F148;
 /// `brightness_set_value(v)` — 手动设亮度 0-255（内部经 clamp_manual 钳到 0-600 硬件标度）静态核对
 /// 地址必须 |1（Thumb bit0）：符号查找给出的是偶数代码地址，直接当函数指针会崩
 pub unsafe fn brightness_set_value(v: u32) {
-    let f: unsafe extern "C" fn(u32) = transmute(0x0CA6_F661usize);
+    let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::BRIGHTNESS_SET_VALUE as usize);
     f(v);
 }
 
@@ -63,7 +63,7 @@ pub unsafe fn brightness_get_auto_adjustment() -> u32 {
 
 /// `brightness_set_full_power(on)` — 全功率模式（亮屏时强制 600）静态核对
 pub unsafe fn brightness_set_full_power(on: u32) {
-    let f: unsafe extern "C" fn(u32) = transmute(0x0CA6_F7D9usize);
+    let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::BRIGHTNESS_SET_FULL_POWER as usize);
     f(on);
 }
 
@@ -72,7 +72,7 @@ pub unsafe fn brightness_set_full_power(on: u32) {
 /// 自动亮度强光路径（1200/2000）走的就是这个函数，所以 >600 的值是合法的。
 /// `brightness_set_value` 会经 `clamp_manual` 钳到 600，想突破手动上限必须用这个。
 pub unsafe fn brightness_apply_raw(v: u32) {
-    let f: unsafe extern "C" fn(u32) = transmute(0x0CA6_EF35usize);
+    let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::BRIGHTNESS_APPLY_RAW as usize);
     f(v);
 }
 
@@ -297,6 +297,16 @@ pub unsafe extern "C" fn vibrate(vib_type: u32) {
     f(vib_type)
 }
 
+/// `translate(消息号)` 取当前语言下的词，返回 NUL 结尾字符串
+///
+/// 依据: 闹钟页宿主与滚轮回调都这么用 —— 池里存 `"hour.common"`/`"min.common"` 这类
+/// 消息号，交给 `FUN_00125C38` 换成界面文本。
+/// fw_addr: 0x00125C38  (文件偏移; VA = +0x0C0C0000, 指针 |=1)
+pub unsafe extern "C" fn translate(msg_id: u32) -> *const u8 {
+    let f: unsafe extern "C" fn(u32) -> *const u8 = transmute(0x0C1E_5C39usize);
+    f(msg_id)
+}
+
 /// 桌面记录链表头(当前页)。`fw_list_head(LAUNCHER_DESKTOP_LIST) == 0` 表示此刻没有
 /// 桌面记录(例如我们正待在自己的应用里, 桌面页没在用) —— 这时 `launcher_refresh_app`
 /// 会在 0x0C513BD0 `cmp r0,#0 / beq` 直接早退: 只换指针不刷新界面 —— 换图标时
@@ -313,7 +323,7 @@ pub const LAUNCHER_DESKTOP_LIST: u32 = 0x200D_0CBC;
 ///   0x0C513C60 `bl 0xc513440`                        = launcher_rebuild_all
 /// 即改完注册表 +0x0C 之后调它，桌面就会用新路径重画。 静态核对
 pub unsafe extern "C" fn launcher_refresh_app(app_id: u32) {
-    let f: unsafe extern "C" fn(u32) = transmute(0x0C51_3BC1usize);
+    let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::LAUNCHER_REFRESH_APP as usize);
     f(app_id)
 }
 
@@ -330,16 +340,16 @@ pub unsafe extern "C" fn launcher_refresh_app(app_id: u32) {
 ///   * data_init(0x0C513E90, 从 launcher.db 重建记录)只在开机总初始化
 ///     (FUN_0c4c7194)跑一次, 进桌面不会撤销 del。
 pub unsafe extern "C" fn app_launcher_del(app_id: u32) {
-    let f: unsafe extern "C" fn(u32) = transmute(0x0C51_3B2Dusize);
+    let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::APP_LAUNCHER_DEL as usize);
     f(app_id)
 }
 
-/// `app_launcher_add(app_id)` —— 把**注册表在册**的应用立即加回桌面。0x0C513A44
-/// (与 state.rs FW_INIT_BUFFER 同址, 那边服务于 ipc 注册链)。取证(同上日):
+/// `app_launcher_add(app_id)` —— 把**注册表在册**的应用立即加回桌面。
+/// (与 state.rs FW_INIT_BUFFER 同址, 那边服务于 ipc 注册链; 两处都从 `fwaddr` 取, 不留两个真源)。取证:
 ///   尾字面量 0x0C513B1C->"app_launcher_add"、0x0C513B24->"add icon: %s";
 ///   经 FUN_0c513700 按注册表节点建记录(应用不在册/"The app need hidden"时拒绝
 ///   返回0), 插入顺序表后 FUN_0c513440 relayout。
 pub unsafe extern "C" fn app_launcher_add(app_id: u32) {
-    let f: unsafe extern "C" fn(u32) = transmute(0x0C51_3A45usize);
+    let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::APP_LAUNCHER_ADD as usize);
     f(app_id)
 }

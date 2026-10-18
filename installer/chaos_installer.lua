@@ -72,7 +72,24 @@ local settings_enabled = true
 local started_once = false
 local wipe_armed = false
 
-local function set_status(text, color) status_label:set { text = tostring(text), text_color = color or V_TXT2 } end
+-- 状态行是单行居中(卡片 304 宽 / 22px 字): 超宽会被屏幕裁掉, 显示前按"半角宽度"截断。
+-- 中文/全角算 2 个单位, ASCII 算 1; 上限 26 个单位 = 13 个汉字 = 286px。
+-- 拼接出来的消息(如 "更新失败: " .. err)单条看都不长、拼起来会超, 所以截断放在显示层。
+local function fit_status(text)
+  local s = tostring(text)
+  local units, i = 0, 1
+  while i <= #s do
+    local b = s:byte(i)
+    local len = (b >= 0xF0 and 4) or (b >= 0xE0 and 3) or (b >= 0xC0 and 2) or 1
+    local w = (len >= 3) and 2 or 1
+    if units + w > 26 then return s:sub(1, i - 1) .. "…" end
+    units = units + w
+    i = i + len
+  end
+  return s
+end
+
+local function set_status(text, color) status_label:set { text = fit_status(text), text_color = color or V_TXT2 } end
 
 -- 把参数变成 POSIX 安全的单引号字面量。单引号内部没有任何转义机制,
 -- 遇到引号只能"关引号 + 转义引号 + 重开引号"。
@@ -259,7 +276,8 @@ local function update_supervisor()
     local sent, send_err = send_settings_command()
     if not sent then return false, send_err end
   end
-  return true, settings_enabled and "模块已更新，settings 已触发，请重启" or "模块已更新，请重启"
+  -- 状态行是单行居中、卡片只有 304 宽(22px), 太长会被屏幕裁掉; 成功提示收在 220px 内。
+  return true, settings_enabled and "已更新，重启后设置生效" or "模块已更新，请重启"
 end
 
 local function build_chaos_sh()
@@ -377,8 +395,11 @@ local function autostart_remove()
   if not ok then return false, err end
   return legacy_cleanup()
 end
+local function autostart_registered()
+  return read_all(RC_SH) == build_chaos_sh() and read_all(BOOT_FRAME) == build_boot_frame()
+end
 local function autostart_state_text()
-  if read_all(RC_SH) == build_chaos_sh() and read_all(BOOT_FRAME) == build_boot_frame() then
+  if autostart_registered() then
     return "已注册，开关在管理器"
   end
   return "尚未注册自启动"
@@ -627,7 +648,7 @@ end
 
 local as_label
 local function as_set(text, color)
-  if as_label then as_label:set { text = tostring(text), text_color = color or V_TXT2 } end
+  if as_label then as_label:set { text = fit_status(text), text_color = color or V_TXT2 } end
 end
 
 lvgl.Label(main_view, {
@@ -683,19 +704,24 @@ local function make_button(parent, text, y_ofs, kind, on_clicked)
   return b, button_label
 end
 
-local settings_button, settings_label
+-- 注入设置页的两个开关: 自启动(装/删)与是否注入 settings。
+-- settings 的选择在运行/更新模块时生效(update_supervisor 写 settings.cfg 并触发命令),
+-- 这里切换时先落盘, 下次进页面能看到上次的选择。
 local saved_settings = read_all(DATA_DIR .. "/settings.cfg", "rb")
 settings_enabled = (saved_settings == nil) or saved_settings == string.char(1)
-settings_button, settings_label = make_button(main_view, "注入 settings：关闭", -52, "ghost", function()
-  if runner or started_once then set_status("请在运行前选择", V_WARN); return end
-  settings_enabled = not settings_enabled
-  settings_label:set { text = settings_enabled and "注入 settings：开启" or "注入 settings：关闭" }
-end)
-settings_label:set { text = settings_enabled and "注入 settings：开启" or "注入 settings：关闭" }
+local autostart_btn_label, settings_btn_label
+local function settings_refresh()
+  if autostart_btn_label then
+    autostart_btn_label:set { text = autostart_registered() and "自启动：删除" or "自启动：安装" }
+  end
+  if settings_btn_label then
+    settings_btn_label:set { text = settings_enabled and "注入 settings：开启" or "注入 settings：关闭" }
+  end
+end
 local run_button
 detect_language()
 
-run_button = make_button(main_view, "运行", 6, "primary", function()
+run_button = make_button(main_view, "运行", -30, "primary", function()
   if runner then set_status("正在运行"); return end
   if module_loaded() then
     set_status("正在更新模块")
@@ -709,12 +735,13 @@ run_button = make_button(main_view, "运行", 6, "primary", function()
   if not started then set_status("运行失败: " .. tostring(err), V_ERR) end
 end)
 
-make_button(main_view, "自启动", 80, "ghost", function()
+make_button(main_view, "注入设置", 60, "ghost", function()
+  settings_refresh()
   as_set(autostart_state_text(), V_TXT2)
   view_show("as")
 end)
 
-make_button(main_view, "清除重置", 154, "danger", function()
+make_button(main_view, "清除重置", 150, "danger", function()
   if runner then set_status("运行中, 请等待", V_WARN); return end
   if not wipe_armed then wipe_armed = true; set_status("再按一次以确认清除", V_WARN); return end
   wipe_armed = false
@@ -725,7 +752,7 @@ make_button(main_view, "清除重置", 154, "danger", function()
 end)
 
 lvgl.Label(as_view, {
-  text = "自启动",
+  text = "注入设置",
   text_color = V_TXT,
   text_font = lvgl.Font(F_BODY, 32),
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -198 },
@@ -733,25 +760,40 @@ lvgl.Label(as_view, {
 as_label = lvgl.Label(as_view, {
   text = "",
   text_color = V_TXT2,
-  text_font = lvgl.Font(F_BODY, 18),
+  text_font = lvgl.Font(F_BODY, 22),
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -152 },
 })
 
-make_button(as_view, "安装", -66, "primary", function()
+-- 行1: 自启动(点一下在"安装/删除"之间切换, 状态写在按钮文字上)
+local autostart_button, autostart_lbl = make_button(as_view, "自启动：安装", -70, "ghost", function()
   if runner then as_set("正在运行, 请等待", V_WARN); return end
-  local ok, err = autostart_install()
-  if not ok then as_set(tostring(err), V_ERR); return end
-  as_set("已注册，请到管理器重建", V_OK)
+  if autostart_registered() then
+    local ok, err = autostart_remove()
+    if not ok then as_set("失败: " .. tostring(err), V_ERR); return end
+    as_set("已删除，请到管理器重建", V_WARN)
+  else
+    local ok, err = autostart_install()
+    if not ok then as_set(tostring(err), V_ERR); return end
+    as_set("已注册，请到管理器重建", V_OK)
+  end
+  settings_refresh()
 end)
+autostart_btn_label = autostart_lbl
 
-make_button(as_view, "删除", 8, "danger", function()
-  if runner then as_set("正在运行, 请等待", V_WARN); return end
-  local ok, err = autostart_remove()
-  if not ok then as_set("失败: " .. tostring(err), V_ERR); return end
-  as_set("已删除，请到管理器重建", V_WARN)
+-- 行2: 是否注入 settings(运行/更新模块时生效)
+local settings_button, settings_lbl = make_button(as_view, "注入 settings：开启", 4, "ghost", function()
+  if runner or started_once then as_set("请在运行前选择", V_WARN); return end
+  settings_enabled = not settings_enabled
+  local ok, err = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
+  if not ok then as_set("保存失败: " .. tostring(err), V_ERR); return end
+  settings_refresh()
+  as_set(settings_enabled and "运行时注入 settings" or "运行时跳过 settings", V_TXT2)
 end)
+settings_btn_label = settings_lbl
 
-make_button(as_view, "< 返回", 82, "ghost", function()
+settings_refresh()
+
+make_button(as_view, "< 返回", 78, "ghost", function()
   as_set(autostart_state_text(), V_TXT2)
   view_show("main")
 end)

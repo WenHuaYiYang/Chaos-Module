@@ -167,15 +167,17 @@ unsafe fn load_mode() {
 unsafe extern "C" fn structure_changed(event: u32) {
     if event == 0 { return; }
     let current = rd32(event as *const u32);
+    let target = rd32((event + 4) as *const u32);
+    // launcher 滑动震动先判: 回调挂在 launcher 根上, 子对象的事件靠冒泡送进来,
+    // 而下面那道"是不是我们盯的根"的过滤只看 current —— 子对象来的事件会被它整条丢掉,
+    // 表现就是滑动列表震动时有时无。swipe_scroll_evt 自己会校验事件确实来自 launcher。
+    swipe_scroll_evt(current, target);
     let mut watched = current == st_rd!(WATCHED_ROOT);
     for root in st_rd!(WATCHED_ROOTS) {
         if root != 0 && root == current { watched = true; }
     }
     if !watched { return; }
     let code = rd16((event + 8) as *const u16) & 0x7FFF;
-    let target = rd32((event + 4) as *const u32);
-    // launcher 滑动震动: 任意事件 + 冷却(见 swipe_scroll_evt)
-    swipe_scroll_evt(current, target);
     if code == 0x24 && current == target {
         if current == st_rd!(WATCHED_ROOT) { st_wr!(WATCHED_ROOT, 0); }
         let mut roots = st_rd!(WATCHED_ROOTS);

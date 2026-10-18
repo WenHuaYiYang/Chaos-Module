@@ -14,6 +14,7 @@ mod font_list;
 mod font_hot;
 mod icon_apply;
 mod res_hook;
+mod time_set;
 mod settings_entry;
 mod appmgr;
 mod cacheclean;

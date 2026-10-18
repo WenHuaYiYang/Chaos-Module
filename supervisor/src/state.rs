@@ -96,7 +96,9 @@ pub static PAGE_MAIN: [u8; 5] = *b"main\0";
 //  最深进到 /data/chaos(再往下的 icons/<包号> 这级进不去了, 由美化页的列表代管)。
 pub static PAGE_DIR0: [u8; 6] = *b"files\0";
 
-pub static PAGE_DIR1: [u8; 7] = *b"files1\0";
+/// 页2: 时间/日期设置(独立注册页)。原来这一格是文件管理的第 2 级目录，
+/// 文件管理入口退役后没人再跳进来，页名跟着改判 —— 页名只是 page_goto 的解析键。
+pub static PAGE_TIME: [u8; 8] = *b"timeset\0";
 
 pub static PAGE_DIR2: [u8; 7] = *b"files2\0";
 

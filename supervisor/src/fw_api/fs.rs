@@ -47,6 +47,15 @@ pub unsafe extern "C" fn write(fd: i32, buf: *const u8, len: u32) -> i32 {
     f(fd, buf, len)
 }
 
+/// `ioctl(fd, req, arg)`。固件 rtc.c 的 req: 0x1901 读时间(缓冲为 struct tm 布局),
+/// 0x1902 设时间(成功后驱动会调 clock_synchronize, 系统时钟跟着走)。
+/// 依据: date 命令把 0x1901 读回的缓冲直接交给 strftime(0x0C17xxx), 该 ioctl 入口
+/// 0x0C1D01A4 的 fd 查找与分发路径 0x0EE8C8 已逐字读过。
+pub unsafe extern "C" fn ioctl(fd: i32, req: u32, arg: u32) -> i32 {
+    let f: unsafe extern "C" fn(i32, u32, u32) -> i32 = transmute(0x0C1D_01A5usize);
+    f(fd, req, arg)
+}
+
 /// `opendir(path)` **目录不能用 open()（返回 -6 ENXIX）** 已验证
 pub unsafe extern "C" fn opendir(path: Cp) -> Obj {
     let f: unsafe extern "C" fn(Cp) -> Obj = transmute(0x0C1E_4529usize);

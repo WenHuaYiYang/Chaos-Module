@@ -378,9 +378,12 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     if pid > MAX_PID { return 0; }
     st_wr!(FG_PAGE, pid as u32);
     shake_arm();   // 首次进入(UI线程)订阅摇一摇+建timer, 幂等
-    if pid >= 2 && pid <= 3 {
+    if pid == 3 {
         // 目录页: depth=pid-1, 恢复该级窗位, 重新加载目录(数据永远新鲜)。
-        // (2026-10-15) 文件管理入口退役: 目录页只剩 pid2/3(不可达), 页1 已重分配给应用管理
+        // (2026-10-15) 文件管理入口退役: 目录页只剩 pid3(不可达), 页1 已重分配给应用管理。
+        // (2026-10-17) 页2 让给时间/日期设置 —— 这一格原来是 `pid >= 2 && pid <= 3`,
+        // 页2 一旦真被跳进去就会拿从没填过的 PATH_STACK 跑 load_dir()(opendir/readdir),
+        // 表现是点「时间设置」立即崩。判据必须按"现在还有哪一页是目录页"写, 不能按区间写。
         st_wr!(DIR_DEPTH, (pid - 1) as u32);
         let w = read_volatile((core::ptr::addr_of!(DIR_WIN_SAVE) as *const u32).add(pid - 1));
         st_wr!(DIR_WIN, w);

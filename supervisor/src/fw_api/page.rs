@@ -76,13 +76,15 @@ pub unsafe extern "C" fn content_pad_bottom(content: Obj, pad: i32, flags: u32) 
 ///   重要: 页面重建时标题要**删掉再重建** —— 留着不删的话, 标题对象上的 local
 ///   `text_font` 会指向已经回收掉的字体对象, 整条文字不画, 滚动和重新套样式都救不回来。
 pub unsafe extern "C" fn page_title_create(root: Obj, title: Cp, mode: u32, cb: Cb, udata: u32) -> Obj {
-    let f: unsafe extern "C" fn(Obj, Cp, u32, Cb, u32) -> Obj = transmute(0x0C4C_A6C5usize);
+    let f: unsafe extern "C" fn(Obj, Cp, u32, Cb, u32) -> Obj =
+        transmute(super::fwaddr::PAGE_TITLE_CREATE as usize);
     f(root, title, mode, cb, udata)
 }
 
 /// `page_goto(app_id<<16 | page_id, start_data, param, callbacks)` 带动画压栈 已验证
 pub unsafe extern "C" fn page_goto(key: u32, start_data: u32) {
-    let f: unsafe extern "C" fn(u32, u32, u32, u32) -> i32 = transmute(0x0CA6_C359usize);
+    let f: unsafe extern "C" fn(u32, u32, u32, u32) -> i32 =
+        transmute(super::fwaddr::PAGE_GOTO as usize);
     let _ = f(key, start_data, 0, 0);
 }
 

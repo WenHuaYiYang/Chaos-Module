@@ -91,6 +91,11 @@ static mut HAVE_FILE: u32 = 0;       // 0=文件不存在(允许合成最小结�
 static mut OVERSIZE: u32 = 0;        // 1=文件超过 REG_CAP
 static mut TRUNC: u32 = 0;           // 1=存在无法管理的对象(拒绝改写)
 static mut PARSE_BAD: u32 = 0;       // 1=本次 parse 失败
+// 失败现场(界面直接报出来): 设备上的注册表拿不到, 这一行是定位格式差异的唯一入口。
+static mut PARSE_AT: u32 = 0;        // 失败位置(字节偏移)
+static mut PARSE_C: u8 = 0;          // 失败位置上的字节
+static mut PARSE_LEN: u32 = 0;       // 失败的那份文件长度
+static mut PARSE_FILE: u8 = 0;       // 0=可见注册表 1=隐藏注册表
 // 顶层 key-value 跨度(键首引号到值结尾, 不含逗号)
 static mut TL_S: [u32; 8] = [0; 8];
 static mut TL_E: [u32; 8] = [0; 8];
@@ -279,6 +284,42 @@ unsafe fn wmsg(s: &str) {
     put_str(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, s.as_bytes());
 }
 
+/// 记下失败现场并返回"坏"(2)。界面会把位置、该字节与文件长度报出来。
+unsafe fn bad(p: usize) -> u8 {
+    PARSE_BAD = 1;
+    PARSE_AT = p as u32;
+    PARSE_LEN = REG_N as u32;
+    PARSE_C = if p < REG_N { read_volatile(REG_BUF.as_ptr().add(p)) } else { 0 };
+    2
+}
+
+unsafe fn put_u32(dst: *mut u8, mut v: u32) -> usize {
+    let mut tmp = [0u8; 10];
+    let mut n = 0usize;
+    loop {
+        tmp[n] = b'0' + (v % 10) as u8;
+        v /= 10;
+        n += 1;
+        if v == 0 { break; }
+    }
+    let mut i = 0usize;
+    while i < n { write_volatile(dst.add(i), tmp[n - 1 - i]); i += 1; }
+    n
+}
+
+unsafe fn put_hex2(dst: *mut u8, v: u8) -> usize {
+    const H: &[u8; 16] = b"0123456789abcdef";
+    write_volatile(dst, H[(v >> 4) as usize]);
+    write_volatile(dst.add(1), H[(v & 15) as usize]);
+    2
+}
+
+unsafe fn put_lit(dst: *mut u8, s: &[u8]) -> usize {
+    let mut i = 0usize;
+    while i < s.len() { write_volatile(dst.add(i), s[i]); i += 1; }
+    s.len()
+}
+
 // ===== JSON 扫描(base/len 参数化, REG_BUF 与 OBJ_BUF 共用) =====
 
 #[inline(always)]
@@ -442,65 +483,118 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
                 name_pri = pri;
             }
         } else if known && key_is(key.as_ptr(), b"names\0") {
-            // names: [ { "lang": "defaults", "value": "Corona" }, .. ]
-            // 档位: lang=="defaults"=4, 其它 lang=5(只在还没有任何名字时收)。
-            // 兼容字段 name/appName/label/title(0..3) 仍然优先。
-            if s_peek(base, len, *p) != b'[' { return 2; }
-            *p += 1;
-            let mut nfirst = true;
-            loop {
-                s_ws(base, len, p);
-                let nc = s_peek(base, len, *p);
-                if nc == b']' { *p += 1; break; }
-                if nc == 0 { return 2; }
-                if !nfirst {
-                    if nc != b',' { return 2; }
-                    *p += 1;
-                    s_ws(base, len, p);
-                }
-                nfirst = false;
-                s_ws(base, len, p);
-                if s_peek(base, len, *p) != b'{' {
-                    // 非对象条目(容错): 整个跳过
-                    if !s_value_skip(base, len, p) { return 2; }
-                    continue;
-                }
+            // names 有三种形态。本机固件写的是**对象**(固件里没有 lang/defaults 两个键,
+            // 它的 names 是"语言 -> 名字"的映射), 旧假设的数组形态也留着兼容:
+            //   { "default": "Corona", "zh-CN": "..." }      <- 本机
+            //   [ { "lang": "defaults", "value": "..." } ]   <- 旧假设
+            //   "Corona"                                     <- 单字符串
+            // 档位: default/defaults = 4, 其余语言键 = 5; name/appName/label/title(0..3) 仍优先。
+            let shape = s_peek(base, len, *p);
+            if shape == b'{' {
                 *p += 1;
-                let mut is_def = false;
-                let mut val_ok = false;
-                let mut tmp = [0u8; 32];
-                let mut k2 = [0u8; 20];
+                let mut ofirst = true;
                 loop {
                     s_ws(base, len, p);
-                    let c2 = s_peek(base, len, *p);
-                    if c2 == b'}' { *p += 1; break; }
-                    if c2 == b',' { *p += 1; continue; }
-                    if c2 == 0 { return 2; }
-                    let kr2 = s_string_read(base, len, k2.as_mut_ptr(), 20, p);
-                    if kr2 == 2 { return 2; }
+                    let oc = s_peek(base, len, *p);
+                    if oc == b'}' { *p += 1; break; }
+                    if oc == 0 { return 2; }
+                    if !ofirst {
+                        if oc != b',' { return 2; }
+                        *p += 1;
+                        s_ws(base, len, p);
+                    }
+                    ofirst = false;
+                    let mut lk = [0u8; 20];
+                    let kr3 = s_string_read(base, len, lk.as_mut_ptr(), 20, p);
+                    if kr3 == 2 { return 2; }
                     s_ws(base, len, p);
                     if s_peek(base, len, *p) != b':' { return 2; }
                     *p += 1;
                     s_ws(base, len, p);
-                    if kr2 == 0 && key_is(k2.as_ptr(), b"lang\0") {
-                        let mut lg = [0u8; 16];
-                        let r = s_string_read(base, len, lg.as_mut_ptr(), 16, p);
-                        if r == 2 { return 2; }
-                        if r == 0 && (cstr_eq(lg.as_ptr(), b"defaults\0".as_ptr()) || cstr_eq(lg.as_ptr(), b"default\0".as_ptr())) {
-                            is_def = true;
-                        }
-                    } else if kr2 == 0 && key_is(k2.as_ptr(), b"value\0") {
-                        let r = s_string_read(base, len, tmp.as_mut_ptr(), 32, p);
-                        if r == 0 { val_ok = true; } else if r == 2 { return 2; }
-                    } else {
+                    if s_peek(base, len, *p) != b'"' {
                         if !s_value_skip(base, len, p) { return 2; }
+                        continue;
+                    }
+                    let mut tv = [0u8; 32];
+                    let r3 = s_string_read(base, len, tv.as_mut_ptr(), 32, p);
+                    if r3 == 2 { return 2; }
+                    if r3 != 0 { continue; }
+                    let pri = if kr3 == 0 && (key_is(lk.as_ptr(), b"default\0")
+                        || key_is(lk.as_ptr(), b"defaults\0")) { 4u8 } else { 5u8 };
+                    if pri < name_pri {
+                        let mut k = 0usize;
+                        while k < 32 { name[k] = tv[k]; if tv[k] == 0 { break; } k += 1; }
+                        name_pri = pri;
                     }
                 }
-                if val_ok && (is_def || name_pri >= 5) {
-                    let mut k = 0usize;
-                    while k < 32 { name[k] = tmp[k]; if tmp[k] == 0 { break; } k += 1; }
-                    name_pri = if is_def { 4 } else { 5 };
+            } else if shape == b'[' {
+                *p += 1;
+                let mut nfirst = true;
+                loop {
+                    s_ws(base, len, p);
+                    let nc = s_peek(base, len, *p);
+                    if nc == b']' { *p += 1; break; }
+                    if nc == 0 { return 2; }
+                    if !nfirst {
+                        if nc != b',' { return 2; }
+                        *p += 1;
+                        s_ws(base, len, p);
+                    }
+                    nfirst = false;
+                    s_ws(base, len, p);
+                    if s_peek(base, len, *p) != b'{' {
+                        // 非对象条目(容错): 整个跳过
+                        if !s_value_skip(base, len, p) { return 2; }
+                        continue;
+                    }
+                    *p += 1;
+                    let mut is_def = false;
+                    let mut val_ok = false;
+                    let mut tmp = [0u8; 32];
+                    let mut k2 = [0u8; 20];
+                    loop {
+                        s_ws(base, len, p);
+                        let c2 = s_peek(base, len, *p);
+                        if c2 == b'}' { *p += 1; break; }
+                        if c2 == b',' { *p += 1; continue; }
+                        if c2 == 0 { return 2; }
+                        let kr2 = s_string_read(base, len, k2.as_mut_ptr(), 20, p);
+                        if kr2 == 2 { return 2; }
+                        s_ws(base, len, p);
+                        if s_peek(base, len, *p) != b':' { return 2; }
+                        *p += 1;
+                        s_ws(base, len, p);
+                        if kr2 == 0 && key_is(k2.as_ptr(), b"lang\0") {
+                            let mut lg = [0u8; 16];
+                            let r = s_string_read(base, len, lg.as_mut_ptr(), 16, p);
+                            if r == 2 { return 2; }
+                            if r == 0 && (cstr_eq(lg.as_ptr(), b"defaults\0".as_ptr()) || cstr_eq(lg.as_ptr(), b"default\0".as_ptr())) {
+                                is_def = true;
+                            }
+                        } else if kr2 == 0 && key_is(k2.as_ptr(), b"value\0") {
+                            let r = s_string_read(base, len, tmp.as_mut_ptr(), 32, p);
+                            if r == 0 { val_ok = true; } else if r == 2 { return 2; }
+                        } else {
+                            if !s_value_skip(base, len, p) { return 2; }
+                        }
+                    }
+                    if val_ok && (is_def || name_pri >= 5) {
+                        let mut k = 0usize;
+                        while k < 32 { name[k] = tmp[k]; if tmp[k] == 0 { break; } k += 1; }
+                        name_pri = if is_def { 4 } else { 5 };
+                    }
                 }
+            } else if shape == b'"' {
+                let mut tv = [0u8; 32];
+                let r3 = s_string_read(base, len, tv.as_mut_ptr(), 32, p);
+                if r3 == 2 { return 2; }
+                if r3 == 0 && name_pri > 4 {
+                    let mut k = 0usize;
+                    while k < 32 { name[k] = tv[k]; if tv[k] == 0 { break; } k += 1; }
+                    name_pri = 4;
+                }
+            } else if !s_value_skip(base, len, p) {
+                return 2;
             }
         } else if known && key_is(key.as_ptr(), b"hideFlag\0") {
             hidden = if s_peek(base, len, *p) == b't' { 1 } else { 0 };
@@ -556,12 +650,12 @@ unsafe fn parse_registry(src: u8) -> u8 {
         if REG_N == 0 { HAVE_FILE = 0; }
         return 0;
     }
-    if OVERSIZE != 0 { PARSE_BAD = 1; return 2; }
+    if OVERSIZE != 0 { return bad(REG_N); }
     let base = REG_BUF.as_ptr();
     let len = REG_N;
     let mut p = 0usize;
     s_ws(base, len, &mut p);
-    if s_peek(base, len, p) != b'{' { PARSE_BAD = 1; return 2; }
+    if s_peek(base, len, p) != b'{' { return bad(p); }
     p += 1;
     let mut first = true;
     let mut found = false;
@@ -569,9 +663,9 @@ unsafe fn parse_registry(src: u8) -> u8 {
         s_ws(base, len, &mut p);
         let c = s_peek(base, len, p);
         if c == b'}' { break; }
-        if c == 0 { PARSE_BAD = 1; return 2; }
+        if c == 0 { return bad(p); }
         if !first {
-            if c != b',' { PARSE_BAD = 1; return 2; }
+            if c != b',' { return bad(p); }
             p += 1;
             s_ws(base, len, &mut p);
         }
@@ -579,47 +673,67 @@ unsafe fn parse_registry(src: u8) -> u8 {
         let ks = p;
         let mut key = [0u8; 20];
         let kr = s_string_read(base, len, key.as_mut_ptr(), 20, &mut p);
-        if kr == 2 { PARSE_BAD = 1; return 2; }
+        if kr == 2 { return bad(p); }
         s_ws(base, len, &mut p);
-        if s_peek(base, len, p) != b':' { PARSE_BAD = 1; return 2; }
+        if s_peek(base, len, p) != b':' { return bad(p); }
         p += 1;
         s_ws(base, len, &mut p);
         let _vs = p;
         let mut is_arr = false;
         if kr == 0 && key_is(key.as_ptr(), b"InstalledApps\0") {
-            if found { PARSE_BAD = 1; return 2; }   // 重复键 = 坏
+            if found { return bad(p); }   // 重复键 = 坏
             found = true;
-            if s_peek(base, len, p) != b'[' { PARSE_BAD = 1; return 2; }
-            p += 1;
-            is_arr = true;
-            let mut efirst = true;
-            loop {
-                s_ws(base, len, &mut p);
-                let ec = s_peek(base, len, p);
-                if ec == b']' { p += 1; break; }
-                if ec == 0 { PARSE_BAD = 1; return 2; }
-                if !efirst {
-                    if ec != b',' { PARSE_BAD = 1; return 2; }
-                    p += 1;
+            let shape = s_peek(base, len, p);
+            if shape == b'{' {
+                // 本机隐藏表里出现过 {"InstalledApps":{}}(空对象, 20 字节): 当成空列表;
+                // 改写时由 serialize 统一写回数组形态。非空对象只读(拒绝改写)。
+                let mut q = p;
+                if !s_value_skip(base, len, &mut q) { return bad(p); }
+                let mut k = p + 1;
+                s_ws(base, len, &mut k);
+                if s_peek(base, len, k) != b'}' { TRUNC = 1; }
+                p = q;
+                is_arr = true;
+            } else if shape != b'[' {
+                return bad(p);
+            } else {
+                p += 1;
+                is_arr = true;
+                let mut efirst = true;
+                loop {
                     s_ws(base, len, &mut p);
+                    let ec = s_peek(base, len, p);
+                    if ec == b']' { p += 1; break; }
+                    if ec == 0 { return bad(p); }
+                    if !efirst {
+                        if ec != b',' { return bad(p); }
+                        p += 1;
+                        s_ws(base, len, &mut p);
+                    }
+                    efirst = false;
+                    s_ws(base, len, &mut p);
+                    // 条目不是对象: 跳过并拒绝改写(条目的形态我们看不懂)
+                    if s_peek(base, len, p) != b'{' {
+                        TRUNC = 1;
+                        if !s_value_skip(base, len, &mut p) { return bad(p); }
+                        continue;
+                    }
+                    let rc = scan_object(&mut p, src);
+                    if rc != 0 { return bad(p); }
                 }
-                efirst = false;
-                s_ws(base, len, &mut p);
-                if s_peek(base, len, p) != b'{' { PARSE_BAD = 1; return 2; }
-                let rc = scan_object(&mut p, src);
-                if rc != 0 { PARSE_BAD = 1; return 2; }
             }
         } else {
-            if !s_value_skip(base, len, &mut p) { PARSE_BAD = 1; return 2; }
+            if !s_value_skip(base, len, &mut p) { return bad(p); }
         }
         let ve = p;
-        if TL_N >= 8 { PARSE_BAD = 1; return 2; }
+        // 顶层键超过台账容量: 只读可用, 改写拒绝(拼接会丢键)。
+        if TL_N >= 8 { TRUNC = 1; continue; }
         TL_S[TL_N] = ks as u32;
         TL_E[TL_N] = ve as u32;
         TL_ISARR[TL_N] = is_arr as u8;
         TL_N += 1;
     }
-    if p > len { PARSE_BAD = 1; return 2; }
+    if p > len { return bad(p); }
     0
 }
 
@@ -629,19 +743,37 @@ pub(crate) unsafe fn reload() {
     TRUNC = 0;
     PARSE_BAD = 0;
     OVERSIZE = 0;
-    let mut bad = 0u32;
+    let mut vis_bad = 0u32;
+    let mut hid_bad = 0u32;
     // 可见注册表(应存在; 缺失 = 空列表, 043 宽松语义)
     if load_file(VIS_PATH.as_ptr()) {
-        if parse_registry(0) != 0 { bad = 1; }
+        PARSE_FILE = 0;
+        if parse_registry(0) != 0 { vis_bad = 1; }
     }
     // 隐藏注册表(可选; 一份坏不丢另一份已读到的条目)
     if load_file(HID_PATH.as_ptr()) {
-        if parse_registry(1) != 0 { bad = 1; }
+        PARSE_FILE = 1;
+        if parse_registry(1) != 0 { hid_bad = 1; }
     }
     if OVERSIZE != 0 {
         wmsg("注册表过大, 只读\0");
-    } else if bad != 0 {
-        wmsg("注册表解析失败\0");
+    } else if vis_bad != 0 {
+        // 失败现场报到界面上: 文件/偏移/该字节/长度。设备上的注册表拿不到,
+        // 这一行就是定位格式差异的唯一入口。
+        let d = core::ptr::addr_of_mut!(APP_MSG) as *mut u8;
+        let mut n = put_lit(d, "解析失败 ".as_bytes());
+        n += put_lit(d.add(n), if PARSE_FILE == 0 { "可见".as_bytes() } else { "隐藏".as_bytes() });
+        n += put_lit(d.add(n), b"@");
+        n += put_u32(d.add(n), PARSE_AT);
+        n += put_lit(d.add(n), b" b=0x");
+        n += put_hex2(d.add(n), PARSE_C);
+        n += put_lit(d.add(n), b" len=");
+        n += put_u32(d.add(n), PARSE_LEN);
+        write_volatile(d.add(n), 0);
+    } else if hid_bad != 0 {
+        // 可见列表照常显示; 隐藏表看不懂就只读, 不拖累整页。
+        wmsg("隐藏表格式不识别, 已忽略\0");
+        TRUNC = 1;
     } else if TRUNC != 0 {
         wmsg("列表已截断, 禁止改写\0");
     } else if APP_N == 0 {

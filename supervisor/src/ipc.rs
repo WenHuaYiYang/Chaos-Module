@@ -135,7 +135,7 @@ let desc = core::ptr::addr_of_mut!(DESC) as *mut u32;
 let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_MAIN) as u32,
     core::ptr::addr_of!(PAGE_DIR0) as u32,
-    core::ptr::addr_of!(PAGE_DIR1) as u32,
+    core::ptr::addr_of!(PAGE_TIME) as u32,
     core::ptr::addr_of!(PAGE_DIR2) as u32,
     core::ptr::addr_of!(PAGE_BLUR) as u32,
     core::ptr::addr_of!(PAGE_TXTSUB) as u32,
