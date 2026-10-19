@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ko:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # tools/build_ko.sh 需要 nightly + rust-src(build-std) + thumbv8m 目标。
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+          targets: thumbv8m.main-none-eabi
+
+      - name: Build supervisor
+        run: sh tools/build_ko.sh
+
+      - name: Upload chaos_sup.ko
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos_sup.ko
+          path: supervisor/chaos_sup.ko
+          if-no-files-found: error
