@@ -1483,15 +1483,20 @@ impl Page for AppMgrPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();   // 旧对象树已随上次 content 销毁, 丢旧句柄
-            // 顶部四行(走 ctx.rows 槽 0..3)
+            // 顶部五行(走 ctx.rows 槽 0..4)
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe9\x9a\x90\xe8\x97\x8f\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键隐藏全部
                 (1, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe6\x98\xbe\xe7\xa4\xba\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键显示全部
                 (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
                 (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
+                (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 免重启显示(保留 apps.json 条目)
             ])?;
+            // 补写开关初态(开关态 = 免重启模式是否开启)
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::appmgr::apply_mode_is_keep() as u8);
             // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
-            let mut prev = read_volatile(ctx.rows.add(3));
+            let mut prev = read_volatile(ctx.rows.add(4));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::view_count();
@@ -1523,7 +1528,8 @@ impl Page for AppMgrPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            // 槽0/1/3 = 顶部按钮(ctx.rows); 条目事件槽 = 视图下标 + 12
+            // 槽0/1/3 = 顶部按钮(ctx.rows); 槽4 是开关(只走 on_switch);
+            // 条目事件槽 = 视图下标 + 12。
             // (0..11 被 ctx.rows 占用: 不错开的话点条目会被派发成点按钮 —— 2026-10-15 修)
             if idx == 0 {
                 crate::appmgr::request_batch(true);
@@ -1541,13 +1547,27 @@ impl Page for AppMgrPage {
         }
     }
 
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 4 }
+
+    fn on_switch(&self, idx: usize) {
+        if idx == 4 {
+            unsafe {
+                crate::appmgr::toggle_apply_mode();
+                render_req(1);
+            }
+        }
+    }
+
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() }
+        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() || crate::appmgr::mode_pending() }
     }
 
     fn tick(&self) {
         unsafe {
-            if crate::appmgr::batch_pending() {
+            if crate::appmgr::mode_pending() {
+                crate::appmgr::do_mode_apply();
+                render_req(1);
+            } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
                 render_req(1);
             } else if crate::appmgr::has_req() {

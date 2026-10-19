@@ -54,6 +54,24 @@ const EXCL_SLOT: usize = 44;
 const EXCL_MAX: usize = APP_MAX;
 const EXCL_TOTAL: usize = EXCL_HDR + EXCL_MAX * EXCL_SLOT;
 
+// ===== 生效模式开关 =====
+// 0 = 重启生效(默认, 搬 apps.json / apps.json_hide, 与其它工具语义一致)
+// 1 = 免重启(保留 apps.json 条目, 只同步注册表隐藏位 + 桌面图标;
+//     隐藏名单另存 appmgr_keep.bin, 开机由维护定时器补隐藏)
+// 两种模式互斥: 保留条目模式对"切换前已在 apps.json_hide 里的应用"仍要重启一次。
+pub(crate) const APPLY_CFG: &[u8] = b"/data/chaos/appmgr_apply.cfg\0";
+const KEEP_PATH: &[u8] = b"/data/chaos/appmgr_keep.bin\0";
+const KEEP_MAGIC: [u8; 4] = *b"KH01";
+const KEEP_TOTAL: usize = 4 + APP_MAX * PKG_CAP;
+static mut APPLY_MODE: u32 = 0;
+static mut APPLY_LOADED: u32 = 0;
+static mut APPLY_LABEL: [u8; 48] = [0; 48];
+static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
+static mut KEEP_N: usize = 0;
+static mut REQ_MODE: u32 = 0;
+static mut BOOT_APPLIED: u32 = 0;
+static mut BOOT_TRIES: u32 = 0;
+
 // ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
 pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
 pub(crate) static mut E_NAME: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];
@@ -1021,6 +1039,7 @@ pub(crate) unsafe fn reload() {
     PARSE_BAD = 0;
     OVERSIZE = 0;
     excl_ensure();
+    apply_mode_ensure();
     let mut vis_bad = 0u32;
     let mut hid_bad = 0u32;
     // 可见注册表(应存在; 缺失 = 空列表, 043 宽松语义)
@@ -1032,6 +1051,20 @@ pub(crate) unsafe fn reload() {
     if load_file(HID_PATH.as_ptr()) {
         PARSE_FILE = 1;
         if parse_registry(1) != 0 { hid_bad = 1; }
+    }
+    // 免重启模式: 条目还在 apps.json 里, 隐藏状态由 Chaos 名单表达。
+    // 只把"可见来源且名单里命中"的条目标成隐藏, 界面的勾选/点击方向随之切换。
+    if APPLY_MODE != 0 {
+        let mut i = 0usize;
+        while i < APP_N {
+            if read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i)) == 0 {
+                let p = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * 44);
+                if keep_has(p) {
+                    write_volatile((core::ptr::addr_of_mut!(E_SRC) as *mut u8).add(i), 1);
+                }
+            }
+            i += 1;
+        }
     }
     if OVERSIZE != 0 {
         wmsg("注册表过大, 只读\0");
@@ -1067,7 +1100,205 @@ pub(crate) unsafe fn reload() {
 }
 
 pub(crate) unsafe fn ensure() {
+    apply_mode_ensure();
     if APP_LOADED == 0 { reload(); }
+}
+
+// ===== 生效模式: 配置/隐藏名单/开机补偿 =====
+
+unsafe fn cfg_mode_read() -> u32 {
+    let fd = fw_api::open(APPLY_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return 0; }
+    let mut b = [0u8; 1];
+    let n = fw_api::read(fd, b.as_mut_ptr(), 1);
+    fw_api::close(fd);
+    if n == 1 && b[0] == b'1' { 1 } else { 0 }
+}
+
+unsafe fn cfg_mode_save() -> bool {
+    let fd = fw_api::open(APPLY_CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { return false; }
+    let b = if APPLY_MODE == 0 { b'0' } else { b'1' };
+    let n = fw_api::write(fd, &b as *const u8, 1);
+    fw_api::close(fd);
+    n == 1
+}
+
+/// 读隐藏名单(固定 4+40*44 字节)。文件缺失/坏 magic 视为空名单。
+unsafe fn keep_load() {
+    KEEP_N = 0;
+    KEEP_BUF[0] = KEEP_MAGIC[0]; KEEP_BUF[1] = KEEP_MAGIC[1];
+    KEEP_BUF[2] = KEEP_MAGIC[2]; KEEP_BUF[3] = KEEP_MAGIC[3];
+    let fd = fw_api::open(KEEP_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return; }
+    let mut n = 0usize;
+    while n < KEEP_TOTAL {
+        let got = fw_api::read(fd, KEEP_BUF.as_mut_ptr().add(n), (KEEP_TOTAL - n) as u32);
+        if got <= 0 { break; }
+        n += got as usize;
+    }
+    fw_api::close(fd);
+    if n < 4 { return; }
+    if KEEP_BUF[0] != KEEP_MAGIC[0] || KEEP_BUF[1] != KEEP_MAGIC[1]
+        || KEEP_BUF[2] != KEEP_MAGIC[2] || KEEP_BUF[3] != KEEP_MAGIC[3] { return; }
+    let mut i = 0usize;
+    while i < APP_MAX && 4 + i * PKG_CAP < n {
+        if read_volatile(KEEP_BUF.as_ptr().add(4 + i * PKG_CAP)) == 0 { break; }
+        i += 1;
+    }
+    KEEP_N = i;
+}
+
+unsafe fn keep_save() -> bool {
+    KEEP_BUF[0] = KEEP_MAGIC[0]; KEEP_BUF[1] = KEEP_MAGIC[1];
+    KEEP_BUF[2] = KEEP_MAGIC[2]; KEEP_BUF[3] = KEEP_MAGIC[3];
+    let len = 4 + KEEP_N * PKG_CAP;
+    let fd = fw_api::open(KEEP_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { return false; }
+    let mut off = 0usize;
+    let mut ok = true;
+    while off < len {
+        let got = fw_api::write(fd, KEEP_BUF.as_ptr().add(off), (len - off) as u32);
+        if got <= 0 { ok = false; break; }
+        off += got as usize;
+    }
+    fw_api::close(fd);
+    ok
+}
+
+unsafe fn keep_find(pkg: *const u8) -> usize {
+    let mut i = 0usize;
+    while i < KEEP_N {
+        let p = KEEP_BUF.as_ptr().add(4 + i * PKG_CAP);
+        if cstr_eq(p, pkg) { return i; }
+        i += 1;
+    }
+    usize::MAX
+}
+
+unsafe fn keep_has(pkg: *const u8) -> bool { keep_find(pkg) != usize::MAX }
+
+unsafe fn keep_add(pkg: *const u8) -> bool {
+    if keep_has(pkg) { return true; }
+    if KEEP_N >= APP_MAX { return false; }
+    let dst = KEEP_BUF.as_mut_ptr().add(4 + KEEP_N * PKG_CAP);
+    let mut k = 0usize;
+    while k < PKG_CAP - 1 {
+        let c = read_volatile(pkg.add(k));
+        write_volatile(dst.add(k), c);
+        if c == 0 { break; }
+        k += 1;
+    }
+    write_volatile(dst.add(PKG_CAP - 1), 0);
+    KEEP_N += 1;
+    keep_save()
+}
+
+unsafe fn keep_del(pkg: *const u8) -> bool {
+    let i = keep_find(pkg);
+    if i == usize::MAX { return true; }
+    let mut j = i;
+    while j + 1 < KEEP_N {
+        let src = KEEP_BUF.as_ptr().add(4 + (j + 1) * PKG_CAP);
+        let dst = KEEP_BUF.as_mut_ptr().add(4 + j * PKG_CAP);
+        let mut k = 0usize;
+        while k < PKG_CAP {
+            write_volatile(dst.add(k), read_volatile(src.add(k)));
+            k += 1;
+        }
+        j += 1;
+    }
+    KEEP_N -= 1;
+    keep_save()
+}
+
+/// 把名单里的应用逐个补成"隐藏": 置 node+0x3C bit0, 再摘桌面图标。
+unsafe fn keep_apply_all() -> usize {
+    let mut found = 0usize;
+    let mut i = 0usize;
+    while i < KEEP_N {
+        let p = KEEP_BUF.as_ptr().add(4 + i * PKG_CAP);
+        let node = find_node(p);
+        if node != 0 {
+            let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+            if id != 0 {
+                set_node_hidden(node, true);
+                fw_api::app_launcher_del(id);
+                found += 1;
+            }
+        }
+        i += 1;
+    }
+    found
+}
+
+pub(crate) unsafe fn apply_mode_ensure() {
+    if APPLY_LOADED != 0 { return; }
+    APPLY_MODE = cfg_mode_read();
+    keep_load();
+    APPLY_LOADED = 1;
+}
+
+pub(crate) unsafe fn apply_mode_is_keep() -> bool {
+    apply_mode_ensure();
+    APPLY_MODE != 0
+}
+
+/// 页1 开关行文案: 只写名称, 开关态由行右侧部件表达。
+pub(crate) unsafe fn apply_mode_label() -> &'static [u8] {
+    apply_mode_ensure();
+    let d = core::ptr::addr_of_mut!(APPLY_LABEL) as *mut u8;
+    let n = put_lit(d, "免重启显示\0".as_bytes());
+    core::slice::from_raw_parts(d, n)
+}
+
+/// 开关拨动: 只改模式与配置, 真正的补隐藏/重读放到 tick。
+pub(crate) unsafe fn toggle_apply_mode() {
+    apply_mode_ensure();
+    APPLY_MODE = if APPLY_MODE == 0 { 1 } else { 0 };
+    cfg_mode_save();
+    REQ_MODE = 1;
+}
+
+pub(crate) unsafe fn mode_pending() -> bool { REQ_MODE != 0 }
+
+pub(crate) unsafe fn do_mode_apply() {
+    if REQ_MODE == 0 { return; }
+    REQ_MODE = 0;
+    if APPLY_MODE != 0 {
+        keep_load();
+        keep_apply_all();
+        reload();
+        wmsg("免重启模式: 隐藏立即生效; 之前已隐藏的仍需重启一次\0");
+    } else {
+        // 切回重启模式: 免重启模式藏起来的条目还在 apps.json 里, 必须搬进
+        // apps.json_hide, 否则下次开机固件会把它当可见应用重新建图标。
+        let mut i = 0usize;
+        while i < KEEP_N {
+            let p = KEEP_BUF.as_ptr().add(4 + i * PKG_CAP);
+            if op_hide_pkg(p) {
+                // 文件已搬到 apps.json_hide; 同步隐藏位并摘掉当前桌面图标。
+                apply_pkg(true, p);
+            }
+            i += 1;
+        }
+        KEEP_N = 0;
+        let _ = keep_save();
+        reload();
+        wmsg("重启模式: 隐藏/显示写入注册表, 重启后生效\0");
+    }
+}
+
+/// 开机补偿: 模块加载后由维护定时器(UI 线程)调用。只对保留条目模式生效,
+/// 把 Chaos 隐藏名单里的应用重新置位并摘图标; 找不到节点时有限次重试。
+pub(crate) unsafe fn boot_apply() {
+    if BOOT_APPLIED != 0 { return; }
+    apply_mode_ensure();
+    if APPLY_MODE == 0 { BOOT_APPLIED = 1; return; }
+    if KEEP_N == 0 { BOOT_APPLIED = 1; return; }
+    let found = keep_apply_all();
+    BOOT_TRIES = BOOT_TRIES.wrapping_add(1);
+    if found >= KEEP_N || BOOT_TRIES >= 120 { BOOT_APPLIED = 1; }
 }
 
 // ===== 改写 =====
@@ -1261,6 +1492,10 @@ unsafe fn op_hide() -> bool { op_hide_pkg(core::ptr::addr_of!(REQ_PKG) as *const
 
 unsafe fn op_hide_pkg(pkg: *const u8) -> bool {
     if write_blocked() { return false; }
+    // 免重启模式: 条目留在 apps.json, 只记入 Chaos 隐藏名单; 即时生效由 apply_pkg 完成。
+    if apply_mode_is_keep() {
+        return keep_add(pkg);
+    }
     if !capture(pkg, 0) { return false; }
     // 1) 隐藏注册表: 追加(可能不存在 => 合成最小结构)
     load_file(HID_PATH.as_ptr());
@@ -1280,6 +1515,10 @@ unsafe fn op_show() -> bool { op_show_pkg(core::ptr::addr_of!(REQ_PKG) as *const
 
 unsafe fn op_show_pkg(pkg: *const u8) -> bool {
     if write_blocked() { return false; }
+    // 免重启模式: 条目本来就在 apps.json, 只需从 Chaos 隐藏名单里摘掉。
+    if apply_mode_is_keep() && keep_has(pkg) {
+        return keep_del(pkg);
+    }
     if !capture(pkg, 1) { return false; }
     // 1) 可见注册表: 追加
     if !load_file(VIS_PATH.as_ptr()) { return false; }
