@@ -765,29 +765,21 @@ impl Page for ExclPage {
             let mode = crate::appmgr::excl_mode();
             let mut i = 0usize;
             while i < n {
-                let (sub, trailing) = if mode == 0 {
-                    (crate::appmgr::pkg_ptr(i), fw_api::trailing::CHECKBOX)
-                } else if crate::appmgr::hidden(i) {
-                    (b"\xe5\xb7\xb2\xe9\x9a\x90\xe8\x97\x8f\0".as_ptr(), fw_api::trailing::NONE) // 已隐藏
-                } else {
-                    (b"\xe6\x98\xbe\xe7\xa4\xba\xe4\xb8\xad\0".as_ptr(), fw_api::trailing::NONE) // 显示中
-                };
+                // 管理显隐模式下只列排除项; 非排除项在页1 管理
+                if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
+                let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
                 let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), sub, trailing);
+                    crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
                 if r == 0 { return Err(PageError::RowFailed(i)); }
                 write_volatile(rows.add(i), r);
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                if trailing == fw_api::trailing::CHECKBOX {
-                    let tobj = fw_api::row_trailing(r);
-                    if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
-                }
+                let tobj = fw_api::row_trailing(r);
+                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
                 fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
-                if mode == 0 {
-                    // 复选框状态 = 是否排除; 副标题必须原样重传, 否则会被清空
-                    fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                        crate::appmgr::pkg_ptr(i), 0, crate::appmgr::excl_on(i) as u8);
-                }
+                // 复选框: 排除模式 = 是否排除; 显隐模式 = 是否可见(勾=显示中)
+                let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
+                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
                 i += 1;
             }
             Ok(())
@@ -1697,7 +1689,7 @@ impl Page for SettingsPage {
                 (7, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
                 (8, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (9, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (10, RowSpec::display("谦虚の海鸥\0".as_bytes(), "贡献者\0".as_bytes().as_ptr())),
+                (10, RowSpec::display("谦虚的海鸥\0".as_bytes(), "贡献者\0".as_bytes().as_ptr())),
             ]).map(|_| ())
         }
     }
