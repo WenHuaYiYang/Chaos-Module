@@ -19,6 +19,9 @@ jobs:
           components: rust-src
           targets: thumbv8m.main-none-eabi
 
+      - name: Set build time
+        run: echo "CHAOS_BUILD_TIME=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')" >> "$GITHUB_ENV"
+
       - name: Build supervisor
         run: sh tools/build_ko.sh
 

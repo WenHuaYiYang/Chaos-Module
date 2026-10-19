@@ -54,6 +54,23 @@ const EXCL_SLOT: usize = 44;
 const EXCL_MAX: usize = APP_MAX;
 const EXCL_TOTAL: usize = EXCL_HDR + EXCL_MAX * EXCL_SLOT;
 
+// ===== 隐藏时的注册表元数据(供"运行时重新注册"实验) =====
+// 应用被搬进 apps.json_hide 后, 开机不会注册; 想免重启显示, 只能拿隐藏前的
+// app_id / 显示名 / 图标路径重新走一次 quickapp_register_app。
+// 格式: magic "HM01" + 40 槽 × 196 字节:
+//   [0..44) 包名  [44..46) u16 app_id  [46..78) 显示名  [78..174) 图标路径
+//   [174..194) fingerprint(全 0)  [194..196) 保留
+pub(crate) const META_PATH: &[u8] = b"/data/chaos/appmgr_hidden_meta.bin\0";
+const META_MAGIC: [u8; 4] = *b"HM01";
+const META_HDR: usize = 4;
+const META_SLOT: usize = 196;
+const META_MAX: usize = APP_MAX;
+const META_TOTAL: usize = META_HDR + META_MAX * META_SLOT;
+const META_ID: usize = 44;
+const META_NAME: usize = 46;
+const META_ICON: usize = 78;
+const META_FP: usize = 174;
+
 // ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
 pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
 pub(crate) static mut E_NAME: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];
@@ -78,6 +95,7 @@ static mut EXCL_PKG: [[u8; EXCL_SLOT]; EXCL_MAX] = [[0; EXCL_SLOT]; EXCL_MAX];
 static mut EXCL_N: usize = 0;
 static mut EXCL_LOADED: u32 = 0;
 static mut EXCL_IO: [u8; EXCL_TOTAL] = [0; EXCL_TOTAL];
+static mut META_IO: [u8; META_TOTAL] = [0; META_TOTAL];
 static mut EXCL_LABEL: [u8; 48] = [0; 48];   // 页1 行3 文案
 static mut EXCL_HINT: [u8; 64] = [0; 64];    // 页7 行1 文案
 // 当前列表每项是否被排除(按完整列表下标), 批量循环直接查它。
@@ -115,6 +133,8 @@ static mut REQ_NAME: [u8; 32] = [0; 32];
 static mut REQ_EXCL: u32 = 0;
 static mut REQ_EXCL_PKG: [u8; 44] = [0; 44];
 static mut EXCL_MSG: [u8; 48] = [0; 48];
+static mut EXCL_MODE: u32 = 0;              // 0=管理排除项 1=管理显示/隐藏
+static mut MODE_LABEL: [u8; 48] = [0; 48];
 
 // ===== 解析工作区 =====
 static mut REG_BUF: [u8; REG_CAP] = [0; REG_CAP];
@@ -229,14 +249,145 @@ unsafe fn set_node_hidden(node: u32, hide: bool) {
     if nv != v { write_volatile(p, nv); }
 }
 
+/// 把 NUL 结尾字符串拷进定长槽, 末尾强制补 0。
+unsafe fn meta_copy(dst: *mut u8, src: *const u8, cap: usize) {
+    let mut i = 0usize;
+    if src != core::ptr::null() {
+        while i + 1 < cap {
+            let c = read_volatile(src.add(i));
+            write_volatile(dst.add(i), c);
+            if c == 0 { break; }
+            i += 1;
+        }
+    }
+    write_volatile(dst.add(i), 0);
+}
+
+/// 读元数据文件; 不存在/损坏时清成只有 magic 的空表。
+unsafe fn meta_read() {
+    let b = core::ptr::addr_of_mut!(META_IO) as *mut u8;
+    let mut i = 0usize;
+    while i < META_TOTAL { write_volatile(b.add(i), 0); i += 1; }
+    i = 0;
+    while i < META_HDR { write_volatile(b.add(i), META_MAGIC[i]); i += 1; }
+    let fd = fw_api::open(META_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return; }
+    let mut n = 0usize;
+    while n < META_TOTAL {
+        let got = fw_api::read(fd, b.add(n), (META_TOTAL - n) as u32);
+        if got <= 0 { break; }
+        n += got as usize;
+    }
+    fw_api::close(fd);
+    if n < META_TOTAL { return; }
+    i = 0;
+    while i < META_HDR {
+        if read_volatile(b.add(i)) != META_MAGIC[i] {
+            i = 0;
+            while i < META_HDR { write_volatile(b.add(i), META_MAGIC[i]); i += 1; }
+            let mut j = META_HDR;
+            while j < META_TOTAL { write_volatile(b.add(j), 0); j += 1; }
+            return;
+        }
+        i += 1;
+    }
+}
+
+unsafe fn meta_flush() -> bool {
+    let b = core::ptr::addr_of!(META_IO) as *const u8;
+    let fd = fw_api::open(META_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { return false; }
+    let mut off = 0usize;
+    let mut ok = true;
+    while off < META_TOTAL {
+        let got = fw_api::write(fd, b.add(off), (META_TOTAL - off) as u32);
+        if got <= 0 { ok = false; break; }
+        off += got as usize;
+    }
+    fw_api::close(fd);
+    ok
+}
+
+/// 找包名对应的槽偏移; 没有返回 usize::MAX。调用方需先 meta_read()。
+unsafe fn meta_slot(pkg: *const u8) -> usize {
+    let b = core::ptr::addr_of!(META_IO) as *const u8;
+    let mut i = 0usize;
+    while i < META_MAX {
+        let o = META_HDR + i * META_SLOT;
+        if read_volatile(b.add(o)) == 0 { return usize::MAX; }
+        if cstr_eq(b.add(o), pkg) { return o; }
+        i += 1;
+    }
+    usize::MAX
+}
+
+/// 隐藏前抓取节点元数据(id/显示名/图标路径), 覆盖同包名旧槽。
+unsafe fn meta_store(node: u32, pkg: *const u8) {
+    if node == 0 || crate::mem::safe_ptr(node) == false { return; }
+    meta_read();
+    let b = core::ptr::addr_of_mut!(META_IO) as *mut u8;
+    let mut slot = meta_slot(pkg);
+    if slot == usize::MAX {
+        let mut i = 0usize;
+        while i < META_MAX {
+            let o = META_HDR + i * META_SLOT;
+            if read_volatile(b.add(o)) == 0 { slot = o; break; }
+            i += 1;
+        }
+    }
+    if slot == usize::MAX { return; }
+    let mut j = 0usize;
+    while j < META_SLOT { write_volatile(b.add(slot + j), 0); j += 1; }
+    meta_copy(b.add(slot), pkg, PKG_CAP);
+    let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16);
+    write_volatile(b.add(slot + META_ID), (id & 0xff) as u8);
+    write_volatile(b.add(slot + META_ID + 1), (id >> 8) as u8);
+    let name = crate::mem::rd32((node + 0x14) as *const u32);
+    if name != 0 && crate::mem::safe_ptr(name) {
+        meta_copy(b.add(slot + META_NAME), name as *const u8, 32);
+    } else {
+        meta_copy(b.add(slot + META_NAME), pkg, 32);
+    }
+    let icon = crate::mem::rd32((node + fw_api::APPN_ICON) as *const u32);
+    if icon != 0 && crate::mem::safe_ptr(icon) {
+        meta_copy(b.add(slot + META_ICON), icon as *const u8, 96);
+    }
+    let _ = meta_flush();
+}
+
+/// 显示时拿元数据槽; 没有返回 usize::MAX。
+unsafe fn meta_get(pkg: *const u8) -> usize {
+    meta_read();
+    meta_slot(pkg)
+}
+
 /// 注册表写回成功后的即时生效: 先同步内存隐藏位, 再摘/挂桌面图标。
-/// 找不到节点就静默跳过(文件改动仍会在下次重启生效, 与旧行为一致)。
-unsafe fn apply_pkg(hide: bool, pkg: *const u8) {
+/// 节点不在册(重启后条目被搬走)时尝试用隐藏前保存的元数据调
+/// quickapp_register_app 重新注册; 成功返回 true。
+unsafe fn apply_pkg(hide: bool, pkg: *const u8) -> bool {
     let node = find_node(pkg);
-    if node == 0 { return; }
+    if node == 0 {
+        if hide { return false; }
+        let slot = meta_get(pkg);
+        if slot == usize::MAX { return false; }
+        let b = core::ptr::addr_of!(META_IO) as *const u8;
+        let id = read_volatile(b.add(slot + META_ID)) as u16
+            | ((read_volatile(b.add(slot + META_ID + 1)) as u16) << 8);
+        if id == 0 { return false; }
+        let info = fw_api::InterconnectAppInfo {
+            package_name: b.add(slot) as *mut u8,
+            display_name: b.add(slot + META_NAME) as *mut u8,
+            icon_file: b.add(slot + META_ICON) as *mut u8,
+            extra: core::ptr::null_mut(),
+            fingerprint: [0u8; 20],
+        };
+        fw_api::quickapp_register_app(id, &info);
+        return find_node(pkg) != 0;
+    }
     let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
-    if id == 0 { return; }
+    if id == 0 { return false; }
     if hide {
+        meta_store(node, pkg);
         set_node_hidden(node, true);
         fw_api::app_launcher_del(id);
     } else {
@@ -244,10 +395,11 @@ unsafe fn apply_pkg(hide: bool, pkg: *const u8) {
         set_node_hidden(node, false);
         fw_api::app_launcher_add(id);
     }
+    true
 }
 
-unsafe fn apply_immediate(hide: bool) {
-    apply_pkg(hide, core::ptr::addr_of!(REQ_PKG) as *const u8);
+unsafe fn apply_immediate(hide: bool) -> bool {
+    apply_pkg(hide, core::ptr::addr_of!(REQ_PKG) as *const u8)
 }
 
 /// tick: 执行挂起的隐藏/显示, 完成后重读列表(调用方随后 render_req)
@@ -257,10 +409,16 @@ pub(crate) unsafe fn do_op() {
     REQ_OP = 0;
     let ok = if hide { op_hide() } else { op_show() };
     if ok {
-        apply_immediate(hide);
+        let live = apply_immediate(hide);
         let mut w = W::new(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, 96);
-        w.s(if hide { "已隐藏 ".as_bytes() } else { "已显示 ".as_bytes() })
-         .s(cstr_slice(core::ptr::addr_of!(REQ_NAME) as *const u8))
+        if live {
+            w.s(if hide { "已隐藏 ".as_bytes() } else { "已显示 ".as_bytes() });
+        } else if hide {
+            w.s("已写入, 重启后隐藏 ".as_bytes());
+        } else {
+            w.s("已写入, 重启后显示 ".as_bytes());
+        }
+        w.s(cstr_slice(core::ptr::addr_of!(REQ_NAME) as *const u8))
          .s("\0".as_bytes());
         w.end();
     } else {
@@ -981,11 +1139,30 @@ pub(crate) unsafe fn excl_label() -> &'static [u8] {
 
 pub(crate) unsafe fn excl_hint() -> &'static [u8] {
     let d = core::ptr::addr_of_mut!(EXCL_HINT) as *mut u8;
+    if EXCL_MODE != 0 {
+        return {
+            let mut n = put_lit(d, "点一行 = 隐藏/显示该应用\0".as_bytes());
+            core::slice::from_raw_parts(d, n)
+        };
+    }
     let mut n = put_lit(d, "勾选 = 不参与一键 (已排除 ".as_bytes());
     n += put_u32(d.add(n), EXCL_N as u32);
     n += put_lit(d.add(n), ")\0".as_bytes());
     core::slice::from_raw_parts(d, n)
 }
+
+pub(crate) unsafe fn excl_mode() -> u32 { EXCL_MODE }
+
+pub(crate) unsafe fn toggle_excl_mode() { EXCL_MODE = if EXCL_MODE == 0 { 1 } else { 0 }; }
+
+pub(crate) unsafe fn mode_label() -> &'static [u8] {
+    let d = core::ptr::addr_of_mut!(MODE_LABEL) as *mut u8;
+    let s = if EXCL_MODE == 0 { "模式: 管理排除项\0" } else { "模式: 管理显隐\0" };
+    let n = put_lit(d, s.as_bytes());
+    core::slice::from_raw_parts(d, n)
+}
+
+pub(crate) unsafe fn hidden(i: usize) -> bool { !visible(i) }
 
 /// (重)读两份注册表, 重建展示列表。
 pub(crate) unsafe fn reload() {

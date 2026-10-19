@@ -358,3 +358,29 @@ pub unsafe extern "C" fn app_launcher_add(app_id: u32) {
     let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::APP_LAUNCHER_ADD as usize);
     f(app_id)
 }
+
+/// 互联应用注册信息(固件 recovered 结构, `canopus_interconnect_app_info`)。
+/// 指针都指向 NUL 结尾字符串; `extra` 语义未明, 传 0; `fingerprint` 20 字节可全 0。
+#[repr(C, packed(4))]
+pub struct InterconnectAppInfo {
+    pub package_name: *mut u8,
+    pub display_name: *mut u8,
+    pub icon_file: *mut u8,
+    pub extra: *mut u8,
+    pub fingerprint: [u8; 20],
+}
+
+/// `quickapp_register_app(app_id, info)` @ 0x0C54_9679 (Thumb)。
+///
+/// 反汇编 0x0C549678 取证: 先按 app_id 查 `APP_REGISTRY` 节点; 不存在时分配
+/// 0x74 字节节点、填进注册表、再**直接调用 app_launcher_add(0x0C513A44)**。
+/// 因此它自带"建节点 + 加桌面图标"的完整流程, 不依赖包管理器重启。
+///
+/// ⚠️ 名字里的 interconnect 说明它可能原本只服务手机互联应用; 拿来注册被
+/// `apps.json` 搬走的本地快应用时, 图标可能出来但点不开。此封装只做实验,
+/// 调用方必须用 `find_node(pkg)` 复核是否真的注册成功。
+pub unsafe fn quickapp_register_app(app_id: u16, info: *const InterconnectAppInfo) -> i32 {
+    let f: unsafe extern "C" fn(u16, *const InterconnectAppInfo) -> i32 =
+        transmute(0x0C54_9679usize);
+    f(app_id, info)
+}

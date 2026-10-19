@@ -755,26 +755,39 @@ impl Page for ExclPage {
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable("返回\0".as_bytes())),
                 (1, RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null())),
-                (2, RowSpec::display(crate::appmgr::excl_msg(), core::ptr::null())),
+                (2, RowSpec::clickable(crate::appmgr::mode_label())),
+                (3, RowSpec::display(crate::appmgr::excl_msg(), core::ptr::null())),
             ])?;
-            let mut prev = read_volatile(ctx.rows.add(2));
+            let mut prev = read_volatile(ctx.rows.add(3));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::count();
+            let mode = crate::appmgr::excl_mode();
             let mut i = 0usize;
             while i < n {
+                let (sub, trailing) = if mode == 0 {
+                    (crate::appmgr::pkg_ptr(i), fw_api::trailing::CHECKBOX)
+                } else if crate::appmgr::hidden(i) {
+                    (b"\xe5\xb7\xb2\xe9\x9a\x90\xe8\x97\x8f\0".as_ptr(), fw_api::trailing::NONE) // 已隐藏
+                } else {
+                    (b"\xe6\x98\xbe\xe7\xa4\xba\xe4\xb8\xad\0".as_ptr(), fw_api::trailing::NONE) // 显示中
+                };
                 let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), crate::appmgr::pkg_ptr(i),
-                    fw_api::trailing::CHECKBOX);
+                    crate::appmgr::entry_primary(i), sub, trailing);
                 if r == 0 { return Err(PageError::RowFailed(i)); }
                 write_volatile(rows.add(i), r);
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                if trailing == fw_api::trailing::CHECKBOX {
+                    let tobj = fw_api::row_trailing(r);
+                    if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                }
                 fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                    crate::appmgr::pkg_ptr(i), 0, crate::appmgr::excl_on(i) as u8);
+                if mode == 0 {
+                    // 复选框状态 = 是否排除; 副标题必须原样重传, 否则会被清空
+                    fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                        crate::appmgr::pkg_ptr(i), 0, crate::appmgr::excl_on(i) as u8);
+                }
                 i += 1;
             }
             Ok(())
@@ -785,23 +798,37 @@ impl Page for ExclPage {
         unsafe {
             if idx == 0 {
                 nav_back();
+            } else if idx == 2 {
+                crate::appmgr::toggle_excl_mode();
+                render_req(7);
             } else if idx >= 12 {
-                crate::appmgr::request_excl(idx - 12);
+                let i = idx - 12;
+                if crate::appmgr::excl_mode() == 0 {
+                    crate::appmgr::request_excl(i);
+                } else {
+                    crate::appmgr::click(i);
+                }
                 render_req(7);
             }
         }
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::excl_has_req() }
+        unsafe { crate::appmgr::excl_has_req() || crate::appmgr::has_req() }
     }
 
     fn tick(&self) {
         unsafe {
+            let mut dirty = false;
             if crate::appmgr::excl_has_req() {
                 crate::appmgr::do_excl();
-                render_req(7);
+                dirty = true;
             }
+            if crate::appmgr::has_req() {
+                crate::appmgr::do_op();
+                dirty = true;
+            }
+            if dirty { render_req(7); }
         }
     }
 }
@@ -1670,6 +1697,7 @@ impl Page for SettingsPage {
                 (7, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
                 (8, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (9, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (10, RowSpec::display("谦虚の海鸥\0".as_bytes(), "贡献者\0".as_bytes().as_ptr())),
             ]).map(|_| ())
         }
     }
