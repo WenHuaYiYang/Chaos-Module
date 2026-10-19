@@ -14,8 +14,11 @@
 // 显示 = 反向(搬回并摘除 hideFlag)。其余字段原样保留, 未知顶层键原样复制。
 //
 // 即时生效(2026-10-15, Ghidra 取证见 fw_api::app_launcher_del/add 注释):
-// 注册表写回成功后, 按包名在注册表(APP_REGISTRY 链)里找到 app_id, 再调
-// app_launcher_del(app_id) / app_launcher_add(app_id) 让桌面立刻摘/挂图标。
+// 注册表写回成功后, 按包名在注册表(APP_REGISTRY 链)里找到节点, 先把节点 +0x3C
+// bit0(固件的"应隐藏"标志)同步成目标态, 再调 app_launcher_del(app_id) /
+// app_launcher_add(app_id) 让桌面立刻摘/挂图标。
+// **显示必须先清位再 add**: add 的桌面建记录函数 0x0C513700 在入口按这一位拒绝
+// ("The app need hidden", 串 0x2CB99DA0), 只搬 JSON 不改位 = 重启后显示失败。
 // 固件的"隐藏应用"命令(cmd 0x1a)就是同一条 del; 重启后的持久态由注册表文件决定。
 // 找不到注册表节点(应用此刻不在册)时只写文件, 不调固件调用 —— 不猜。
 //
@@ -38,6 +41,18 @@ pub(crate) const HID_PATH: &[u8] = b"/data/apps.json_hide\0";
 pub(crate) const REG_CAP: usize = 10240; // 单个注册表文件字节上限
 pub(crate) const APP_MAX: usize = 40;    // 条目上限(两份注册表合计)
 const OBJ_CAP: usize = 1536;             // 单个被搬运对象的字节上限
+const PKG_CAP: usize = 44;               // 包名槽宽(E_PKG / BATCH_PKG / EXCL_SLOT 同宽)
+
+// ===== 批量操作排除名单 =====
+// 独立于两份注册表: 影响"一键隐藏/显示全部", 且排除项在页1 列表里不显示;
+// 页7 可逐项取消排除。格式: magic "EX01" + 40 槽 × 44 字节包名; 槽首字节 0 = 空槽, 读到空槽即止。
+// 包名匹配而非下标匹配, 重启后注册表顺序变化不会串项。
+pub(crate) const EXCL_PATH: &[u8] = b"/data/chaos/appmgr_excl.bin\0";
+const EXCL_MAGIC: [u8; 4] = *b"EX01";
+const EXCL_HDR: usize = 4;
+const EXCL_SLOT: usize = 44;
+const EXCL_MAX: usize = APP_MAX;
+const EXCL_TOTAL: usize = EXCL_HDR + EXCL_MAX * EXCL_SLOT;
 
 // ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
 pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
@@ -57,6 +72,19 @@ pub(crate) static mut APP_MSG: [u8; 96] = [0; 96];
 // 重建式渲染开始时统一清零(对象树已随旧 content 销毁, 只丢句柄不删对象)。
 const APP_ROWS_N: usize = APP_MAX;
 static mut APP_ROWS: [u32; APP_ROWS_N] = [0; APP_ROWS_N];
+
+// ===== 排除名单状态 =====
+static mut EXCL_PKG: [[u8; EXCL_SLOT]; EXCL_MAX] = [[0; EXCL_SLOT]; EXCL_MAX];
+static mut EXCL_N: usize = 0;
+static mut EXCL_LOADED: u32 = 0;
+static mut EXCL_IO: [u8; EXCL_TOTAL] = [0; EXCL_TOTAL];
+static mut EXCL_LABEL: [u8; 48] = [0; 48];   // 页1 行3 文案
+static mut EXCL_HINT: [u8; 64] = [0; 64];    // 页7 行1 文案
+// 当前列表每项是否被排除(按完整列表下标), 批量循环直接查它。
+static mut E_EXCL: [u8; APP_MAX] = [0; APP_MAX];
+// 页1 过滤视图: VIEW_IDX[v] = 完整列表下标; 已排除的条目不出现在页1。
+static mut VIEW_IDX: [u8; APP_MAX] = [0; APP_MAX];
+static mut VIEW_N: usize = 0;
 
 pub(crate) unsafe fn rows_reset() {
     let p = core::ptr::addr_of_mut!(APP_ROWS) as *mut u32;
@@ -83,6 +111,10 @@ static mut BATCH_CURSOR: usize = 0;
 static mut REQ_OP: u32 = 0;      // 0=无 1=隐藏 2=显示
 static mut REQ_PKG: [u8; 44] = [0; 44];
 static mut REQ_NAME: [u8; 32] = [0; 32];
+// 排除项切换请求(同样由 tick 消费, 不在事件回调里做文件 IO)
+static mut REQ_EXCL: u32 = 0;
+static mut REQ_EXCL_PKG: [u8; 44] = [0; 44];
+static mut EXCL_MSG: [u8; 48] = [0; 48];
 
 // ===== 解析工作区 =====
 static mut REG_BUF: [u8; REG_CAP] = [0; REG_CAP];
@@ -164,9 +196,9 @@ pub(crate) unsafe fn click(e: usize) {
 }
 
 /// 在固件应用注册表(APP_REGISTRY 链, 同 app_lookup/icon_apply 一条链)里按包名
-/// 找 app_id。节点: +0x04 链表 / +0x08 包名(堆串) / +0x10 u16 app_id。
+/// 找节点。节点: +0x04 链表 / +0x08 包名(堆串) / +0x10 u16 app_id。
 /// 返回 0 = 没找到(应用此刻不在册, 调用方不得拿 0 去调固件)。
-unsafe fn find_app_id(pkg: *const u8) -> u32 {
+unsafe fn find_node(pkg: *const u8) -> u32 {
     let head = crate::mem::rd32(fw_api::APP_REGISTRY as *const u32);
     if head == 0 || crate::mem::safe_ptr(head) == false { return 0; }
     let mut node = crate::mem::rd32((head + 4) as *const u32);
@@ -175,19 +207,47 @@ unsafe fn find_app_id(pkg: *const u8) -> u32 {
         guard += 1;
         let np = crate::mem::rd32((node + 0x08) as *const u32);
         if crate::mem::safe_ptr(np) && cstr_eq(np as *const u8, pkg) {
-            return crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+            return node;
         }
         node = crate::mem::rd32((node + 4) as *const u32);
     }
     0
 }
 
-/// 注册表写回成功后的即时生效: 摘/挂桌面图标。找不到节点就静默跳过(文件改动
-/// 仍会在下次重启生效, 与旧行为一致)。
-unsafe fn apply_immediate(hide: bool) {
-    let id = find_app_id(core::ptr::addr_of!(REQ_PKG) as *const u8);
+/// 同步注册表节点的隐藏标志(node+0x3C bit0)。
+///
+/// 固件重建桌面(0x0C513700 `ldrb.w r2,[r0,#0x3c]; lsls r1,r2,#0x1f; bmi ...`)按这一位
+/// 决定"跳过/拒绝"某个应用: app_launcher_add 看到它为 1 时打 "The app need hidden"
+/// (串地址 0x2CB99DA0) 并返回 0。Chaos 只搬 JSON 不改这一位时, 重启后显示会失败
+/// (必须再重启让 data_init 按新 JSON 重建节点); 隐藏则留下"桌面重建又冒出来"的隐患。
+/// 只读改写 bit0, 其它位原样保留。
+unsafe fn set_node_hidden(node: u32, hide: bool) {
+    if node == 0 || crate::mem::safe_ptr(node) == false { return; }
+    let p = (node + fw_api::APPN_FLAGS) as *mut u8;
+    let v = read_volatile(p);
+    let nv = if hide { v | fw_api::APPN_HIDDEN } else { v & !fw_api::APPN_HIDDEN };
+    if nv != v { write_volatile(p, nv); }
+}
+
+/// 注册表写回成功后的即时生效: 先同步内存隐藏位, 再摘/挂桌面图标。
+/// 找不到节点就静默跳过(文件改动仍会在下次重启生效, 与旧行为一致)。
+unsafe fn apply_pkg(hide: bool, pkg: *const u8) {
+    let node = find_node(pkg);
+    if node == 0 { return; }
+    let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
     if id == 0 { return; }
-    if hide { fw_api::app_launcher_del(id); } else { fw_api::app_launcher_add(id); }
+    if hide {
+        set_node_hidden(node, true);
+        fw_api::app_launcher_del(id);
+    } else {
+        // 必须先清位再 add: add 在入口就按这一位拒绝
+        set_node_hidden(node, false);
+        fw_api::app_launcher_add(id);
+    }
+}
+
+unsafe fn apply_immediate(hide: bool) {
+    apply_pkg(hide, core::ptr::addr_of!(REQ_PKG) as *const u8);
 }
 
 /// tick: 执行挂起的隐藏/显示, 完成后重读列表(调用方随后 render_req)
@@ -220,6 +280,10 @@ pub(crate) unsafe fn request_batch(hide_all: bool) {
         let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i));
         let want = if hide_all { 0u8 } else { 1u8 };
         if src == want {
+            // 排除名单不参与任何一键操作
+            if read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0 {
+                i += 1; continue;
+            }
             let pp = core::ptr::addr_of!(E_PKG) as *const u8;
             let dp = (core::ptr::addr_of_mut!(BATCH_PKG) as *mut u8).add(BATCH_N * 44);
             let mut k = 0usize;
@@ -233,7 +297,7 @@ pub(crate) unsafe fn request_batch(hide_all: bool) {
         i += 1;
     }
     if BATCH_N == 0 {
-        wmsg(if hide_all { "没有可见应用\0" } else { "没有隐藏应用\0" });
+        wmsg("没有可操作应用\0");
         return;
     }
     REQ_BATCH = if hide_all { 1 } else { 2 };
@@ -258,10 +322,7 @@ pub(crate) unsafe fn do_batch() {
         if ok {
             done += 1;
             // 即时生效(队列包名不在 REQ_PKG, 直接按包名找)
-            let id = find_app_id(bp);
-            if id != 0 {
-                if hide { fw_api::app_launcher_del(id); } else { fw_api::app_launcher_add(id); }
-            }
+            apply_pkg(hide, bp);
         } else {
             failed += 1;
             break;   // 文件态不可信, 停止批量(与单条操作同一保守策略)
@@ -737,12 +798,202 @@ unsafe fn parse_registry(src: u8) -> u8 {
     0
 }
 
+// ===== 排除名单(不参与一键显示/隐藏) =====
+//
+// 文件 /data/chaos/appmgr_excl.bin, 定长:
+//   magic[4] = "EX01"
+//   条目 0..39, 每条 44 B: 包名(43 B, 第 44 字节恒 0)
+// 列表按文件顺序排列, 写满即止。读失败/魔数不对 = 空名单(绝不因此禁止应用管理)。
+// 排除是 Chaos 自己的名单, 不进 apps.json —— 固件不认识它, 也不该认识。
+
+unsafe fn build_view() {
+    VIEW_N = 0;
+    let mut i = 0usize;
+    while i < APP_N && i < APP_MAX {
+        let ex = if excl_index(pkg_ptr(i)) != usize::MAX { 1u8 } else { 0u8 };
+        write_volatile((core::ptr::addr_of_mut!(E_EXCL) as *mut u8).add(i), ex);
+        if ex == 0 && VIEW_N < APP_MAX {
+            write_volatile((core::ptr::addr_of_mut!(VIEW_IDX) as *mut u8).add(VIEW_N), i as u8);
+            VIEW_N += 1;
+        }
+        i += 1;
+    }
+}
+
+unsafe fn excl_index(pkg: *const u8) -> usize {
+    let base = core::ptr::addr_of!(EXCL_PKG) as *const u8;
+    let mut i = 0usize;
+    while i < EXCL_N {
+        if cstr_eq(base.add(i * EXCL_SLOT), pkg) { return i; }
+        i += 1;
+    }
+    usize::MAX
+}
+
+pub(crate) unsafe fn excl_on(i: usize) -> bool {
+    i < APP_N && read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0
+}
+
+pub(crate) unsafe fn view_count() -> usize { VIEW_N }
+
+/// 第 v 个可见条目在 APP_* 里的原始下标(排除项不会出现在这里)。
+pub(crate) unsafe fn view_at(v: usize) -> usize {
+    if v >= VIEW_N { return usize::MAX; }
+    read_volatile((core::ptr::addr_of!(VIEW_IDX) as *const u8).add(v)) as usize
+}
+
+pub(crate) unsafe fn excl_ensure() {
+    if EXCL_LOADED != 0 { return; }
+    EXCL_LOADED = 1;
+    EXCL_N = 0;
+    let fd = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return; }
+    let b = core::ptr::addr_of_mut!(EXCL_IO) as *mut u8;
+    let mut n = 0usize;
+    while n < EXCL_TOTAL {
+        let got = fw_api::read(fd, b.add(n), (EXCL_TOTAL - n) as u32);
+        if got <= 0 { break; }
+        n += got as usize;
+    }
+    fw_api::close(fd);
+    if n < EXCL_HDR + EXCL_SLOT { return; }
+    let mut k = 0usize;
+    while k < EXCL_HDR {
+        if read_volatile(b.add(k)) != EXCL_MAGIC[k] { return; }
+        k += 1;
+    }
+    let mut i = 0usize;
+    while i < EXCL_MAX {
+        let o = EXCL_HDR + i * EXCL_SLOT;
+        if o + EXCL_SLOT > n { break; }
+        if read_volatile(b.add(o)) == 0 { break; }
+        let d = (core::ptr::addr_of_mut!(EXCL_PKG) as *mut u8).add(i * EXCL_SLOT);
+        let mut j = 0usize;
+        while j < EXCL_SLOT {
+            write_volatile(d.add(j), read_volatile(b.add(o + j)));
+            j += 1;
+        }
+        write_volatile(d.add(EXCL_SLOT - 1), 0);
+        EXCL_N += 1;
+        i += 1;
+    }
+}
+
+unsafe fn excl_save() -> bool {
+    let b = core::ptr::addr_of_mut!(EXCL_IO) as *mut u8;
+    let mut i = 0usize;
+    while i < EXCL_TOTAL { write_volatile(b.add(i), 0); i += 1; }
+    i = 0;
+    while i < EXCL_HDR { write_volatile(b.add(i), EXCL_MAGIC[i]); i += 1; }
+    i = 0;
+    while i < EXCL_N {
+        let s = (core::ptr::addr_of!(EXCL_PKG) as *const u8).add(i * EXCL_SLOT);
+        let d = b.add(EXCL_HDR + i * EXCL_SLOT);
+        let mut j = 0usize;
+        while j < EXCL_SLOT { write_volatile(d.add(j), read_volatile(s.add(j))); j += 1; }
+        i += 1;
+    }
+    let fd = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    if fd < 0 { return false; }
+    let mut off = 0usize;
+    let mut ok = true;
+    while off < EXCL_TOTAL {
+        let got = fw_api::write(fd, b.add(off), (EXCL_TOTAL - off) as u32);
+        if got <= 0 { ok = false; break; }
+        off += got as usize;
+    }
+    fw_api::close(fd);
+    ok
+}
+
+/// 只在 tick 里调用(文件 IO)。
+unsafe fn excl_toggle(pkg: *const u8) -> bool {
+    let idx = excl_index(pkg);
+    let base = core::ptr::addr_of_mut!(EXCL_PKG) as *mut u8;
+    if idx != usize::MAX {
+        let mut j = idx;
+        while j + 1 < EXCL_N {
+            let s = base.add((j + 1) * EXCL_SLOT) as *const u8;
+            let d = base.add(j * EXCL_SLOT);
+            let mut k = 0usize;
+            while k < EXCL_SLOT { write_volatile(d.add(k), read_volatile(s.add(k))); k += 1; }
+            j += 1;
+        }
+        EXCL_N -= 1;
+        let d = base.add(EXCL_N * EXCL_SLOT);
+        let mut k = 0usize;
+        while k < EXCL_SLOT { write_volatile(d.add(k), 0); k += 1; }
+    } else {
+        if EXCL_N >= EXCL_MAX { eset("排除项已满\0"); return false; }
+        let d = base.add(EXCL_N * EXCL_SLOT);
+        let mut k = 0usize;
+        while k < EXCL_SLOT { write_volatile(d.add(k), read_volatile(pkg.add(k))); k += 1; }
+        write_volatile(d.add(EXCL_SLOT - 1), 0);
+        EXCL_N += 1;
+    }
+    if !excl_save() {
+        // 写盘失败: 回到磁盘真值, 不让内存/文件分叉
+        EXCL_LOADED = 0;
+        excl_ensure();
+        eset("保存失败\0");
+        return false;
+    }
+    true
+}
+
+unsafe fn eset(s: &str) {
+    put_str(core::ptr::addr_of_mut!(EXCL_MSG) as *mut u8, s.as_bytes());
+}
+
+pub(crate) unsafe fn excl_msg() -> &'static [u8] {
+    core::slice::from_raw_parts(core::ptr::addr_of!(EXCL_MSG) as *const u8, 48)
+}
+
+/// 事件回调里只登记请求, 真正读写由 tick 做。
+pub(crate) unsafe fn request_excl(i: usize) {
+    if REQ_EXCL != 0 || APP_LOADED == 0 || i >= APP_N { return; }
+    let dst = core::ptr::addr_of_mut!(REQ_EXCL_PKG) as *mut u8;
+    let src = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * PKG_CAP);
+    let mut k = 0usize;
+    while k < PKG_CAP { write_volatile(dst.add(k), read_volatile(src.add(k))); k += 1; }
+    write_volatile(dst.add(PKG_CAP - 1), 0);
+    REQ_EXCL = 1;
+}
+
+pub(crate) unsafe fn excl_has_req() -> bool { REQ_EXCL != 0 }
+
+pub(crate) unsafe fn do_excl() {
+    if REQ_EXCL == 0 { return; }
+    REQ_EXCL = 0;
+    if excl_toggle(core::ptr::addr_of!(REQ_EXCL_PKG) as *const u8) {
+        eset("已保存\0");
+    }
+    build_view();
+}
+
+pub(crate) unsafe fn excl_label() -> &'static [u8] {
+    let d = core::ptr::addr_of_mut!(EXCL_LABEL) as *mut u8;
+    let mut n = put_lit(d, "排除项管理 (".as_bytes());
+    n += put_u32(d.add(n), EXCL_N as u32);
+    n += put_lit(d.add(n), ")\0".as_bytes());
+    core::slice::from_raw_parts(d, n)
+}
+
+pub(crate) unsafe fn excl_hint() -> &'static [u8] {
+    let d = core::ptr::addr_of_mut!(EXCL_HINT) as *mut u8;
+    let mut n = put_lit(d, "勾选 = 不参与一键 (已排除 ".as_bytes());
+    n += put_u32(d.add(n), EXCL_N as u32);
+    n += put_lit(d.add(n), ")\0".as_bytes());
+    core::slice::from_raw_parts(d, n)
+}
+
 /// (重)读两份注册表, 重建展示列表。
 pub(crate) unsafe fn reload() {
     APP_N = 0;
     TRUNC = 0;
     PARSE_BAD = 0;
     OVERSIZE = 0;
+    excl_ensure();
     let mut vis_bad = 0u32;
     let mut hid_bad = 0u32;
     // 可见注册表(应存在; 缺失 = 空列表, 043 宽松语义)
@@ -780,6 +1031,10 @@ pub(crate) unsafe fn reload() {
         wmsg("没有可管理的应用\0");
     } else {
         wmsg("点应用切换显示/隐藏\0");
+    }
+    build_view();
+    if read_volatile(core::ptr::addr_of!(EXCL_MSG) as *const u8) == 0 {
+        eset("点一行切换排除状态\0");
     }
     APP_LOADED = 1;
 }

@@ -256,6 +256,11 @@ pub unsafe extern "C" fn fw_list_next(head: u32, node: u32) -> u32 {
 pub const APP_REGISTRY: u32 = 0x200E_B640;
 pub const APPN_ICON: u32 = 0x0C;     // 节点: 图标路径字符串指针
 pub const APPN_ID: u32 = 0x10;       // 节点: u16 app_id
+pub const APPN_FLAGS: u32 = 0x3C;    // 节点: 隐藏标志字节
+pub const APPN_HIDDEN: u8 = 0x01;    // 节点 +0x3C bit0: 1 = 固件认为"该应用应隐藏"
+// 取证: 桌面建记录 FUN_0c513700 `ldrb.w r2,[r0,#0x3c]; lsls r1,r2,#0x1f; bmi`
+// 命中时打 "The app need hidden" (串 0x2CB99DA0) 并返回 0, app_launcher_add 随即放弃；
+// 固件自己的 hidden_and_show cmd 0x1a 只调 app_launcher_del、不改这一位。
 
 /// `str_dup_x(s)` = strlen + malloc(len+1) + memcpy，返回堆指针(0=失败)。
 /// 0x0C1F06B4: `bl 0xc5885b0`(strlen) `bl 0xc1f903c`(malloc) `bl 0xc588db0`(memcpy)。

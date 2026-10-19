@@ -113,7 +113,7 @@ pub static PAGE_TXTSUB: [u8; 8] = *b"textsub\0";
 /// 页6: 系统美化 -> 桌面图标(二级)
 pub static PAGE_ICONSUB: [u8; 8] = *b"iconsub\0";
 
-pub static PAGE_VIEWR: [u8; 7] = *b"viewer\0";
+pub static PAGE_EXCL: [u8; 7] = *b"excl\0\0\0";
 
 pub static PAGE_WFACES: [u8; 7] = *b"wfaces\0";
 

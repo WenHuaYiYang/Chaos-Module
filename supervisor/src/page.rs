@@ -7,7 +7,6 @@
 //   4. 新增页面 = 实现 Page + 加进 PAGE_TABLE, 不改 ui.rs
 
 use core::sync::atomic::{AtomicU32, Ordering};
-use crate::mem::rd16;
 use crate::*;
 
 // ===== 错误类型 =====
@@ -736,67 +735,77 @@ unsafe fn cstr_len(s: *const u8) -> usize {
     n
 }
 
-// ===== 页7: 文件查看 =====
+// ===== 页7: 排除项管理 =====
+//
+// 从页1 行3 进入。列表显示**全部**应用(含已隐藏), 勾选 = 加入排除名单;
+// 排除项不参与页1 的一键隐藏/显示, 且在页1 列表里不出现。
+// 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
 
-pub(crate) struct ViewerPage;
+pub(crate) struct ExclPage;
 
-impl Page for ViewerPage {
-
+impl Page for ExclPage {
     fn fill_title(&self, buf: *mut u8) {
-        unsafe {
-            if path_basename(core::ptr::addr_of!(VIEW_PATH) as *const u8, buf, 48) == 0 {
-                put_str(buf, "文件查看".as_bytes());
-            }
-        }
+        unsafe { put_str(buf, "排除项管理\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            refresh_view_text();
-            let lb = fw_api::label_create(ctx.content);
-            if lb == 0 { return Err(PageError::ContentFailed); }
-            fw_api::label_set_text(lb, core::ptr::addr_of!(VIEW_TEXT) as *const u8);
-            let sa: unsafe extern "C" fn(u32, u32, u32, u32) -> i32 = fw_api::style_apply;
-            sa(lb, FW_STYLE_MISANS_REG_24, 255, 0);
-            fw_api::obj_align_to(lb, ctx.title, 14, 0, 4);
-            PAGES[7].label = lb;
-            let r0 = build_row(ctx, lb, 0, &RowSpec::clickable("下一段\0".as_bytes()));
-            let vn = st_rd!(FILE_VIEW_N);
-            let vmore = vn >= 0 && vn < 2047;
-            let base = if vmore && r0 != 0 { r0 } else { lb };
-            let backtxt = core::slice::from_raw_parts(
-                core::ptr::addr_of!(VIEW_BACKTXT) as *const u8, cstr_len(core::ptr::addr_of!(VIEW_BACKTXT) as *const u8) + 1);
-            build_row(ctx, base, 1, &RowSpec::clickable(backtxt));   // 必须 clickable: display() 不挂事件 -> 点了没反应
+            crate::appmgr::ensure();
+            crate::appmgr::rows_reset();
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::clickable("返回\0".as_bytes())),
+                (1, RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null())),
+                (2, RowSpec::display(crate::appmgr::excl_msg(), core::ptr::null())),
+            ])?;
+            let mut prev = read_volatile(ctx.rows.add(2));
+            if prev == 0 { prev = ctx.title; }
+            let rows = crate::appmgr::rows_ptr();
+            let n = crate::appmgr::count();
+            let mut i = 0usize;
+            while i < n {
+                let r = fw_api::row_create(ctx.content,
+                    crate::appmgr::entry_primary(i), crate::appmgr::pkg_ptr(i),
+                    fw_api::trailing::CHECKBOX);
+                if r == 0 { return Err(PageError::RowFailed(i)); }
+                write_volatile(rows.add(i), r);
+                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
+                let tobj = fw_api::row_trailing(r);
+                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                fw_api::obj_align_to(r, prev, 14, 0, 8);
+                prev = r;
+                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                    crate::appmgr::pkg_ptr(i), 0, crate::appmgr::excl_on(i) as u8);
+                i += 1;
+            }
             Ok(())
         }
     }
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            match idx {
-                0 => {
-                    st_wr!(VIEW_BLK, st_rd!(VIEW_BLK) + 1);
-                    st_wr!(VIEW_LOADED, 0);
-                    render_req(7);
-                }
-                1 => nav_back(),
-                _ => {}
+            if idx == 0 {
+                nav_back();
+            } else if idx >= 12 {
+                crate::appmgr::request_excl(idx - 12);
+                render_req(7);
             }
         }
     }
 
-    fn apply_visibility(&self) {
+    fn needs_tick(&self) -> bool {
+        unsafe { crate::appmgr::excl_has_req() }
+    }
+
+    fn tick(&self) {
         unsafe {
-            let sh = fw_api::obj_set_hidden;
-            let rows = page_rows_ptr(7);
-            let n = st_rd!(FILE_VIEW_N);
-            let op0 = read_volatile(rows.add(0));
-            if op0 != 0 { sh(op0, if n >= 2047 || n < 0 { 0 } else { 1 }); }
-            let op1 = read_volatile(rows.add(1));
-            if op1 != 0 { sh(op1, 0); }
+            if crate::appmgr::excl_has_req() {
+                crate::appmgr::do_excl();
+                render_req(7);
+            }
         }
     }
 }
+
 
 // ===== 页8/9: 表盘列表(切换/轮换) =====
 
@@ -1441,8 +1450,8 @@ impl Page for IconSubPage {
 // 行句柄/事件槽位约束: 条目行**不走 ctx.rows**(只有 12 格) —— 句柄自管在
 // appmgr::APP_ROWS, 事件槽号 = 条目下标 + 12(12..=51; 0..11 是 ctx.rows 的
 // 批量按钮/状态行, 条目复用会被派发成点按钮), 回调是 lib.rs 的 chaos_row_ev12..51。
-// 布局: 行0=一键隐藏全部 行1=一键显示全部 行2=状态 —— 放最上面, 列表再长也不怕
-// 按钮滚出屏幕; 之后是应用条目。
+// 布局: 行0=一键隐藏全部 行1=一键显示全部 行2=状态 行3=排除项管理入口 —— 放最上面,
+// 列表再长也不怕按钮滚出屏幕; 之后是应用条目(已排除的条目不在本页显示)。
 
 pub(crate) struct AppMgrPage;
 
@@ -1455,28 +1464,31 @@ impl Page for AppMgrPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();   // 旧对象树已随上次 content 销毁, 丢旧句柄
-            // 顶部三行(走 ctx.rows 槽 0..2)
+            // 顶部四行(走 ctx.rows 槽 0..3)
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe9\x9a\x90\xe8\x97\x8f\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键隐藏全部
                 (1, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe6\x98\xbe\xe7\xa4\xba\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键显示全部
                 (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
+                (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
             ])?;
-            // 条目行(全量, 事件槽 = 下标; 句柄存 appmgr::APP_ROWS)
-            let mut prev = read_volatile(ctx.rows.add(2));
+            // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
+            let mut prev = read_volatile(ctx.rows.add(3));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
-            let n = crate::appmgr::count();
-            let mut i = 0usize;
-            while i < n {
+            let n = crate::appmgr::view_count();
+            let mut v = 0usize;
+            while v < n {
+                let i = crate::appmgr::view_at(v);
+                if i == usize::MAX { break; }
                 let r = fw_api::row_create(ctx.content,
                     crate::appmgr::entry_primary(i), crate::appmgr::pkg_ptr(i),
                     fw_api::trailing::CHECKBOX);
-                if r == 0 { return Err(PageError::RowFailed(i)); }
-                write_volatile(rows.add(i), r);
-                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);   // 事件槽 = 条目下标 + 12
+                if r == 0 { return Err(PageError::RowFailed(v)); }
+                write_volatile(rows.add(v), r);
+                fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);   // 事件槽 = 视图下标 + 12
                 // 复选框自己也挂一份(点到圈上也算点这一行, 与图标页同款)
                 let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
                 fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
                 // 勾选态: 勾 = 当前可见(原地补写)
@@ -1484,7 +1496,7 @@ impl Page for AppMgrPage {
                 // 已存在的副标签(0x0C4C8904 反编译实证), 传 NONE 会把 row_create 建出的包名洗掉
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
                     crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
-                i += 1;
+                v += 1;
             }
             Ok(())
         }
@@ -1492,7 +1504,7 @@ impl Page for AppMgrPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            // 槽0/1 = 顶部批量按钮(ctx.rows); 条目事件槽 = 条目下标 + 12
+            // 槽0/1/3 = 顶部按钮(ctx.rows); 条目事件槽 = 视图下标 + 12
             // (0..11 被 ctx.rows 占用: 不错开的话点条目会被派发成点按钮 —— 2026-10-15 修)
             if idx == 0 {
                 crate::appmgr::request_batch(true);
@@ -1500,9 +1512,12 @@ impl Page for AppMgrPage {
             } else if idx == 1 {
                 crate::appmgr::request_batch(false);
                 render_req(1);
+            } else if idx == 3 {
+                nav_goto(7, 0);
             } else if idx >= 12 {
-                let e = idx - 12;
-                if e < crate::appmgr::count() { crate::appmgr::click(e); }
+                let v = idx - 12;
+                let e = crate::appmgr::view_at(v);
+                if e != usize::MAX { crate::appmgr::click(e); }
             }
         }
     }
@@ -1579,7 +1594,7 @@ impl Page for VibPage {
 
 static PAGE_INFO: InfoPage = InfoPage;
 static PAGE_APPMGR: AppMgrPage = AppMgrPage;
-static PAGE_VIEWER: ViewerPage = ViewerPage;
+static PAGE_EXCL: ExclPage = ExclPage;
 static PAGE_WF_LIST_8: WatchfaceListPage = WatchfaceListPage { pid: 8 };
 static PAGE_WF_LIST_9: WatchfaceListPage = WatchfaceListPage { pid: 9 };
 static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage;
@@ -1821,7 +1836,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
     &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
     &PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
-    &PAGE_VIEWER,     // 7
+    &PAGE_EXCL,       // 7  应用管理 -> 排除项管理(原文件查看退役)
     &PAGE_WF_LIST_8,  // 8
     &PAGE_WF_LIST_9,  // 9
     &PAGE_WF_MGMT,    // 10

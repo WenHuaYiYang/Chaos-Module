@@ -205,6 +205,8 @@ pub(crate) unsafe fn refresh_dir_lines() {
 // 的 ROOTS 清单里继续保留(根本不在清单内)。
 
 // 页7 label 文本: 首刷读块(VIEW_LOADED) → 文本sanitize / 二进制strings提取 → VIEW_TEXT + Back行文本
+// 页7 已改为排除项管理; 文件查看器暂不再挂页面, 保留实现待后续独立页复用。
+#[allow(dead_code)]
 pub(crate) unsafe fn refresh_view_text() {
     // 非普通文件一律不 open 不 read: /dev 下大量字符/块设备节点的驱动 read() 会阻塞,
     // 把 UI 线程锁死到看门狗复位(3-4 分钟)。标记 FILE_VIEW_N=-2 让下面的取数逻辑跳过,
