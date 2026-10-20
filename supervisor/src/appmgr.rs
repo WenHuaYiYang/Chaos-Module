@@ -926,8 +926,10 @@ pub(crate) unsafe fn build_excl_view() {
     EXCL_VIEW_N = 0;
     let mut i = 0usize;
     while i < APP_N && i < APP_MAX {
-        write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(EXCL_VIEW_N), i as u8);
-        EXCL_VIEW_N += 1;
+        if !is_dup(i) {
+            write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(EXCL_VIEW_N), i as u8);
+            EXCL_VIEW_N += 1;
+        }
         i += 1;
     }
     let mut a = 1usize;
@@ -943,6 +945,10 @@ pub(crate) unsafe fn build_excl_view() {
         write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), cur);
         a += 1;
     }
+}
+
+pub(crate) unsafe fn is_dup(i: usize) -> bool {
+    i < APP_N && read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i)) != 0
 }
 
 pub(crate) unsafe fn excl_view_count() -> usize { EXCL_VIEW_N }
@@ -1305,6 +1311,7 @@ unsafe fn keep_apply_all() -> usize {
     let mut i = 0usize;
     while i < KEEP_N {
         let p = KEEP_BUF.as_ptr().add(4 + i * PKG_CAP);
+        if excl_index(p) != usize::MAX { found += 1; i += 1; continue; }
         let node = find_node(p);
         if node != 0 {
             let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
@@ -1413,6 +1420,7 @@ pub(crate) unsafe fn do_mode_apply() {
 pub(crate) unsafe fn boot_apply() {
     if BOOT_APPLIED != 0 { return; }
     apply_mode_ensure();
+    excl_ensure();
     if APPLY_MODE == 0 { BOOT_APPLIED = 1; return; }
     if KEEP_N == 0 { BOOT_APPLIED = 1; return; }
     // 注册表可能比模块晚就绪: 每秒试一次, 最多 5 分钟。
