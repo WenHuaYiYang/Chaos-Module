@@ -543,3 +543,14 @@ pub unsafe fn arc_make_full(arc: Obj) {
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
+
+/// 关掉 arc 的触摸交互：清 obj flags(+0x2C) 的 CLICKABLE(bit1)。
+/// 否则 LVGL 的 arc 会把手势变成数值拖拽（用户能直接把环拖大拖小）。
+pub unsafe fn arc_disable_input(arc: Obj) {
+    if arc == 0 { return; }
+    let p = (arc as usize + 0x2C) as *mut u32;
+    let v = core::ptr::read_volatile(p);
+    core::ptr::write_volatile(p, v & !0x2);
+    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
+    inv(arc);
+}
