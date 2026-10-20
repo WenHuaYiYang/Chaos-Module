@@ -38,7 +38,7 @@ use core::ptr::{read_volatile, write_volatile};
 pub(crate) const VIS_PATH: &[u8] = b"/data/apps.json\0";
 pub(crate) const HID_PATH: &[u8] = b"/data/apps.json_hide\0";
 
-pub(crate) const REG_CAP: usize = 10240; // 单个注册表文件字节上限
+pub(crate) const REG_CAP: usize = 32768; // 单个注册表文件字节上限(应用多时 10KB 不够)
 pub(crate) const APP_MAX: usize = 40;    // 条目上限(两份注册表合计)
 const OBJ_CAP: usize = 1536;             // 单个被搬运对象的字节上限
 const PKG_CAP: usize = 44;               // 包名槽宽(E_PKG / BATCH_PKG / EXCL_SLOT 同宽)
@@ -528,9 +528,8 @@ unsafe fn load_file(path: *const u8) -> bool {
         n += got as usize;
     }
     if n == REG_CAP {
-        // 再探一字节判断是否真超限
-        let mut probe = [0u8; 1];
-        if fw_api::read(fd, probe.as_mut_ptr(), 1) > 0 { OVERSIZE = 1; }
+        // 读满上限: 无论后面还有没有字节, 都不能保证解析完整, 一律按超限只读处理。
+        OVERSIZE = 1;
     }
     fw_api::close(fd);
     REG_N = n;
