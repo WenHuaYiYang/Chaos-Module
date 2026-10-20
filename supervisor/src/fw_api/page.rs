@@ -189,11 +189,13 @@ pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> Ri
     if r.arc0 != 0 {
         obj_set_size_wh(r.arc0, 104, 104);
         obj_align(r.arc0, align::TOP_LEFT, 12, 2);
+        arc_make_full(r.arc0);
     }
     r.arc1 = arc_create(row);
     if r.arc1 != 0 {
         obj_set_size_wh(r.arc1, 104, 104);
         obj_align(r.arc1, align::TOP_LEFT, 212, 2);
+        arc_make_full(r.arc1);
     }
     // 百分比：96 宽环内水平居中（字号 24 时 4 字符约 52px，起点 12+26=38）
     r.pct0 = label_create(row);

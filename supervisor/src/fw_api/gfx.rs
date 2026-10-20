@@ -530,3 +530,16 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
+
+/// 把 arc 的角度区间改为整圆 0..360（默认是 135..45 的 270° 仪表盘）。
+/// 字段对应 LVGL arc: +0x38 bg_start, +0x3C bg_end, +0x40 angle_start, +0x44 angle_end。
+pub unsafe fn arc_make_full(arc: Obj) {
+    if arc == 0 { return; }
+    let p = arc as usize;
+    core::ptr::write_volatile((p + 0x38) as *mut f32, 0.0);
+    core::ptr::write_volatile((p + 0x3C) as *mut f32, 360.0);
+    core::ptr::write_volatile((p + 0x40) as *mut f32, 0.0);
+    core::ptr::write_volatile((p + 0x44) as *mut f32, 360.0);
+    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
+    inv(arc);
+}
