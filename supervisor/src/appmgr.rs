@@ -79,6 +79,10 @@ static mut E_OFF: [u32; APP_MAX] = [0; APP_MAX]; // 对象在本次载入的 REG
 static mut E_LEN: [u32; APP_MAX] = [0; APP_MAX];
 static mut E_SRC: [u8; APP_MAX] = [0; APP_MAX];  // 0=可见 1=隐藏
 static mut E_LOCK: [u8; APP_MAX] = [0; APP_MAX];
+// 同一包名在合并列表里重复出现(同文件重复, 或可见/隐藏各一份)时, 后面的标记为 1。
+// 页1/批量都跳过它们: 固件对重复条目会注册出两个桌面记录, 退出快应用时二次释放 -> 黑屏。
+static mut E_DUP: [u8; APP_MAX] = [0; APP_MAX];
+static mut DUP_N: usize = 0;
 pub(crate) static mut APP_N: usize = 0;
 static mut APP_LOADED: u32 = 0;
 pub(crate) static mut APP_MSG: [u8; 96] = [0; 96];
@@ -306,6 +310,10 @@ pub(crate) unsafe fn request_batch(hide_all: bool) {
     while i < APP_N && BATCH_N < APP_MAX {
         let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i));
         let want = if hide_all { 0u8 } else { 1u8 };
+        // 重复包名只操作一次: 固件会为重复条目建多个桌面记录, 退出时二次释放 -> 黑屏。
+        if read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i)) != 0 {
+            i += 1; continue;
+        }
         if src == want {
             // 排除名单不参与任何一键操作
             if read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0 {
@@ -833,13 +841,33 @@ unsafe fn parse_registry(src: u8) -> u8 {
 // 列表按文件顺序排列, 写满即止。读失败/魔数不对 = 空名单(绝不因此禁止应用管理)。
 // 排除是 Chaos 自己的名单, 不进 apps.json —— 固件不认识它, 也不该认识。
 
+/// 标记合并列表里的重复包名: 同一包名只保留第一次出现(可见优先, 因为先解析)。
+unsafe fn mark_dups() {
+    DUP_N = 0;
+    let base = core::ptr::addr_of_mut!(E_DUP) as *mut u8;
+    let pkgs = core::ptr::addr_of!(E_PKG) as *const u8;
+    let mut i = 0usize;
+    while i < APP_N {
+        let mut dup = 0u8;
+        let mut j = 0usize;
+        while j < i {
+            if cstr_eq(pkgs.add(i * 44), pkgs.add(j * 44)) { dup = 1; break; }
+            j += 1;
+        }
+        write_volatile(base.add(i), dup);
+        if dup != 0 { DUP_N += 1; }
+        i += 1;
+    }
+}
+
 unsafe fn build_view() {
     VIEW_N = 0;
     let mut i = 0usize;
     while i < APP_N && i < APP_MAX {
+        let du = read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i));
         let ex = if excl_index(pkg_ptr(i)) != usize::MAX { 1u8 } else { 0u8 };
         write_volatile((core::ptr::addr_of_mut!(E_EXCL) as *mut u8).add(i), ex);
-        if ex == 0 && VIEW_N < APP_MAX {
+        if ex == 0 && du == 0 && VIEW_N < APP_MAX {
             write_volatile((core::ptr::addr_of_mut!(VIEW_IDX) as *mut u8).add(VIEW_N), i as u8);
             VIEW_N += 1;
         }
@@ -1066,6 +1094,7 @@ pub(crate) unsafe fn reload() {
             i += 1;
         }
     }
+    mark_dups();
     if OVERSIZE != 0 {
         wmsg("注册表过大, 只读\0");
     } else if vis_bad != 0 {
@@ -1087,6 +1116,9 @@ pub(crate) unsafe fn reload() {
         TRUNC = 1;
     } else if TRUNC != 0 {
         wmsg("列表已截断, 禁止改写\0");
+    } else if DUP_N != 0 {
+        // 不自动改盘: 用户点一次隐藏/显示就会把该包名的所有副本一起收敛。
+        wmsg("发现重复条目, 已只显示一份\0");
     } else if APP_N == 0 {
         wmsg("没有可管理的应用\0");
     } else {
@@ -1487,6 +1519,32 @@ unsafe fn cstr_eq(a: *const u8, b: *const u8) -> bool {
     }
 }
 
+/// 当前已 parse 的文件里是否已有该包名(必须在 parse_registry 之后调用)。
+unsafe fn file_has_pkg(pkg: *const u8) -> bool {
+    let base = core::ptr::addr_of!(E_PKG) as *const u8;
+    let mut i = 0usize;
+    while i < APP_N {
+        if cstr_eq(base.add(i * 44), pkg) { return true; }
+        i += 1;
+    }
+    false
+}
+
+/// 从 src 文件里删除该包名的**所有**副本。重复条目会让固件注册多个桌面记录,
+/// 退出应用时二次释放 -> 黑屏, 所以收敛时必须一次删干净。
+unsafe fn remove_all_pkg(pkg: *const u8, src: u8) -> bool {
+    let path = if src == 0 { VIS_PATH.as_ptr() } else { HID_PATH.as_ptr() };
+    let mut guard = 0usize;
+    loop {
+        if !capture(pkg, src) { return true; }
+        let n = serialize(SKIP_OFF, SKIP_LEN, 0);
+        if n == 0 { return false; }
+        if !write_file(path, n) { return false; }
+        guard += 1;
+        if guard >= 8 { return false; }
+    }
+}
+
 /// 隐藏: 对象 可见 -> 隐藏(hideFlag:true)。先写隐藏注册表, 再从可见注册表删除。
 unsafe fn op_hide() -> bool { op_hide_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
 
@@ -1497,16 +1555,16 @@ unsafe fn op_hide_pkg(pkg: *const u8) -> bool {
         return keep_add(pkg);
     }
     if !capture(pkg, 0) { return false; }
-    // 1) 隐藏注册表: 追加(可能不存在 => 合成最小结构)
+    // 1) 隐藏注册表: 只有还没有该包名时才追加(重复追加 = 复制体)
     load_file(HID_PATH.as_ptr());
     APP_N = 0;
     if parse_registry(1) != 0 { return false; }
-    let n = serialize(usize::MAX, 0, 2);
-    if n == 0 || !write_file(HID_PATH.as_ptr(), n) { return false; }
-    // 2) 可见注册表: 删除该对象
-    if !capture(pkg, 0) { return false; }
-    let n = serialize(SKIP_OFF, SKIP_LEN, 0);
-    if n == 0 || !write_file(VIS_PATH.as_ptr(), n) { return false; }
+    if !file_has_pkg(pkg) {
+        let n = serialize(usize::MAX, 0, 2);
+        if n == 0 || !write_file(HID_PATH.as_ptr(), n) { return false; }
+    }
+    // 2) 可见注册表: 删掉该包名的所有副本
+    if !remove_all_pkg(pkg, 0) { return false; }
     true
 }
 
@@ -1520,15 +1578,15 @@ unsafe fn op_show_pkg(pkg: *const u8) -> bool {
         return keep_del(pkg);
     }
     if !capture(pkg, 1) { return false; }
-    // 1) 可见注册表: 追加
+    // 1) 可见注册表: 只有还没有该包名时才追加(重复追加 = 复制体)
     if !load_file(VIS_PATH.as_ptr()) { return false; }
     APP_N = 0;
     if parse_registry(0) != 0 { return false; }
-    let n = serialize(usize::MAX, 0, 1);
-    if n == 0 || !write_file(VIS_PATH.as_ptr(), n) { return false; }
-    // 2) 隐藏注册表: 删除该对象
-    if !capture(pkg, 1) { return false; }
-    let n = serialize(SKIP_OFF, SKIP_LEN, 0);
-    if n == 0 || !write_file(HID_PATH.as_ptr(), n) { return false; }
+    if !file_has_pkg(pkg) {
+        let n = serialize(usize::MAX, 0, 1);
+        if n == 0 || !write_file(VIS_PATH.as_ptr(), n) { return false; }
+    }
+    // 2) 隐藏注册表: 删掉该包名的所有副本
+    if !remove_all_pkg(pkg, 1) { return false; }
     true
 }
