@@ -74,6 +74,7 @@ static mut MIG_N: usize = 0;
 static mut REQ_MODE: u32 = 0;
 static mut BOOT_APPLIED: u32 = 0;
 static mut BOOT_TRIES: u32 = 0;
+static mut BOOT_WAIT: u32 = 0;
 
 // ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
 pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
@@ -1362,9 +1363,13 @@ pub(crate) unsafe fn boot_apply() {
     apply_mode_ensure();
     if APPLY_MODE == 0 { BOOT_APPLIED = 1; return; }
     if KEEP_N == 0 { BOOT_APPLIED = 1; return; }
+    // 注册表可能比模块晚就绪: 每秒试一次, 最多 5 分钟。
+    // 不能只试 120 拍就放弃, 否则关机前的隐藏名单会因节点未就绪而失效。
+    BOOT_WAIT = BOOT_WAIT.wrapping_add(1);
+    if BOOT_WAIT % 40 != 0 { return; }
     let found = keep_apply_all();
     BOOT_TRIES = BOOT_TRIES.wrapping_add(1);
-    if found >= KEEP_N || BOOT_TRIES >= 120 { BOOT_APPLIED = 1; }
+    if found >= KEEP_N || BOOT_TRIES >= 300 { BOOT_APPLIED = 1; }
 }
 
 // ===== 改写 =====
