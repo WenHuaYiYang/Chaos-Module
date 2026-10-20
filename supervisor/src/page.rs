@@ -1489,12 +1489,12 @@ impl Page for AppMgrPage {
                 (1, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe6\x98\xbe\xe7\xa4\xba\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键显示全部
                 (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
                 (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
-                (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 免重启显示(保留 apps.json 条目)
+                (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 深度隐藏(全局)
             ])?;
-            // 补写开关初态(开关态 = 免重启模式是否开启)
+            // 补写开关初态(开关态 = 深度隐藏是否开启)
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::appmgr::apply_mode_is_keep() as u8);
+                0, crate::appmgr::deep_on() as u8);
             // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
             let mut prev = read_volatile(ctx.rows.add(4));
             if prev == 0 { prev = ctx.title; }

@@ -55,10 +55,10 @@ const EXCL_MAX: usize = APP_MAX;
 const EXCL_TOTAL: usize = EXCL_HDR + EXCL_MAX * EXCL_SLOT;
 
 // ===== 生效模式开关 =====
-// 0 = 重启生效(默认, 搬 apps.json / apps.json_hide, 与其它工具语义一致)
-// 1 = 免重启(保留 apps.json 条目, 只同步注册表隐藏位 + 桌面图标;
-//     隐藏名单另存 appmgr_keep.bin, 开机由维护定时器补隐藏)
-// 两种模式互斥: 保留条目模式对"切换前已在 apps.json_hide 里的应用"仍要重启一次。
+// 0 = 深度隐藏(搬 apps.json / apps.json_hide, 开机不注册; 显示需重启)
+// 1 = 普通隐藏(保留 apps.json 条目, 只同步注册表隐藏位 + 桌面图标;
+//     隐藏名单另存 appmgr_keep.bin, 开机由维护定时器补隐藏, 会闪一下)
+// 开关只迁移“隐藏状态的存储方式”, 不改变哪些应用在逻辑上是隐藏的。
 pub(crate) const APPLY_CFG: &[u8] = b"/data/chaos/appmgr_apply.cfg\0";
 const KEEP_PATH: &[u8] = b"/data/chaos/appmgr_keep.bin\0";
 const KEEP_MAGIC: [u8; 4] = *b"KH01";
@@ -68,6 +68,9 @@ static mut APPLY_LOADED: u32 = 0;
 static mut APPLY_LABEL: [u8; 48] = [0; 48];
 static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
 static mut KEEP_N: usize = 0;
+// 切换隐藏方式时的包名快照: 文件会被逐条重写, 不能边遍历 E_PKG 边搬。
+static mut MIG_BUF: [[u8; PKG_CAP]; APP_MAX] = [[0; PKG_CAP]; APP_MAX];
+static mut MIG_N: usize = 0;
 static mut REQ_MODE: u32 = 0;
 static mut BOOT_APPLIED: u32 = 0;
 static mut BOOT_TRIES: u32 = 0;
@@ -1276,11 +1279,17 @@ pub(crate) unsafe fn apply_mode_is_keep() -> bool {
     APPLY_MODE != 0
 }
 
+/// 开关态: true = 深度隐藏(条目不在 apps.json)。
+pub(crate) unsafe fn deep_on() -> bool {
+    apply_mode_ensure();
+    APPLY_MODE == 0
+}
+
 /// 页1 开关行文案: 只写名称, 开关态由行右侧部件表达。
 pub(crate) unsafe fn apply_mode_label() -> &'static [u8] {
     apply_mode_ensure();
     let d = core::ptr::addr_of_mut!(APPLY_LABEL) as *mut u8;
-    let n = put_lit(d, "免重启显示\0".as_bytes());
+    let n = put_lit(d, "深度隐藏\0".as_bytes());
     core::slice::from_raw_parts(d, n)
 }
 
@@ -1297,19 +1306,14 @@ pub(crate) unsafe fn mode_pending() -> bool { REQ_MODE != 0 }
 pub(crate) unsafe fn do_mode_apply() {
     if REQ_MODE == 0 { return; }
     REQ_MODE = 0;
-    if APPLY_MODE != 0 {
+    if APPLY_MODE == 0 {
+        // 打开深度隐藏: 普通隐藏(keep)的条目搬进 apps.json_hide。
+        // 逻辑上仍然隐藏, 只是存储方式从"保留条目+名单"换成"移出注册表"。
         keep_load();
-        keep_apply_all();
-        reload();
-        wmsg("免重启模式: 隐藏立即生效; 之前已隐藏的仍需重启一次\0");
-    } else {
-        // 切回重启模式: 免重启模式藏起来的条目还在 apps.json 里, 必须搬进
-        // apps.json_hide, 否则下次开机固件会把它当可见应用重新建图标。
         let mut i = 0usize;
         while i < KEEP_N {
             let p = KEEP_BUF.as_ptr().add(4 + i * PKG_CAP);
-            if op_hide_pkg(p) {
-                // 文件已搬到 apps.json_hide; 同步隐藏位并摘掉当前桌面图标。
+            if move_vis_to_hide(p) {
                 apply_pkg(true, p);
             }
             i += 1;
@@ -1317,7 +1321,38 @@ pub(crate) unsafe fn do_mode_apply() {
         KEEP_N = 0;
         let _ = keep_save();
         reload();
-        wmsg("重启模式: 隐藏/显示写入注册表, 重启后生效\0");
+        wmsg("深度隐藏已开启: 隐藏应用不再出现在开机桌面\0");
+    } else {
+        // 关闭深度隐藏: 把 apps.json_hide 的条目全部搬回 apps.json,
+        // 但**保持原来的隐藏状态** —— 同时记入 keep 名单, 开机补偿再隐藏。
+        // 这样所有应用都会重新注册(有节点), 之后普通显示立即生效。
+        reload();
+        MIG_N = 0;
+        let mut i = 0usize;
+        while i < APP_N && MIG_N < APP_MAX {
+            if read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i)) == 1 {
+                let dst = (core::ptr::addr_of_mut!(MIG_BUF) as *mut u8).add(MIG_N * PKG_CAP);
+                let src = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * PKG_CAP);
+                let mut k = 0usize;
+                while k < PKG_CAP {
+                    write_volatile(dst.add(k), read_volatile(src.add(k)));
+                    k += 1;
+                }
+                MIG_N += 1;
+            }
+            i += 1;
+        }
+        let mut m = 0usize;
+        while m < MIG_N {
+            let p = (core::ptr::addr_of!(MIG_BUF) as *const u8).add(m * PKG_CAP);
+            if move_hide_to_vis(p) {
+                keep_add(p);
+            }
+            m += 1;
+        }
+        let _ = keep_save();
+        reload();
+        wmsg("深度隐藏已关闭: 全部应用已写入 apps.json, 原隐藏状态保留\0");
     }
 }
 
@@ -1545,15 +1580,9 @@ unsafe fn remove_all_pkg(pkg: *const u8, src: u8) -> bool {
     }
 }
 
-/// 隐藏: 对象 可见 -> 隐藏(hideFlag:true)。先写隐藏注册表, 再从可见注册表删除。
-unsafe fn op_hide() -> bool { op_hide_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
-
-unsafe fn op_hide_pkg(pkg: *const u8) -> bool {
+/// 只做文件搬运: 可见 -> 隐藏(不读模式开关, 供单点/批量/模式迁移共用)。
+unsafe fn move_vis_to_hide(pkg: *const u8) -> bool {
     if write_blocked() { return false; }
-    // 免重启模式: 条目留在 apps.json, 只记入 Chaos 隐藏名单; 即时生效由 apply_pkg 完成。
-    if apply_mode_is_keep() {
-        return keep_add(pkg);
-    }
     if !capture(pkg, 0) { return false; }
     // 1) 隐藏注册表: 只有还没有该包名时才追加(重复追加 = 复制体)
     load_file(HID_PATH.as_ptr());
@@ -1568,15 +1597,9 @@ unsafe fn op_hide_pkg(pkg: *const u8) -> bool {
     true
 }
 
-/// 显示: 对象 隐藏 -> 可见(摘 hideFlag)。先写可见注册表, 再从隐藏注册表删除。
-unsafe fn op_show() -> bool { op_show_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
-
-unsafe fn op_show_pkg(pkg: *const u8) -> bool {
+/// 只做文件搬运: 隐藏 -> 可见(不读模式开关)。
+unsafe fn move_hide_to_vis(pkg: *const u8) -> bool {
     if write_blocked() { return false; }
-    // 免重启模式: 条目本来就在 apps.json, 只需从 Chaos 隐藏名单里摘掉。
-    if apply_mode_is_keep() && keep_has(pkg) {
-        return keep_del(pkg);
-    }
     if !capture(pkg, 1) { return false; }
     // 1) 可见注册表: 只有还没有该包名时才追加(重复追加 = 复制体)
     if !load_file(VIS_PATH.as_ptr()) { return false; }
@@ -1589,4 +1612,28 @@ unsafe fn op_show_pkg(pkg: *const u8) -> bool {
     // 2) 隐藏注册表: 删掉该包名的所有副本
     if !remove_all_pkg(pkg, 1) { return false; }
     true
+}
+
+/// 隐藏: 对象 可见 -> 隐藏(hideFlag:true)。先写隐藏注册表, 再从可见注册表删除。
+unsafe fn op_hide() -> bool { op_hide_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
+
+unsafe fn op_hide_pkg(pkg: *const u8) -> bool {
+    if write_blocked() { return false; }
+    // 普通隐藏: 条目留在 apps.json, 只记入 Chaos 隐藏名单; 即时生效由 apply_pkg 完成。
+    if apply_mode_is_keep() {
+        return keep_add(pkg);
+    }
+    move_vis_to_hide(pkg)
+}
+
+/// 显示: 对象 隐藏 -> 可见(摘 hideFlag)。先写可见注册表, 再从隐藏注册表删除。
+unsafe fn op_show() -> bool { op_show_pkg(core::ptr::addr_of!(REQ_PKG) as *const u8) }
+
+unsafe fn op_show_pkg(pkg: *const u8) -> bool {
+    if write_blocked() { return false; }
+    // 普通隐藏: 条目本来就在 apps.json, 只需从 Chaos 隐藏名单里摘掉。
+    if apply_mode_is_keep() && keep_has(pkg) {
+        return keep_del(pkg);
+    }
+    move_hide_to_vis(pkg)
 }
