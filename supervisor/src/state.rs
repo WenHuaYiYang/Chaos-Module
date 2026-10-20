@@ -411,3 +411,8 @@ impl Page {
 pub static mut PAGES: [Page; PAGE_COUNT] = [Page::EMPTY; PAGE_COUNT];
 // 每页标题文本缓冲: 标题 = 进入该页时点的行控件名, 目录页/查看页是动态的
 pub static mut TITLE_TXT: [[u8; 48]; PAGE_COUNT] = [[0; 48]; PAGE_COUNT];
+
+// 主页圆环: [弧0, 弧1, 标签0, 标签1] / 标签文本 / 上次百分比
+pub static mut RING_H: [u32; 4] = [0; 4];
+pub static mut RING_TXT: [[u8; 48]; 2] = [[0; 48]; 2];
+pub static mut RING_PREV: [i32; 2] = [-1; 2];

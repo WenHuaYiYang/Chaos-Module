@@ -513,3 +513,20 @@ pub unsafe fn obj_is_child_of(parent: Obj, obj: Obj) -> bool {
     }
     false
 }
+
+/// `lv_arc_create` 0x1C0641D0(Thumb 0x1C0641D1): 类描述 0x2CCE5F0C, 内部
+/// `lv_obj_class_create_obj` + `lv_obj_class_init_obj`。反汇编自 LVGL 代码段 dump。
+pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
+    let f: unsafe extern "C" fn(Obj) -> Obj = transmute(0x1C06_41D1usize);
+    f(parent)
+}
+
+/// 写 arc 的 value 字段(+0x34，int32，0..100)并失效重绘。
+/// 绘制路径 0x1C063EFA 直接读该字段算角度，不依赖缓存的 indicator 角。
+pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
+    if arc == 0 { return; }
+    let p = (arc as usize + 0x34) as *mut i32;
+    core::ptr::write_volatile(p, if pct > 100 { 100 } else { pct as i32 });
+    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
+    inv(arc);
+}

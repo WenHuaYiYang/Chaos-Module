@@ -569,6 +569,20 @@ unsafe fn tj_confirm() {
     st_wr!(TJ_SAVE_REQ, 1);
 }
 
+/// 圆环标题: "存储占用 45%" 形式, 写进 RING_TXT[i]
+unsafe fn ring_fill(i: usize) {
+    let dst = (core::ptr::addr_of_mut!(RING_TXT) as *mut u8).add(i * 48);
+    let nm = stat_name(i);
+    let val = (core::ptr::addr_of!(STAT_VAL) as *const u8).add(i * STAT_STRIDE);
+    let mut n = 0usize;
+    let mut k = 0usize;
+    while read_volatile(nm.add(k)) != 0 && n < 30 { write_volatile(dst.add(n), read_volatile(nm.add(k))); n += 1; k += 1; }
+    if n < 31 { write_volatile(dst.add(n), b' '); n += 1; }
+    k = 0;
+    while read_volatile(val.add(k)) != 0 && n < 46 { write_volatile(dst.add(n), read_volatile(val.add(k))); n += 1; k += 1; }
+    write_volatile(dst.add(n), 0);
+}
+
 pub(crate) struct InfoPage;
 
 impl Page for InfoPage {
@@ -589,32 +603,20 @@ impl Page for InfoPage {
             let cpu = build_row(ctx, ctx.title, 2, &RowSpec::display(
                 core::slice::from_raw_parts(nm2, cstr_len(nm2)), val2));
             let anchor = if cpu != 0 { cpu } else { ctx.title };
-            // 数据行组件(存储=小米蓝, 内存=绿), 封装在 fw_api::data_row_create 等
-            stat_fill(0);
-            let d0 = fw_api::data_row_create(ctx.content, stat_name(0),
-                fw_api::BAR_FILL_RGB, storage_pct());
-            fw_api::data_row_place(&d0, anchor);
-            if d0.value != 0 {
-                fw_api::label_set_text(d0.value, core::ptr::addr_of!(STAT_VAL) as *const u8);
-            }
-            stat_fill(1);
-            let d1 = fw_api::data_row_create(ctx.content, stat_name(1),
-                fw_api::BAR_FILL_GREEN, mem_pct());
-            fw_api::data_row_place(&d1, d0.row);
-            if d1.value != 0 {
-                fw_api::label_set_text(d1.value,
-                    (core::ptr::addr_of!(STAT_VAL) as *const u8).add(STAT_STRIDE));
-            }
-            // 句柄登记(tick 用): [行, 数值标签, 条] x2
-            let hp = core::ptr::addr_of_mut!(DR_HANDLES) as *mut u32;
-            write_volatile(hp.add(0), d0.row);
-            write_volatile(hp.add(1), d0.value);
-            write_volatile(hp.add(2), d0.bar);
-            write_volatile(hp.add(3), d1.row);
-            write_volatile(hp.add(4), d1.value);
-            write_volatile(hp.add(5), d1.bar);
+            // 存储/内存合并成一行: 左右两个圆环
+            stat_fill(0); ring_fill(0);
+            stat_fill(1); ring_fill(1);
+            let rr = fw_api::ring_row_create(ctx.content,
+                core::ptr::addr_of!(RING_TXT[0]) as *const u8,
+                core::ptr::addr_of!(RING_TXT[1]) as *const u8);
+            fw_api::ring_row_place(&rr, anchor);
+            let hp = core::ptr::addr_of_mut!(RING_H) as *mut u32;
+            write_volatile(hp.add(0), rr.arc0);
+            write_volatile(hp.add(1), rr.arc1);
+            write_volatile(hp.add(2), rr.lab0);
+            write_volatile(hp.add(3), rr.lab1);
             // 导航入口
-            build_rows(ctx, d1.row, &[
+            build_rows(ctx, rr.row, &[
                 (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
@@ -703,23 +705,23 @@ impl Page for InfoPage {
                     upd(r2, core::ptr::null(), stat_name(2), val, 0, 0);
                 }
             }
-            // 行0/行1(数据行): 数值标签与条
-            let hp = core::ptr::addr_of_mut!(DR_HANDLES) as *mut u32;
-            let bp = core::ptr::addr_of_mut!(BAR_PREV) as *mut i32;
+            // 行0/行1(圆环): 更新百分比与标题
+            let rp = core::ptr::addr_of_mut!(RING_H) as *mut u32;
+            let pp = core::ptr::addr_of_mut!(RING_PREV) as *mut i32;
             let pct = [storage_pct(), mem_pct()];
             for i in 0..2usize {
                 stat_fill(i);
-                let ch = stat_changed(i);
-                let vl = read_volatile(hp.add(i * 3 + 1));
-                if vl != 0 && ch {
-                    let val = (core::ptr::addr_of!(STAT_VAL) as *const u8).add(i * STAT_STRIDE);
-                    fw_api::label_set_text(vl, val);
-                }
-                let bar = read_volatile(hp.add(i * 3 + 2));
+                ring_fill(i);
+                let arc = read_volatile(rp.add(i));
                 let p = pct[i] as i32;
-                if bar != 0 && read_volatile(bp.add(i)) != p {
-                    write_volatile(bp.add(i), p);
-                    fw_api::bar_set_pct(bar, pct[i]);
+                if arc != 0 && read_volatile(pp.add(i)) != p {
+                    write_volatile(pp.add(i), p);
+                    fw_api::arc_set_pct(arc, pct[i]);
+                }
+                let lab = read_volatile(rp.add(2 + i));
+                if lab != 0 {
+                    fw_api::label_set_text(lab,
+                        (core::ptr::addr_of!(RING_TXT) as *const u8).add(i * 48));
                 }
             }
 

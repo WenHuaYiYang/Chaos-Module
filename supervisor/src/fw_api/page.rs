@@ -169,3 +169,48 @@ pub unsafe fn data_row_place(d: &DataRow, prev: Obj) {
         obj_align_to(d.row, prev, align::OUT_BOTTOM_MID, 0, 8);
     }
 }
+
+// ===== 主页圆环（存储/内存并排） =====
+pub struct RingRow {
+    pub row: Obj,
+    pub arc0: Obj,
+    pub arc1: Obj,
+    pub lab0: Obj,
+    pub lab1: Obj,
+}
+
+/// 两个 96x96 圆环并排 + 各自顶部标题。行高 148，容纳环与标题。
+pub unsafe fn ring_row_create(parent: Obj, t0: Cp, t1: Cp) -> RingRow {
+    let mut r = RingRow { row: 0, arc0: 0, arc1: 0, lab0: 0, lab1: 0 };
+    let row = row_create(parent, b" \0".as_ptr(), NONE_PTR, 0);
+    if row == 0 { return r; }
+    obj_set_size_wh(row, 328, 148);
+    r.lab0 = label_create(row);
+    if r.lab0 != 0 {
+        style_apply(r.lab0, crate::FW_STYLE_HR_NAME, 255, 0);
+        label_set_text(r.lab0, t0);
+        obj_align(r.lab0, align::TOP_LEFT, 20, 6);
+    }
+    r.lab1 = label_create(row);
+    if r.lab1 != 0 {
+        style_apply(r.lab1, crate::FW_STYLE_HR_NAME, 255, 0);
+        label_set_text(r.lab1, t1);
+        obj_align(r.lab1, align::TOP_LEFT, 184, 6);
+    }
+    r.arc0 = arc_create(row);
+    if r.arc0 != 0 {
+        obj_set_size_wh(r.arc0, 96, 96);
+        obj_align(r.arc0, align::TOP_LEFT, 20, 38);
+    }
+    r.arc1 = arc_create(row);
+    if r.arc1 != 0 {
+        obj_set_size_wh(r.arc1, 96, 96);
+        obj_align(r.arc1, align::TOP_LEFT, 212, 38);
+    }
+    r.row = row;
+    r
+}
+
+pub unsafe fn ring_row_place(r: &RingRow, prev: Obj) {
+    if r.row != 0 { obj_align_to(r.row, prev, align::OUT_BOTTOM_MID, 0, 8); }
+}
