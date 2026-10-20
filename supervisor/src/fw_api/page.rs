@@ -175,37 +175,51 @@ pub struct RingRow {
     pub row: Obj,
     pub arc0: Obj,
     pub arc1: Obj,
-    pub lab0: Obj,
-    pub lab1: Obj,
+    pub pct0: Obj,
+    pub pct1: Obj,
 }
 
-/// 两个 96x96 圆环并排 + 各自顶部标题。行高 148，容纳环与标题。
-pub unsafe fn ring_row_create(parent: Obj, t0: Cp, t1: Cp) -> RingRow {
-    let mut r = RingRow { row: 0, arc0: 0, arc1: 0, lab0: 0, lab1: 0 };
+/// 两个 104x104 圆环并排，百分比在环心，名称在环下方。
+pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> RingRow {
+    let mut r = RingRow { row: 0, arc0: 0, arc1: 0, pct0: 0, pct1: 0 };
     let row = row_create(parent, b" \0".as_ptr(), NONE_PTR, 0);
     if row == 0 { return r; }
-    obj_set_size_wh(row, 328, 148);
-    r.lab0 = label_create(row);
-    if r.lab0 != 0 {
-        style_apply(r.lab0, crate::FW_STYLE_HR_NAME, 255, 0);
-        label_set_text(r.lab0, t0);
-        obj_align(r.lab0, align::TOP_LEFT, 20, 6);
-    }
-    r.lab1 = label_create(row);
-    if r.lab1 != 0 {
-        style_apply(r.lab1, crate::FW_STYLE_HR_NAME, 255, 0);
-        label_set_text(r.lab1, t1);
-        obj_align(r.lab1, align::TOP_LEFT, 184, 6);
-    }
+    obj_set_size_wh(row, 328, 156);
     r.arc0 = arc_create(row);
     if r.arc0 != 0 {
-        obj_set_size_wh(r.arc0, 96, 96);
-        obj_align(r.arc0, align::TOP_LEFT, 20, 38);
+        obj_set_size_wh(r.arc0, 104, 104);
+        obj_align(r.arc0, align::TOP_LEFT, 12, 2);
     }
     r.arc1 = arc_create(row);
     if r.arc1 != 0 {
-        obj_set_size_wh(r.arc1, 96, 96);
-        obj_align(r.arc1, align::TOP_LEFT, 212, 38);
+        obj_set_size_wh(r.arc1, 104, 104);
+        obj_align(r.arc1, align::TOP_LEFT, 212, 2);
+    }
+    // 百分比：96 宽环内水平居中（字号 24 时 4 字符约 52px，起点 12+26=38）
+    r.pct0 = label_create(row);
+    if r.pct0 != 0 {
+        style_apply(r.pct0, crate::FW_STYLE_HR_VALUE, 255, 0);
+        label_set_text(r.pct0, p0);
+        obj_align(r.pct0, align::TOP_LEFT, 38, 42);
+    }
+    r.pct1 = label_create(row);
+    if r.pct1 != 0 {
+        style_apply(r.pct1, crate::FW_STYLE_HR_VALUE, 255, 0);
+        label_set_text(r.pct1, p1);
+        obj_align(r.pct1, align::TOP_LEFT, 238, 42);
+    }
+    // 名称：环下方居中（小字号）
+    let nm0 = label_create(row);
+    if nm0 != 0 {
+        style_apply(nm0, crate::FW_STYLE_HR_NAME, 255, 0);
+        label_set_text(nm0, n0);
+        obj_align(nm0, align::TOP_LEFT, 32, 118);
+    }
+    let nm1 = label_create(row);
+    if nm1 != 0 {
+        style_apply(nm1, crate::FW_STYLE_HR_NAME, 255, 0);
+        label_set_text(nm1, n1);
+        obj_align(nm1, align::TOP_LEFT, 232, 118);
     }
     r.row = row;
     r

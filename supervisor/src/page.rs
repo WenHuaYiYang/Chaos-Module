@@ -569,17 +569,12 @@ unsafe fn tj_confirm() {
     st_wr!(TJ_SAVE_REQ, 1);
 }
 
-/// 圆环标题: "存储占用 45%" 形式, 写进 RING_TXT[i]
+/// 圆环百分比文本: 只写 STAT_VAL, 写进 RING_TXT[i]
 unsafe fn ring_fill(i: usize) {
     let dst = (core::ptr::addr_of_mut!(RING_TXT) as *mut u8).add(i * 48);
-    let nm = stat_name(i);
     let val = (core::ptr::addr_of!(STAT_VAL) as *const u8).add(i * STAT_STRIDE);
     let mut n = 0usize;
-    let mut k = 0usize;
-    while read_volatile(nm.add(k)) != 0 && n < 30 { write_volatile(dst.add(n), read_volatile(nm.add(k))); n += 1; k += 1; }
-    if n < 31 { write_volatile(dst.add(n), b' '); n += 1; }
-    k = 0;
-    while read_volatile(val.add(k)) != 0 && n < 46 { write_volatile(dst.add(n), read_volatile(val.add(k))); n += 1; k += 1; }
+    while read_volatile(val.add(n)) != 0 && n < 46 { write_volatile(dst.add(n), read_volatile(val.add(n))); n += 1; }
     write_volatile(dst.add(n), 0);
 }
 
@@ -607,14 +602,15 @@ impl Page for InfoPage {
             stat_fill(0); ring_fill(0);
             stat_fill(1); ring_fill(1);
             let rr = fw_api::ring_row_create(ctx.content,
+                stat_name(0), stat_name(1),
                 core::ptr::addr_of!(RING_TXT[0]) as *const u8,
                 core::ptr::addr_of!(RING_TXT[1]) as *const u8);
             fw_api::ring_row_place(&rr, anchor);
             let hp = core::ptr::addr_of_mut!(RING_H) as *mut u32;
             write_volatile(hp.add(0), rr.arc0);
             write_volatile(hp.add(1), rr.arc1);
-            write_volatile(hp.add(2), rr.lab0);
-            write_volatile(hp.add(3), rr.lab1);
+            write_volatile(hp.add(2), rr.pct0);
+            write_volatile(hp.add(3), rr.pct1);
             // 导航入口
             build_rows(ctx, rr.row, &[
                 (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
