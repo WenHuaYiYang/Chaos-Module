@@ -741,7 +741,55 @@ unsafe fn cstr_len(s: *const u8) -> usize {
 // 排除项不参与页1 的一键隐藏/显示, 且在页1 列表里不出现。
 // 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
 
+/// 单条切换后只改复选框与状态文本, 不重建整页(避免列表跳回顶部)。
+unsafe fn refresh_appmgr_rows() {
+    let rows = crate::appmgr::rows_ptr();
+    let n = crate::appmgr::count();
+    let mut i = 0usize;
+    while i < n {
+        let r = read_volatile(rows.add(i));
+        if r != 0 {
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
+        }
+        i += 1;
+    }
+    if AM_MSG_ROW != 0 {
+        fw_api::row_update(AM_MSG_ROW, fw_api::NONE_PTR,
+            crate::appmgr::msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
+unsafe fn refresh_excl_rows() {
+    let rows = crate::appmgr::rows_ptr();
+    let mode = crate::appmgr::excl_mode();
+    let n = crate::appmgr::count();
+    let mut i = 0usize;
+    while i < n {
+        if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
+        let r = read_volatile(rows.add(i));
+        if r != 0 {
+            let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
+            let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+        }
+        i += 1;
+    }
+    if EX_HINT_ROW != 0 {
+        fw_api::row_update(EX_HINT_ROW, fw_api::NONE_PTR,
+            crate::appmgr::excl_hint().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+    if EX_MSG_ROW != 0 {
+        fw_api::row_update(EX_MSG_ROW, fw_api::NONE_PTR,
+            crate::appmgr::excl_msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
 pub(crate) struct ExclPage;
+
+static mut AM_MSG_ROW: u32 = 0;
+static mut EX_HINT_ROW: u32 = 0;
+static mut EX_MSG_ROW: u32 = 0;
 
 impl Page for ExclPage {
     fn fill_title(&self, buf: *mut u8) {
@@ -758,15 +806,22 @@ impl Page for ExclPage {
                 (2, RowSpec::clickable(crate::appmgr::mode_label())),
                 (3, RowSpec::display(crate::appmgr::excl_msg(), core::ptr::null())),
             ])?;
+            EX_HINT_ROW = read_volatile(ctx.rows.add(1));
+            EX_MSG_ROW = read_volatile(ctx.rows.add(3));
             let mut prev = read_volatile(ctx.rows.add(3));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
-            let n = crate::appmgr::count();
             let mode = crate::appmgr::excl_mode();
-            let mut i = 0usize;
-            while i < n {
+            // 排除项在前, 稳定排序
+            crate::appmgr::build_excl_view();
+            let n = crate::appmgr::excl_view_count();
+            let mut v = 0usize;
+            while v < n {
+                let i = crate::appmgr::excl_view_at(v);
+                v += 1;
+                if i == usize::MAX { break; }
                 // 管理显隐模式下只列排除项; 非排除项在页1 管理
-                if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
+                if mode != 0 && !crate::appmgr::excl_on(i) { continue; }
                 let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
                 let r = fw_api::row_create(ctx.content,
                     crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
@@ -780,7 +835,6 @@ impl Page for ExclPage {
                 // 复选框: 排除模式 = 是否排除; 显隐模式 = 是否可见(勾=显示中)
                 let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
-                i += 1;
             }
             Ok(())
         }
@@ -800,7 +854,6 @@ impl Page for ExclPage {
                 } else {
                     crate::appmgr::click(i);
                 }
-                render_req(7);
             }
         }
     }
@@ -820,7 +873,7 @@ impl Page for ExclPage {
                 crate::appmgr::do_op();
                 dirty = true;
             }
-            if dirty { render_req(7); }
+            if dirty { refresh_excl_rows(); }
         }
     }
 }
@@ -1491,6 +1544,9 @@ impl Page for AppMgrPage {
                 (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
                 (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 深度隐藏(全局)
             ])?;
+            AM_MSG_ROW = read_volatile(ctx.rows.add(2));
+            // 勾选(=可见)在前, 隐藏在后
+            crate::appmgr::sort_view_visible_first();
             // 补写开关初态(开关态 = 深度隐藏是否开启)
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
@@ -1540,9 +1596,8 @@ impl Page for AppMgrPage {
             } else if idx == 3 {
                 nav_goto(7, 0);
             } else if idx >= 12 {
-                let v = idx - 12;
-                let e = crate::appmgr::view_at(v);
-                if e != usize::MAX { crate::appmgr::click(e); }
+                let e = idx - 12;
+                if e < crate::appmgr::count() { crate::appmgr::click(e); }
             }
         }
     }
@@ -1569,10 +1624,10 @@ impl Page for AppMgrPage {
                 render_req(1);
             } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
-                render_req(1);
+                refresh_appmgr_rows();
             } else if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
-                render_req(1);
+                refresh_appmgr_rows();
             }
         }
     }

@@ -112,6 +112,10 @@ static mut E_EXCL: [u8; APP_MAX] = [0; APP_MAX];
 static mut VIEW_IDX: [u8; APP_MAX] = [0; APP_MAX];
 static mut VIEW_N: usize = 0;
 
+// 页7 的展示顺序: 排除项优先, 其余保持原顺序。
+static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];
+static mut EXCL_VIEW_N: usize = 0;
+
 pub(crate) unsafe fn rows_reset() {
     let p = core::ptr::addr_of_mut!(APP_ROWS) as *mut u32;
     let mut i = 0usize;
@@ -898,6 +902,54 @@ pub(crate) unsafe fn view_count() -> usize { VIEW_N }
 pub(crate) unsafe fn view_at(v: usize) -> usize {
     if v >= VIEW_N { return usize::MAX; }
     read_volatile((core::ptr::addr_of!(VIEW_IDX) as *const u8).add(v)) as usize
+}
+
+/// 页1 顺序: 勾选(可见)在前, 隐藏在后; 稳定排序。
+pub(crate) unsafe fn sort_view_visible_first() {
+    let mut i = 1usize;
+    while i < VIEW_N {
+        let cur = read_volatile((core::ptr::addr_of!(VIEW_IDX) as *const u8).add(i));
+        let mut j = i;
+        while j > 0 {
+            let prev = read_volatile((core::ptr::addr_of!(VIEW_IDX) as *const u8).add(j - 1));
+            if (visible(prev as usize) as u8) >= (visible(cur as usize) as u8) { break; }
+            write_volatile((core::ptr::addr_of_mut!(VIEW_IDX) as *mut u8).add(j), prev);
+            j -= 1;
+        }
+        write_volatile((core::ptr::addr_of_mut!(VIEW_IDX) as *mut u8).add(j), cur);
+        i += 1;
+    }
+}
+
+/// 页7 顺序: 排除项在前; 稳定排序。
+pub(crate) unsafe fn build_excl_view() {
+    EXCL_VIEW_N = 0;
+    let mut i = 0usize;
+    while i < APP_N && i < APP_MAX {
+        write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(EXCL_VIEW_N), i as u8);
+        EXCL_VIEW_N += 1;
+        i += 1;
+    }
+    let mut a = 1usize;
+    while a < EXCL_VIEW_N {
+        let cur = read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(a));
+        let mut b = a;
+        while b > 0 {
+            let prev = read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(b - 1));
+            if (excl_on(prev as usize) as u8) >= (excl_on(cur as usize) as u8) { break; }
+            write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), prev);
+            b -= 1;
+        }
+        write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), cur);
+        a += 1;
+    }
+}
+
+pub(crate) unsafe fn excl_view_count() -> usize { EXCL_VIEW_N }
+
+pub(crate) unsafe fn excl_view_at(v: usize) -> usize {
+    if v >= EXCL_VIEW_N { return usize::MAX; }
+    read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(v)) as usize
 }
 
 pub(crate) unsafe fn excl_ensure() {
