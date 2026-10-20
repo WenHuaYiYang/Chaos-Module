@@ -32,6 +32,7 @@ mod blur_zone;
 mod text;
 mod explorer;
 mod watchface;
+mod memdump;
 mod page;
 mod ui;
 mod ipc;
