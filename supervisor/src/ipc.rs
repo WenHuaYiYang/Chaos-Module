@@ -150,6 +150,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_ABOUT) as u32,
     core::ptr::addr_of!(PAGE_ZONE) as u32,
     core::ptr::addr_of!(PAGE_VIB) as u32,
+    core::ptr::addr_of!(PAGE_LOG) as u32,
 ];
 let mut pg = 0usize;
 while pg < PAGE_COUNT {
@@ -266,7 +267,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
         desc_addr + 0x1D0, desc_addr + 0x244, desc_addr + 0x2B8, desc_addr + 0x32C,
         desc_addr + 0x3A0, desc_addr + 0x414, desc_addr + 0x488, desc_addr + 0x4FC,
         desc_addr + 0x570, desc_addr + 0x5E4, desc_addr + 0x658, desc_addr + 0x6CC,
-        desc_addr + 0x740,
+        desc_addr + 0x740, desc_addr + 0x7B4,
     ];
     trace_step(12); // register_app 前
     let install_result = install(meta, items.as_ptr(), PAGE_COUNT as u32);

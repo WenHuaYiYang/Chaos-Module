@@ -313,6 +313,7 @@ pub(crate) unsafe fn do_op() {
     } else {
         wmsg_keep("操作失败, 注册表未改动\0");
     }
+    crate::log::cstr(core::ptr::addr_of!(APP_MSG) as *const u8);
     reload();
 }
 
@@ -1533,7 +1534,13 @@ pub(crate) unsafe fn boot_apply() {
     if BOOT_WAIT % 40 != 0 { return; }
     let found = keep_apply_all();
     BOOT_TRIES = BOOT_TRIES.wrapping_add(1);
-    if found >= KEEP_N || BOOT_TRIES >= 300 { BOOT_APPLIED = 1; }
+    if found >= KEEP_N {
+        BOOT_APPLIED = 1;
+        crate::log::line("开机补偿: 隐藏名单已全部应用");
+    } else if BOOT_TRIES >= 300 {
+        BOOT_APPLIED = 1;
+        crate::log::line("开机补偿: 超时, 部分应用未找到节点");
+    }
 }
 
 // ===== 改写 =====

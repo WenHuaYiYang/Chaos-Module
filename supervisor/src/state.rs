@@ -130,11 +130,14 @@ pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
 /// 页16: 主页 -> 震动(三级)。滑动震动开关 + 测试震动。
 pub static PAGE_VIB: [u8; 8] = *b"vibtest\0";
 
+/// 页17: 设置 -> 运行日志。/data/chaos/chaos.log 的尾部展示与清空。
+pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 17;                   // 注册页数(页0..页16)
+pub const PAGE_COUNT: usize = 18;                   // 注册页数(页0..页17)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 493] = [0; 493];         // 17 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 522] = [0; 522];         // 18 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

@@ -17,6 +17,7 @@ mod res_hook;
 mod time_set;
 mod settings_entry;
 mod appmgr;
+mod log;
 mod cacheclean;
 mod confirm_pop;
 #[allow(dead_code)]
@@ -223,6 +224,7 @@ unsafe extern "C" fn chaos_ctor() {
         // 这里只建立延后执行的维护定时器；真正的订阅、hook 和设置应用
         // 由定时器在启动窗口结束后统一开始。
         crate::watchface::maintenance_arm();
+        crate::log::line("模块加载: /dev/chaos 注册成功");
     }
 }
 

@@ -31,6 +31,7 @@ It started as a research harness for the 10 Pro and grew into a full device-mana
 - **Customization**: fonts, home-screen icon packs, system blur, translucent watchface background.
 - **Watchfaces**: switch built-in/market faces, shake-to-rotate, face management.
 - **Device tools**: brightness, cache cleanup, time/date, vibration test.
+- **Runtime log**: key actions go to `/data/chaos/chaos.log`; Settings → Runtime log shows the tail and can clear it.
 - **No external runtime**: talks only to verified firmware APIs; no JS injection, no network.
 
 ## Compatibility

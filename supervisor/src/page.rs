@@ -33,6 +33,7 @@ pub(crate) struct PageCtx {
 // ===== 行构建器 =====
 
 /// 行控件规格。用 builder 模式配置, 避免带一堆位置参数的构造函数。
+#[derive(Clone, Copy)]
 pub(crate) struct RowSpec<'a> {
     pub text: &'a [u8],
     pub sub: *const u8,
@@ -892,6 +893,117 @@ impl Page for ExclPage {
     }
 }
 
+
+// ===== 页17: 运行日志 =====
+//
+// 只读 /data/chaos/chaos.log 的尾部 2KB, 最多展示最后 7 行; 清空 = 删文件。
+// 不做分页/滚动: 日志页的定位是"出问题时快速看一眼", 不是日志浏览器。
+
+pub(crate) struct LogPage;
+static PAGE_LOG: LogPage = LogPage;
+
+const LOG_VIEW_CAP: usize = 2048;
+const LOG_SHOW_LINES: usize = 7;
+const LOG_LINE_CAP: usize = 40;
+
+static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
+static mut LOG_LINES: [[u8; LOG_LINE_CAP]; LOG_SHOW_LINES] = [[0; LOG_LINE_CAP]; LOG_SHOW_LINES];
+static mut LOG_LINE_N: usize = 0;
+static mut LOG_MSG: [u8; 48] = [0; 48];
+static mut LOG_CLEAR_ARMED: u32 = 0;
+
+unsafe fn log_page_load() {
+    let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
+    let n = crate::log::tail(buf, LOG_VIEW_CAP);
+    LOG_LINE_N = 0;
+    // 从尾部往前找 7 个行首, 保证显示的是最新行。
+    let mut ends: [usize; LOG_SHOW_LINES] = [0; LOG_SHOW_LINES];
+    let mut cnt = 0usize;
+    let mut e = n;
+    while e > 0 && cnt < LOG_SHOW_LINES {
+        // 去掉行尾的 '\n'
+        while e > 0 && read_volatile(buf.add(e - 1)) == b'\n' { e -= 1; }
+        if e == 0 { break; }
+        let end = e;
+        while e > 0 && read_volatile(buf.add(e - 1)) != b'\n' { e -= 1; }
+        ends[cnt] = (e << 16) | (end - e);   // 高 16 位起点, 低 16 位长度
+        cnt += 1;
+        if e > 0 { e -= 1; }
+    }
+    LOG_LINE_N = cnt;
+    let mut k = 0usize;
+    while k < cnt {
+        let rec = ends[cnt - 1 - k];          // 倒序写入 -> 旧行在上
+        let start = rec >> 16;
+        let len = rec & 0xffff;
+        let dst = (core::ptr::addr_of_mut!(LOG_LINES) as *mut u8).add(k * LOG_LINE_CAP);
+        let mut j = 0usize;
+        while j < len && j + 1 < LOG_LINE_CAP {
+            write_volatile(dst.add(j), read_volatile(buf.add(start + j)));
+            j += 1;
+        }
+        write_volatile(dst.add(j), 0);
+        k += 1;
+    }
+    let msg = core::ptr::addr_of_mut!(LOG_MSG) as *mut u8;
+    if n == 0 {
+        put_str(msg, "暂无日志\0".as_bytes());
+    } else {
+        let mut w = crate::text::W::new(msg, 48);
+        w.s("日志 ".as_bytes()).n(LOG_LINE_N as u32).s(" 行, 最多显示 7 行\0".as_bytes());
+        w.end();
+    }
+}
+
+impl Page for LogPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "运行日志\0".as_bytes()); }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            log_page_load();
+            let mut specs: [(usize, RowSpec); 10] = [(0, RowSpec::clickable(b"\0".as_slice())); 10];
+            specs[0] = (0, RowSpec::clickable("返回\0".as_bytes()));
+            specs[1] = (1, RowSpec::clickable("刷新\0".as_bytes()));
+            specs[2] = (2, RowSpec::clickable(if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() }));
+            specs[3] = (3, RowSpec::display(
+                core::slice::from_raw_parts(core::ptr::addr_of!(LOG_MSG) as *const u8,
+                    cstr_len(core::ptr::addr_of!(LOG_MSG) as *const u8) + 1),
+                core::ptr::null()));
+            let mut i = 0usize;
+            while i < LOG_LINE_N && i + 4 < 10 {
+                let p = (core::ptr::addr_of!(LOG_LINES) as *const u8).add(i * LOG_LINE_CAP);
+                specs[4 + i] = (4 + i, RowSpec::display(
+                    core::slice::from_raw_parts(p, cstr_len(p) + 1), core::ptr::null()));
+                i += 1;
+            }
+            build_rows(ctx, ctx.title, &specs[..4 + LOG_LINE_N])?;
+            Ok(())
+        }
+    }
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx == 0 {
+                LOG_CLEAR_ARMED = 0;
+                nav_back();
+            } else if idx == 1 {
+                LOG_CLEAR_ARMED = 0;
+                render_req(17);
+            } else if idx == 2 {
+                if LOG_CLEAR_ARMED == 0 {
+                    LOG_CLEAR_ARMED = 1;
+                    render_req(17);
+                } else {
+                    let ok = crate::log::clear();
+                    LOG_CLEAR_ARMED = 0;
+                    put_str(core::ptr::addr_of_mut!(LOG_MSG) as *mut u8,
+                        if ok { "日志已清空\0".as_bytes() } else { "清空失败\0".as_bytes() });
+                    render_req(17);
+                }
+            }
+        }
+    }
+}
 
 // ===== 页8/9: 表盘列表(切换/轮换) =====
 
@@ -1782,6 +1894,7 @@ impl Page for SettingsPage {
                 (8, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (9, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (10, RowSpec::display("谦虚的海鸥\0".as_bytes(), "贡献者\0".as_bytes().as_ptr())),
+                (11, RowSpec::clickable("运行日志\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1793,6 +1906,7 @@ impl Page for SettingsPage {
                 2 => nav_goto(11, 0),   // 亮度
                 3 => nav_goto(16, 0),   // 震动
                 4 => nav_goto(12, 0),   // 缓存清理
+                11 => nav_goto(17, 0),  // 运行日志
                 _ => {}
             }
         }
@@ -1940,7 +2054,7 @@ impl Page for BlurZonePage {
     }
 }
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
+pub(crate) static PAGE_TABLE: [&dyn Page; 18] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
     &PAGE_TIMESET,      // 2  时间设置 / 日期第一步(年)(原目录 2 级, 文件管理退役后空出)
@@ -1958,4 +2072,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
     &PAGE_SETTINGS,     // 14  设置(时间/日期/亮度/震动/缓存/版本)
     &PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
     &PAGE_VIBP,         // 16 主页 -> 震动
+    &PAGE_LOG,          // 17 设置 -> 运行日志
 ];
