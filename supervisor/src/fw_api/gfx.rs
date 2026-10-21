@@ -539,13 +539,8 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
     let p = arc as usize;
-    core::ptr::write_volatile((p + 0x38) as *mut f32, 0.0);    // min
-    core::ptr::write_volatile((p + 0x3C) as *mut f32, 100.0);  // max
-    core::ptr::write_volatile((p + 0x40) as *mut i32, 90);     // bg_start
-    core::ptr::write_volatile((p + 0x44) as *mut i32, 450);    // bg_end
-    core::ptr::write_volatile((p + 0x48) as *mut i32, 90);     // start
-    core::ptr::write_volatile((p + 0x4C) as *mut i32, 450);    // end
-    core::ptr::write_volatile((p + 0x50) as *mut i32, 0);      // rotation
+    core::ptr::write_volatile((p + 0x38) as *mut f32, 0.0);
+    core::ptr::write_volatile((p + 0x3C) as *mut f32, 100.0);
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
