@@ -604,7 +604,6 @@ impl Page for InfoPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            fw_api::obj_clear_scrollable(ctx.content);
             // 展示顺序: CPU(标准行) -> 存储 -> 内存 -> 导航。
             // 句柄槽位不变(数据行仍 0/1, CPU 仍 2), 只改悬挂位置。
             stat_fill(2);
