@@ -531,15 +531,24 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     inv(arc);
 }
 
-/// 把 arc 的角度区间改为整圆 0..360（默认是 135..45 的 270° 仪表盘）。
-/// 字段对应 LVGL arc: +0x38 bg_start, +0x3C bg_end, +0x40 angle_start, +0x44 angle_end。
+/// 把 arc 改成整圆并从正底部开始。
+///
+/// LVGL 8.4 的 `lv_arc_t` 是**整数**字段，不是 f32：
+///   +0x34 value(i32) / +0x38 min(i32) / +0x3C max(i32)
+///   +0x40 bg_start(i16) / +0x42 bg_end(i16)
+///   +0x44 start(i16) / +0x46 end(i16) / +0x48 rotation(i16)
+/// 之前按 f32 写 +0x38..+0x44，把 min/max/角度全部写坏，
+/// 才会出现“整圈蓝色填充 + 圆点乱跑”。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
     let p = arc as usize;
-    core::ptr::write_volatile((p + 0x38) as *mut f32, 90.0);
-    core::ptr::write_volatile((p + 0x3C) as *mut f32, 450.0);
-    core::ptr::write_volatile((p + 0x40) as *mut f32, 90.0);
-    core::ptr::write_volatile((p + 0x44) as *mut f32, 450.0);
+    core::ptr::write_volatile((p + 0x38) as *mut i32, 0);      // min
+    core::ptr::write_volatile((p + 0x3C) as *mut i32, 100);    // max
+    core::ptr::write_volatile((p + 0x40) as *mut i16, 90);     // bg_start: 6 点方向
+    core::ptr::write_volatile((p + 0x42) as *mut i16, 450);    // bg_end: 转满一圈
+    core::ptr::write_volatile((p + 0x44) as *mut i16, 90);     // start
+    core::ptr::write_volatile((p + 0x46) as *mut i16, 450);    // end
+    core::ptr::write_volatile((p + 0x48) as *mut i16, 0);      // rotation
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
