@@ -962,7 +962,8 @@ impl Page for LogPage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             log_page_load();
-            let mut specs: [(usize, RowSpec); 10] = [(0, RowSpec::clickable(b"\0".as_slice())); 10];
+            let mut specs: [(usize, RowSpec); 4 + LOG_SHOW_LINES] =
+                [(0, RowSpec::clickable(b"\0".as_slice())); 4 + LOG_SHOW_LINES];
             specs[0] = (0, RowSpec::clickable("返回\0".as_bytes()));
             specs[1] = (1, RowSpec::clickable("刷新\0".as_bytes()));
             specs[2] = (2, RowSpec::clickable(if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() }));
@@ -971,7 +972,7 @@ impl Page for LogPage {
                     cstr_len(core::ptr::addr_of!(LOG_MSG) as *const u8) + 1),
                 core::ptr::null()));
             let mut i = 0usize;
-            while i < LOG_LINE_N && i + 4 < 10 {
+            while i < LOG_LINE_N && i < LOG_SHOW_LINES {
                 let p = (core::ptr::addr_of!(LOG_LINES) as *const u8).add(i * LOG_LINE_CAP);
                 specs[4 + i] = (4 + i, RowSpec::display(
                     core::slice::from_raw_parts(p, cstr_len(p) + 1), core::ptr::null()));
