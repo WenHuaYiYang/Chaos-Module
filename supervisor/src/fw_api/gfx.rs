@@ -553,19 +553,25 @@ pub unsafe fn arc_make_full(arc: Obj) {
 /// 关掉 arc 的触摸交互：清 obj flags(+0x1C) 的 CLICKABLE(bit1)。
 /// 否则 LVGL 的 arc 会把手势变成数值拖拽（用户能直接把环拖大拖小）。
 pub unsafe fn arc_disable_input(arc: Obj) {
-    if arc == 0 { return; }
-    let p = (arc as usize + 0x1C) as *mut u32;
-    let v = core::ptr::read_volatile(p);
-    core::ptr::write_volatile(p, v & !0x2);
-    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
-    inv(arc);
+    obj_clear_flag(arc, 0x2);
 }
 
 /// 清掉对象 flags(+0x1C) 的 SCROLLABLE(bit4)，禁止该容器左右/上下滑动。
 /// 主页圆环行比屏宽时，父容器会把手势当横向滚动，用户一划整行就跟着动。
 pub unsafe fn obj_clear_scrollable(obj: Obj) {
+    obj_clear_flag(obj, 0x10);
+}
+
+/// 调固件 lv_obj_clear_flag(obj, f) 0x1C028C85，不再手写 flags 偏移。
+pub unsafe fn obj_clear_flag(obj: Obj, f: u32) {
     if obj == 0 { return; }
-    let p = (obj as usize + 0x1C) as *mut u32;
-    let v = core::ptr::read_volatile(p);
-    core::ptr::write_volatile(p, v & !0x10);
+    let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8C85usize);
+    func(obj, f);
+}
+
+/// 调固件 lv_obj_add_flag(obj, f) 0x1C028BD8。
+pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
+    if obj == 0 { return; }
+    let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
+    func(obj, f);
 }

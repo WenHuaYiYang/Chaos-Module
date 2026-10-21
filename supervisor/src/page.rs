@@ -621,6 +621,7 @@ impl Page for InfoPage {
                 core::ptr::addr_of!(RING_TXT[0]) as *const u8,
                 core::ptr::addr_of!(RING_TXT[1]) as *const u8);
             fw_api::ring_row_place(&rr, anchor);
+            fw_api::obj_clear_scrollable(rr.row);
             let hp = core::ptr::addr_of_mut!(RING_H) as *mut u32;
             write_volatile(hp.add(0), rr.arc0);
             write_volatile(hp.add(1), rr.arc1);
@@ -658,6 +659,7 @@ impl Page for InfoPage {
                 4 => nav_goto(10, 0),  // 表盘管理
                 5 => nav_goto(13, 0),  // 系统美化
                 6 => nav_goto(14, 0),  // 设置(时间/日期/亮度/震动/缓存/版本)
+                7 => nav_goto(18, 0),  // 关于
                 _ => {} // 行0-2 是数据行
             }
         }
@@ -938,6 +940,7 @@ impl Page for LogPage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             log_page_load();
+            fw_api::obj_add_flag(ctx.content, 0x10); // SCROLLABLE: 日志区可上下滚
             let specs: [(usize, RowSpec); 4] = [
                 (0, RowSpec::clickable("返回\0".as_bytes())),
                 (1, RowSpec::clickable("刷新\0".as_bytes())),
