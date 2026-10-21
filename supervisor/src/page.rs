@@ -921,9 +921,14 @@ unsafe fn log_page_load() {
     let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
     let n = crate::log::tail(buf, LOG_VIEW_CAP);
     let out = core::ptr::addr_of_mut!(LOG_TEXT) as *mut u8;
-    let mut start = if n > LOG_TEXT_CAP - 1 { n - (LOG_TEXT_CAP - 1) } else { 0 };
-    while start < n && read_volatile(buf.add(start)) != b'\n' { start += 1; }
-    if start < n { start += 1; }
+    // 只取最后 14 行: 日志页不滚动也能直接看到最新的调试行。
+    let mut start = n;
+    let mut lines = 0usize;
+    while start > 0 && lines < 14 {
+        start -= 1;
+        if read_volatile(buf.add(start)) == b'\n' { lines += 1; }
+    }
+    if start > 0 { start += 1; }
     let mut i = 0usize;
     while start + i < n && i + 1 < LOG_TEXT_CAP {
         let mut c = read_volatile(buf.add(start + i));
