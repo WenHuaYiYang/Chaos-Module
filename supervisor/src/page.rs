@@ -569,13 +569,26 @@ unsafe fn tj_confirm() {
     st_wr!(TJ_SAVE_REQ, 1);
 }
 
-/// 圆环百分比文本: 只写 STAT_VAL, 写进 RING_TXT[i]
+/// 圆环中心文本: 只写百分比数字, 如 "45%"
 unsafe fn ring_fill(i: usize) {
     let dst = (core::ptr::addr_of_mut!(RING_TXT) as *mut u8).add(i * 48);
-    let val = (core::ptr::addr_of!(STAT_VAL) as *const u8).add(i * STAT_STRIDE);
-    let mut n = 0usize;
-    while read_volatile(val.add(n)) != 0 && n < 46 { write_volatile(dst.add(n), read_volatile(val.add(n))); n += 1; }
-    write_volatile(dst.add(n), 0);
+    let pct = if i == 0 { storage_pct() } else { mem_pct() };
+    if pct >= 100 {
+        write_volatile(dst.add(0), b'1');
+        write_volatile(dst.add(1), b'0');
+        write_volatile(dst.add(2), b'0');
+        write_volatile(dst.add(3), b'%');
+        write_volatile(dst.add(4), 0);
+    } else if pct >= 10 {
+        write_volatile(dst.add(0), b'0' + (pct / 10) as u8);
+        write_volatile(dst.add(1), b'0' + (pct % 10) as u8);
+        write_volatile(dst.add(2), b'%');
+        write_volatile(dst.add(3), 0);
+    } else {
+        write_volatile(dst.add(0), b'0' + pct as u8);
+        write_volatile(dst.add(1), b'%');
+        write_volatile(dst.add(2), 0);
+    }
 }
 
 pub(crate) struct InfoPage;
