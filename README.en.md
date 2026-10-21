@@ -104,6 +104,11 @@ dist/chaos-installer-p67.bin    installable p67 container
 dist/assets/                   icons, ko copy, font placeholder
 ```
 
+Release artifacts under `dist/` are committed; `dist/stage/` is temporary and ignored.
+
+```text
+```
+
 Useful flags:
 
 ```bash

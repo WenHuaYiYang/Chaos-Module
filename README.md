@@ -105,6 +105,11 @@ dist/chaos-installer-p67.bin    可直接安装的 p67 容器
 dist/assets/                   图标、容器内 ko 副本、字体占位
 ```
 
+`dist/` 内的发布产物随仓库提交；`dist/stage/` 是临时目录，不入库。
+
+```text
+```
+
 常用组合：
 
 ```bash
