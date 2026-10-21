@@ -910,38 +910,21 @@ impl Page for ExclPage {
 pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
-const LOG_VIEW_CAP: usize = 10240;
-const LOG_TEXT_CAP: usize = 8192;
+const LOG_VIEW_CAP: usize = 48 * 1024;
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
-static mut LOG_TEXT: [u8; LOG_TEXT_CAP] = [0; LOG_TEXT_CAP];
 static mut LOG_MSG: [u8; 48] = [0; 48];
 static mut LOG_CLEAR_ARMED: u32 = 0;
 
 unsafe fn log_page_load() {
     let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
     let n = crate::log::tail(buf, LOG_VIEW_CAP);
-    let out = core::ptr::addr_of_mut!(LOG_TEXT) as *mut u8;
-    // 只取最后 14 行: 日志页不滚动也能直接看到最新的调试行。
-    let mut start = n;
-    let mut lines = 0usize;
-    while start > 0 && lines < 14 {
-        start -= 1;
-        if read_volatile(buf.add(start)) == b'\n' { lines += 1; }
-    }
-    if start > 0 { start += 1; }
-    let mut i = 0usize;
-    while start + i < n && i + 1 < LOG_TEXT_CAP {
-        let mut c = read_volatile(buf.add(start + i));
-        if c == b'\r' { c = b' '; }
-        write_volatile(out.add(i), c);
-        i += 1;
-    }
-    write_volatile(out.add(i), 0);
+    // 整份日志直接放进标签，靠内容区滚动查看；末尾补 NUL。
+    if n + 1 < LOG_VIEW_CAP { write_volatile(buf.add(n), 0); }
     let msg = core::ptr::addr_of_mut!(LOG_MSG) as *mut u8;
     if n == 0 {
         put_str(msg, "暂无日志\0".as_bytes());
     } else {
-        put_str(msg, "日志尾部\0".as_bytes());
+        put_str(msg, "整份日志\0".as_bytes());
     }
 }
 
@@ -968,8 +951,8 @@ impl Page for LogPage {
             let lab = fw_api::label_create(ctx.content);
             if lab != 0 {
                 fw_api::style_apply(lab, crate::FW_STYLE_HR_NAME, 255, 0);
-                fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
-                fw_api::obj_set_size_wh(lab, 320, 2000);
+                fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_VIEW) as *const u8);
+                fw_api::obj_set_size_wh(lab, 320, 12000);
                 fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
                     fw_api::align::OUT_BOTTOM_MID, 0, 8);
             }
