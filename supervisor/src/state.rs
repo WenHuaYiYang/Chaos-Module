@@ -133,11 +133,14 @@ pub static PAGE_VIB: [u8; 8] = *b"vibtest\0";
 /// 页17: 设置 -> 运行日志。/data/chaos/chaos.log 的尾部展示与清空。
 pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
 
+/// 页18: 设置 -> 关于。版本、编译时间、固件、开发者分列。
+pub static PAGE_ABOUT2: [u8; 7] = *b"about2\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 18;                   // 注册页数(页0..页17)
+pub const PAGE_COUNT: usize = 19;                   // 注册页数(页0..页18)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 522] = [0; 522];         // 18 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 551] = [0; 551];         // 19 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

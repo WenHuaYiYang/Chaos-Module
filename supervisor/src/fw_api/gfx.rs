@@ -521,54 +521,51 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
     f(parent)
 }
 
-/// 写 arc 的 value 字段(+0x34，int32，0..100)并失效重绘。
-/// 绘制路径 0x1C063EFA 直接读该字段算角度，不依赖缓存的 indicator 角。
+/// 写 arc 的 value 字段(+0x2E，i16，0..100)并失效重绘。
+/// LVGL 8.4.0 `lv_arc_t`：obj 24B；+0x24 rotation、+0x26 indic_start、+0x28 indic_end、
+/// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
-    let p = (arc as usize + 0x34) as *mut i32;
-    core::ptr::write_volatile(p, if pct > 100 { 100 } else { pct as i32 });
+    let p = (arc as usize + 0x2E) as *mut i16;
+    core::ptr::write_volatile(p, if pct > 100 { 100 } else { pct as i16 });
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
 
 /// 把 arc 改成整圆并从正底部开始。
 ///
-/// LVGL 8.4 的 `lv_arc_t` 是**整数**字段，不是 f32：
-///   +0x34 value(i32) / +0x38 min(i32) / +0x3C max(i32)
-///   +0x40 bg_start(i16) / +0x42 bg_end(i16)
-///   +0x44 start(i16) / +0x46 end(i16) / +0x48 rotation(i16)
-/// 之前按 f32 写 +0x38..+0x44，把 min/max/角度全部写坏，
-/// 才会出现“整圈蓝色填充 + 圆点乱跑”。
+/// 角度是 u16，value/min/max 是 i16；按 f32 写过一次，
+/// 把角度全写坏，表现就是“整圈填满 + 圆点在乱跑”。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
     let p = arc as usize;
-    core::ptr::write_volatile((p + 0x38) as *mut i32, 0);      // min
-    core::ptr::write_volatile((p + 0x3C) as *mut i32, 100);    // max
-    core::ptr::write_volatile((p + 0x40) as *mut i16, 90);     // bg_start: 6 点方向
-    core::ptr::write_volatile((p + 0x42) as *mut i16, 450);    // bg_end: 转满一圈
-    core::ptr::write_volatile((p + 0x44) as *mut i16, 90);     // start
-    core::ptr::write_volatile((p + 0x46) as *mut i16, 450);    // end
-    core::ptr::write_volatile((p + 0x48) as *mut i16, 0);      // rotation
+    core::ptr::write_volatile((p + 0x24) as *mut u16, 0);      // rotation
+    core::ptr::write_volatile((p + 0x26) as *mut u16, 90);     // indic_start
+    core::ptr::write_volatile((p + 0x28) as *mut u16, 450);    // indic_end
+    core::ptr::write_volatile((p + 0x2A) as *mut u16, 90);     // bg_start
+    core::ptr::write_volatile((p + 0x2C) as *mut u16, 450);    // bg_end
+    core::ptr::write_volatile((p + 0x30) as *mut i16, 0);      // min
+    core::ptr::write_volatile((p + 0x32) as *mut i16, 100);    // max
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
 
-/// 关掉 arc 的触摸交互：清 obj flags(+0x2C) 的 CLICKABLE(bit1)。
+/// 关掉 arc 的触摸交互：清 obj flags(+0x1C) 的 CLICKABLE(bit1)。
 /// 否则 LVGL 的 arc 会把手势变成数值拖拽（用户能直接把环拖大拖小）。
 pub unsafe fn arc_disable_input(arc: Obj) {
     if arc == 0 { return; }
-    let p = (arc as usize + 0x2C) as *mut u32;
+    let p = (arc as usize + 0x1C) as *mut u32;
     let v = core::ptr::read_volatile(p);
     core::ptr::write_volatile(p, v & !0x2);
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
 
-/// 清掉对象 flags(+0x2C) 的 SCROLLABLE(bit2)，禁止该容器左右/上下滑动。
+/// 清掉对象 flags(+0x1C) 的 SCROLLABLE(bit4)，禁止该容器左右/上下滑动。
 /// 主页圆环行比屏宽时，父容器会把手势当横向滚动，用户一划整行就跟着动。
 pub unsafe fn obj_clear_scrollable(obj: Obj) {
     if obj == 0 { return; }
-    let p = (obj as usize + 0x2C) as *mut u32;
+    let p = (obj as usize + 0x1C) as *mut u32;
     let v = core::ptr::read_volatile(p);
-    core::ptr::write_volatile(p, v & !0x4);
+    core::ptr::write_volatile(p, v & !0x10);
 }

@@ -632,11 +632,6 @@ impl Page for InfoPage {
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
                 (6, RowSpec::clickable("设置\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/日志(页14)
-                (7, RowSpec::display("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
-                (8, RowSpec::display("编译时间\0".as_bytes(), about_build_time().as_ptr())),
-                (9, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
-                (10, RowSpec::display("开发者\0".as_bytes(), "文华逸洋 / IKUN_CXKPRO\0".as_bytes().as_ptr())),
-                (11, RowSpec::display("贡献者\0".as_bytes(), "谦虚的海鸥\0".as_bytes().as_ptr())),
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -958,7 +953,7 @@ impl Page for LogPage {
             if lab != 0 {
                 fw_api::style_apply(lab, crate::FW_STYLE_HR_NAME, 255, 0);
                 fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
-                fw_api::obj_set_size_wh(lab, 320, 240);
+                fw_api::obj_set_size_wh(lab, 320, 640);
                 fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
                     fw_api::align::OUT_BOTTOM_MID, 0, 8);
             }
@@ -1873,6 +1868,7 @@ impl Page for SettingsPage {
                 (3, RowSpec::clickable("震动\0".as_bytes())),
                 (4, RowSpec::clickable("缓存清理\0".as_bytes())),
                 (5, RowSpec::clickable("运行日志\0".as_bytes())),
+                (6, RowSpec::clickable("关于\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1885,12 +1881,40 @@ impl Page for SettingsPage {
                 3 => nav_goto(16, 0),   // 震动
                 4 => nav_goto(12, 0),   // 缓存清理
                 5 => nav_goto(17, 0),   // 运行日志
+                6 => nav_goto(18, 0),   // 关于
                 _ => {}
             }
         }
     }
 }
 
+// ===== 页18: 关于 =====
+pub(crate) struct AboutPage;
+static PAGE_ABOUT_PAGE: AboutPage = AboutPage;
+
+impl Page for AboutPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "关于\0".as_bytes()); }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            let bt = about_build_time();
+            let fw = about_firmware();
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::display("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
+                (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
+                (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
+                (3, RowSpec::display("开发者\0".as_bytes(), "文华逸洋\0".as_bytes().as_ptr())),
+                (4, RowSpec::display("开发者\0".as_bytes(), "IKUN_CXKPRO\0".as_bytes().as_ptr())),
+                (5, RowSpec::display("开发者\0".as_bytes(), "谦虚的海鸥\0".as_bytes().as_ptr())),
+                (6, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+                (7, RowSpec::display("项目主页\0".as_bytes(), "github.com/WenHuaYiYang/Chaos-Module\0".as_bytes().as_ptr())),
+            ])?;
+            Ok(())
+        }
+    }
+    fn on_click(&self, _idx: usize) {}
+}
 // ===== 页2: 时间设置(时 + 分) =====
 //
 // 只做时分两轮, 与系统闹钟页同形。日期(月+日)是页3 的独立入口。
@@ -2032,7 +2056,7 @@ impl Page for BlurZonePage {
     }
 }
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 18] = [
+pub(crate) static PAGE_TABLE: [&dyn Page; 19] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
     &PAGE_TIMESET,      // 2  时间设置 / 日期第一步(年)(原目录 2 级, 文件管理退役后空出)
@@ -2051,4 +2075,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 18] = [
     &PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
     &PAGE_VIBP,         // 16 主页 -> 震动
     &PAGE_LOG,          // 17 设置 -> 运行日志
+    &PAGE_ABOUT_PAGE,   // 18 设置 -> 关于
 ];
