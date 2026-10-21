@@ -1905,9 +1905,9 @@ impl Page for AboutPage {
                 (0, RowSpec::display("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
-                (3, RowSpec::display("开发者\0".as_bytes(), "文华逸洋\0".as_bytes().as_ptr())),
-                (4, RowSpec::display("开发者\0".as_bytes(), "IKUN_CXKPRO\0".as_bytes().as_ptr())),
-                (5, RowSpec::display("开发者\0".as_bytes(), "谦虚的海鸥\0".as_bytes().as_ptr())),
+                (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (6, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
             ])?;
             Ok(())
