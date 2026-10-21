@@ -88,14 +88,28 @@ Chaos 把一组用 Rust 编写的原生页面注册进小米手环 10 Pro 的固
 - Rust nightly（`-Z build-std`）
 - `rust-src` 组件
 - target `thumbv8m.main-none-eabi`
-- Python 3（后处理与图标生成）
+- Python 3 + Pillow（图标生成）
+- 系统 C 链接器（`cc`，Rust build script 需要）
+
+一条命令出全部产物：
 
 ```bash
-# 1. 编译模块 -> supervisor/chaos_sup.ko
-sh tools/build_ko.sh
-
-# 2. 生成安装器资源
 python3 tools/build.py
+```
+
+输出：
+
+```text
+dist/chaos_sup.ko               内核模块
+dist/chaos-installer-p67.bin    可直接安装的 p67 容器
+```
+
+常用组合：
+
+```bash
+python3 tools/build.py --skip-ko        # 复用已编译的 ko，只重打容器
+python3 tools/build.py --no-container   # 只出 ko 和图标
+python3 tools/build.py --no-icons       # 复用已有图标
 ```
 
 `tools/build_ko.sh` 的流程：
@@ -110,25 +124,43 @@ rust-lld -r --gc-sections -u module_main -u chaos_ctor -T merge_sections.ld
 fix_ko_layout.py -> verify_chaos_ko.py（未定义符号必须为 0）
 ```
 
-> 完整的主工程打包链（`scripts/build_chaos_installer_043.py` 等）不在本仓库；公开仓库提供 `tools/container_shell.py` 作为容器格式实现，项目侧 glue 由使用者自行接。
-
 ## 目录结构
 
 ```text
 Chaos-Module/
-├── supervisor/          内核模块（Rust, no_std）
+├── README.md / README.en.md     中英文说明
+├── LICENSE                      AGPL-3.0
+├── supervisor/                  内核模块（Rust, no_std）
 │   ├── src/
-│   │   ├── lib.rs       crate 根与模块入口
-│   │   ├── page.rs      17 个页面与 PAGE_TABLE
-│   │   ├── ui.rs        页面框架 / 行 / 事件分发
-│   │   ├── appmgr.rs    应用管理：隐藏/显示、排除项、两种模式
-│   │   ├── fw_api/      已验证固件 API 封装
-│   │   └── ...          表盘、字体、图标、背景、设置
-│   └── chaos_sup.ko     构建产物（不入库）
-├── installer/           Lua 安装器
-├── module/              最小示例模块
-├── tools/               构建、容器、图标生成
-└── .github/workflows/   CI
+│   │   ├── lib.rs               crate 根、chaos_ctor/dtor
+│   │   ├── page.rs              页面与 PAGE_TABLE（18 页）
+│   │   ├── ui.rs                页面框架、行、事件分发
+│   │   ├── appmgr.rs            应用管理：隐藏/显示、排除项、深度隐藏
+│   │   ├── state.rs             全局常量、页描述、槽位
+│   │   ├── ipc.rs               /dev/chaos 命令与状态块
+│   │   ├── fw_api.rs            fw_api 模块入口
+│   │   ├── fw_api/             已验证固件 API 封装
+│   │   └── ...                  表盘、字体、图标、日志、设置
+│   └── build.rs                 注入 CHAOS_BUILD_TIME
+├── installer/                   Lua 安装器
+│   ├── chaos_installer.lua      安装/升级/卸载 UI
+│   ├── font_pack.lua            字体投递包
+│   └── icon_pack.lua            图标投递包
+├── module/                      最小示例模块
+├── tools/
+│   ├── build.py                 一键构建（ko + 图标 + 容器）
+│   ├── build_ko.sh              Rust 编译/链接/布局修正
+│   ├── p67_pack.py              p67 容器打包/解析（纯 Python）
+│   ├── p67-preview.block        336x480 预览块
+│   ├── gen_chaos_icon.py        图标生成（Pillow）
+│   ├── fix_ko_layout.py         ko 节区重排
+│   ├── verify_chaos_ko.py       ko 校验
+│   └── lvgl_map.js              LVGL 类描述扫描
+├── docs/
+│   ├── APP-MANAGER.md           应用管理说明
+│   └── LVGL-MAP.md              LVGL 符号地图
+├── dist/                        构建产物（不入库）
+└── .github/workflows/build.yml  CI
 ```
 
 ## 文档

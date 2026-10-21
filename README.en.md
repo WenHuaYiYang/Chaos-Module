@@ -87,14 +87,28 @@ Requirements:
 - Rust nightly (for `-Z build-std`)
 - the `rust-src` component
 - target `thumbv8m.main-none-eabi`
-- Python 3 (post-processing and icon generation)
+- Python 3 + Pillow
+- a host C linker (`cc`, required by Rust build scripts)
+
+One command builds everything:
 
 ```bash
-# 1. build the module -> supervisor/chaos_sup.ko
-sh tools/build_ko.sh
-
-# 2. generate installer assets
 python3 tools/build.py
+```
+
+Outputs:
+
+```text
+dist/chaos_sup.ko               kernel module
+dist/chaos-installer-p67.bin    installable p67 container
+```
+
+Useful flags:
+
+```bash
+python3 tools/build.py --skip-ko        # repack container only
+python3 tools/build.py --no-container   # module + icons only
+python3 tools/build.py --no-icons       # reuse existing icons
 ```
 
 What `tools/build_ko.sh` does:
