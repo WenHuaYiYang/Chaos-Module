@@ -279,8 +279,9 @@ unsafe fn apply_pkg(hide: bool, pkg: *const u8) -> bool {
         set_node_hidden(node, true);
         fw_api::app_launcher_del(id);
     } else {
-        // 必须先清位再 add: add 在入口就按这一位拒绝
+        // 先 del 再 add: 应用可能已经在桌面上(排除项/状态错位), 直接 add 会多建一条记录
         set_node_hidden(node, false);
+        fw_api::app_launcher_del(id);
         fw_api::app_launcher_add(id);
     }
     true
@@ -1120,6 +1121,11 @@ unsafe fn excl_toggle(pkg: *const u8) -> bool {
         return false;
     }
     crate::log::pkg(if idx == usize::MAX { "排除 " } else { "取消排除 " }, pkg);
+    if idx == usize::MAX {
+        // 排除项不参与批量/开机补偿; 摘掉隐藏名单并确保桌面可见, 避免"显示隐藏但实际显示"
+        let _ = keep_del(pkg);
+        let _ = apply_pkg(false, pkg);
+    }
     true
 }
 
@@ -1216,7 +1222,7 @@ pub(crate) unsafe fn reload() {
         while i < APP_N {
             if read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i)) == 0 {
                 let p = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * 44);
-                if keep_has(p) {
+                if keep_has(p) && excl_index(p) == usize::MAX {
                     write_volatile((core::ptr::addr_of_mut!(E_SRC) as *mut u8).add(i), 1);
                 }
             }
