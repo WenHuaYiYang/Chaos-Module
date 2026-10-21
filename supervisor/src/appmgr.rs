@@ -993,6 +993,7 @@ pub(crate) unsafe fn excl_ensure() {
         EXCL_N += 1;
         i += 1;
     }
+    excl_dedupe();
 }
 
 unsafe fn excl_save() -> bool {
@@ -1201,20 +1202,21 @@ pub(crate) unsafe fn ensure() {
 
 unsafe fn cfg_mode_read() -> u32 {
     let fd = fw_api::open(APPLY_CFG.as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd < 0 { return 0; }
-    let mut b = [0u8; 1];
-    let n = fw_api::read(fd, b.as_mut_ptr(), 1);
+    if fd < 0 { return 2; }
+    let mut b = [0u8; 2];
+    let n = fw_api::read(fd, b.as_mut_ptr(), 2);
     fw_api::close(fd);
-    if n == 1 && b[0] == b'1' { 1 } else { 0 }
+    if n != 2 || b[0] != b'2' { return 2; }
+    if b[1] == b'1' { 1 } else { 0 }
 }
 
 unsafe fn cfg_mode_save() -> bool {
     let fd = fw_api::open(APPLY_CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
     if fd < 0 { return false; }
-    let b = if APPLY_MODE == 0 { b'0' } else { b'1' };
-    let n = fw_api::write(fd, &b as *const u8, 1);
+    let b = [b'2', if APPLY_MODE == 0 { b'0' } else { b'1' }];
+    let n = fw_api::write(fd, b.as_ptr(), 2);
     fw_api::close(fd);
-    n == 1
+    n == 2
 }
 
 /// 读隐藏名单(固定 4+40*44 字节)。文件缺失/坏 magic 视为空名单。
@@ -1240,6 +1242,7 @@ unsafe fn keep_load() {
         i += 1;
     }
     KEEP_N = i;
+    keep_dedupe();
 }
 
 unsafe fn keep_save() -> bool {
@@ -1328,8 +1331,17 @@ unsafe fn keep_apply_all() -> usize {
 
 pub(crate) unsafe fn apply_mode_ensure() {
     if APPLY_LOADED != 0 { return; }
-    APPLY_MODE = cfg_mode_read();
-    keep_load();
+    let m = cfg_mode_read();
+    if m == 2 {
+        // 旧版单字节配置(或缺失): 语义不可信, 回到普通模式并清掉可能残留的深度名单。
+        APPLY_MODE = 1;
+        cfg_mode_save();
+        KEEP_N = 0;
+        keep_save();
+    } else {
+        APPLY_MODE = m;
+        keep_load();
+    }
     APPLY_LOADED = 1;
 }
 
@@ -1700,4 +1712,63 @@ unsafe fn op_show_pkg(pkg: *const u8) -> bool {
         return keep_del(pkg);
     }
     move_hide_to_vis(pkg)
+}
+
+/// 旧版本可能留下重复包名: 读到内存后按包名收敛，只保留第一份。
+unsafe fn keep_dedupe() {
+    let base = core::ptr::addr_of_mut!(KEEP_BUF) as *mut u8;
+    let mut a = 0usize;
+    while a < KEEP_N {
+        let pa = base.add(4 + a * PKG_CAP);
+        let mut dup = false;
+        let mut b = 0usize;
+        while b < a {
+            if cstr_eq(base.add(4 + b * PKG_CAP), pa) { dup = true; break; }
+            b += 1;
+        }
+        if dup {
+            let mut k = a;
+            while k + 1 < KEEP_N {
+                let mut j = 0usize;
+                while j < PKG_CAP {
+                    write_volatile(base.add(4 + k * PKG_CAP + j),
+                        read_volatile(base.add(4 + (k + 1) * PKG_CAP + j)));
+                    j += 1;
+                }
+                k += 1;
+            }
+            KEEP_N -= 1;
+        } else {
+            a += 1;
+        }
+    }
+}
+
+unsafe fn excl_dedupe() {
+    let base = core::ptr::addr_of_mut!(EXCL_PKG) as *mut u8;
+    let mut a = 0usize;
+    while a < EXCL_N {
+        let pa = base.add(a * EXCL_SLOT);
+        let mut dup = false;
+        let mut b = 0usize;
+        while b < a {
+            if cstr_eq(base.add(b * EXCL_SLOT), pa) { dup = true; break; }
+            b += 1;
+        }
+        if dup {
+            let mut k = a;
+            while k + 1 < EXCL_N {
+                let mut j = 0usize;
+                while j < EXCL_SLOT {
+                    write_volatile(base.add(k * EXCL_SLOT + j),
+                        read_volatile(base.add((k + 1) * EXCL_SLOT + j)));
+                    j += 1;
+                }
+                k += 1;
+            }
+            EXCL_N -= 1;
+        } else {
+            a += 1;
+        }
+    }
 }
