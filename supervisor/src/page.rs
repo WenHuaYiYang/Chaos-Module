@@ -902,9 +902,9 @@ impl Page for ExclPage {
 pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
-const LOG_VIEW_CAP: usize = 2048;
-const LOG_SHOW_LINES: usize = 7;
-const LOG_LINE_CAP: usize = 40;
+const LOG_VIEW_CAP: usize = 4096;
+const LOG_SHOW_LINES: usize = 8;
+const LOG_LINE_CAP: usize = 64;
 
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
 static mut LOG_LINES: [[u8; LOG_LINE_CAP]; LOG_SHOW_LINES] = [[0; LOG_LINE_CAP]; LOG_SHOW_LINES];
@@ -950,7 +950,7 @@ unsafe fn log_page_load() {
         put_str(msg, "暂无日志\0".as_bytes());
     } else {
         let mut w = crate::text::W::new(msg, 48);
-        w.s("日志 ".as_bytes()).n(LOG_LINE_N as u32).s(" 行, 最多显示 7 行\0".as_bytes());
+        w.s("日志 ".as_bytes()).n(LOG_LINE_N as u32).s(" 行, 最多显示 8 行\0".as_bytes());
         w.end();
     }
 }
@@ -1893,7 +1893,7 @@ impl Page for SettingsPage {
                 (7, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
                 (8, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (9, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (10, RowSpec::display("谦虚的海鸥\0".as_bytes(), "贡献者\0".as_bytes().as_ptr())),
+                (10, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("运行日志\0".as_bytes())),
             ]).map(|_| ())
         }

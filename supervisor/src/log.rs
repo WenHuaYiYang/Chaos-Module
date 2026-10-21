@@ -1,21 +1,47 @@
 //! 运行日志: 追加到 `/data/chaos/chaos.log`, 由「运行日志」页读取/清空。
 //!
-//! 只记录 Chaos 自己的关键动作(隐藏/显示、批量、开机补偿、模块加载),
-//! 不接管固件日志, 也不做后台线程 —— 每次写一行, 文件超过上限就整份重建。
-//! 日志页在 UI 线程读文件, 单次最多读尾部 2KB, 避免拖慢渲染。
+//! 每行带本地时间前缀 `[MM-DD HH:MM:SS]`。只记录 Chaos 自己的关键动作
+//! (模块加载、隐藏/显示、批量、排除项、模式切换、开机补偿), 不接管固件日志。
+//! 文件超过上限就整份重建; 日志页只读尾部, 避免拖慢渲染。
 
 use crate::fw_api;
+use crate::text::W;
 
 pub(crate) const LOG_PATH: &[u8] = b"/data/chaos/chaos.log\0";
 const LOG_MAX: u32 = 48 * 1024;
+const LINE_CAP: usize = 240;
 
-/// 追加一行。失败静默: 日志不能影响主流程。
-pub(crate) unsafe fn line(s: &str) {
-    bytes(s.as_bytes());
+fn pad2(w: &mut W, v: i32) {
+    let v = if v < 0 { 0 } else if v > 99 { 99 } else { v };
+    unsafe {
+        w.c(b'0' + (v / 10) as u8);
+        w.c(b'0' + (v % 10) as u8);
+    }
 }
 
-pub(crate) unsafe fn bytes(b: &[u8]) {
-    if b.is_empty() { return; }
+/// 组装 "时间 + 前缀 + [包名] + [数字]" 后一次性追加。
+unsafe fn emit(prefix: &[u8], pkg: *const u8, num: Option<u32>) {
+    let mut b = [0u8; LINE_CAP];
+    let mut w = W::new(b.as_mut_ptr(), LINE_CAP);
+    w.c(b'[');
+    if let Some(tm) = crate::time_set::now_tm() {
+        pad2(&mut w, tm[4] + 1); w.c(b'-'); pad2(&mut w, tm[3]); w.c(b' ');
+        pad2(&mut w, tm[2]); w.c(b':'); pad2(&mut w, tm[1]); w.c(b':'); pad2(&mut w, tm[0]);
+    } else {
+        w.s(b"??-?? ??:??:??".as_slice());
+    }
+    w.s(b"] ".as_slice());
+    if !prefix.is_empty() { w.s(prefix); }
+    if !pkg.is_null() {
+        let mut n = 0usize;
+        while n < 120 && *pkg.add(n) != 0 { n += 1; }
+        if n != 0 { w.s(core::slice::from_raw_parts(pkg, n)); }
+    }
+    if let Some(v) = num { w.s(b" ".as_slice()); w.n(v); }
+    w.end();
+    let len = w.len();
+    if len == 0 { return; }
+
     let mut fd = fw_api::open(LOG_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
     if fd < 0 { return; }
     let end = fw_api::lseek(fd, 0, fw_api::seek::END);
@@ -25,18 +51,22 @@ pub(crate) unsafe fn bytes(b: &[u8]) {
         fd = fw_api::open(LOG_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
         if fd < 0 { return; }
     }
-    let n = core::cmp::min(b.len(), 180);
-    let _ = fw_api::write(fd, b.as_ptr(), n as u32);
+    let _ = fw_api::write(fd, b.as_ptr(), len as u32);
     let _ = fw_api::write(fd, b"\n".as_ptr(), 1);
     fw_api::close(fd);
 }
 
+pub(crate) unsafe fn line(s: &str) { emit(s.as_bytes(), core::ptr::null(), None); }
+pub(crate) unsafe fn bytes(b: &[u8]) { emit(b, core::ptr::null(), None); }
+
 /// 写一个 NUL 结尾的 C 串(不把 NUL 写进文件)。
-pub(crate) unsafe fn cstr(p: *const u8) {
-    let mut n = 0usize;
-    while n < 180 && *p.add(n) != 0 { n += 1; }
-    if n != 0 { bytes(core::slice::from_raw_parts(p, n)); }
-}
+pub(crate) unsafe fn cstr(p: *const u8) { emit(b"", p, None); }
+
+/// 前缀 + 包名, 例如 `log::pkg("隐藏 ", pkg)`。
+pub(crate) unsafe fn pkg(prefix: &str, p: *const u8) { emit(prefix.as_bytes(), p, None); }
+
+/// 前缀 + 数字, 例如 `log::kv("已处理 ", n)`。
+pub(crate) unsafe fn kv(prefix: &str, n: u32) { emit(prefix.as_bytes(), core::ptr::null(), Some(n)); }
 
 /// 清空日志(删文件, 下次写入时重建)。
 pub(crate) unsafe fn clear() -> bool {
@@ -49,7 +79,7 @@ pub(crate) unsafe fn tail(buf: *mut u8, cap: usize) -> usize {
     if fd < 0 { return 0; }
     let end = fw_api::lseek(fd, 0, fw_api::seek::END);
     if end <= 0 { fw_api::close(fd); return 0; }
-    let mut start = if (end as usize) > cap { end as usize - cap } else { 0 };
+    let start = if (end as usize) > cap { end as usize - cap } else { 0 };
     let _ = fw_api::lseek(fd, start as i64, fw_api::seek::SET);
     let mut n = 0usize;
     while n < cap {

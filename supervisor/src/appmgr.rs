@@ -356,6 +356,7 @@ pub(crate) unsafe fn request_batch(hide_all: bool) {
         return;
     }
     REQ_BATCH = if hide_all { 1 } else { 2 };
+    crate::log::kv(if hide_all { "批量隐藏开始, 队列 " } else { "批量显示开始, 队列 " }, BATCH_N as u32);
 }
 
 pub(crate) unsafe fn batch_pending() -> bool { REQ_BATCH != 0 }
@@ -396,6 +397,9 @@ pub(crate) unsafe fn do_batch() {
     }
     w.end();
     MSG_KEEP = 1;
+    crate::log::kv("批量完成, 成功 ", BATCH_DONE as u32);
+    if BATCH_NOREG != 0 { crate::log::kv("批量完成, 需重启 ", BATCH_NOREG as u32); }
+    if BATCH_FAIL != 0 { crate::log::kv("批量完成, 失败 ", BATCH_FAIL as u32); }
     reload();
 }
 
@@ -1115,6 +1119,7 @@ unsafe fn excl_toggle(pkg: *const u8) -> bool {
         eset("保存失败\0");
         return false;
     }
+    crate::log::pkg(if idx == usize::MAX { "排除 " } else { "取消排除 " }, pkg);
     true
 }
 
@@ -1387,6 +1392,7 @@ unsafe fn keep_apply_all() -> usize {
             if id != 0 {
                 set_node_hidden(node, true);
                 fw_api::app_launcher_del(id);
+                crate::log::pkg("开机补偿隐藏 ", p);
                 found += 1;
             }
         }
@@ -1441,6 +1447,7 @@ pub(crate) unsafe fn toggle_apply_mode() {
         return;
     }
     REQ_MODE = 1;
+    crate::log::line(if APPLY_MODE == 0 { "切换模式: 深度隐藏(需重启)" } else { "切换模式: 普通隐藏" });
 }
 
 pub(crate) unsafe fn mode_pending() -> bool { REQ_MODE != 0 }
@@ -1474,6 +1481,7 @@ pub(crate) unsafe fn do_mode_apply() {
         let _ = keep_save();
         reload();
         wmsg_keep("深度隐藏已开启, 重启后生效\0");
+        crate::log::line("模式迁移: keep -> apps.json_hide 完成");
     } else {
         // 关闭深度隐藏: 把 apps.json_hide 的条目全部搬回 apps.json,
         // 但**保持原来的隐藏状态** —— 同时记入 keep 名单, 开机补偿再隐藏。
@@ -1517,6 +1525,7 @@ pub(crate) unsafe fn do_mode_apply() {
         let _ = keep_save();
         reload();
         wmsg_keep("深度隐藏已关闭, 存储已迁移; 请重启后生效\0");
+        crate::log::line("模式迁移: apps.json_hide -> apps.json 完成");
     }
 }
 
@@ -1528,6 +1537,7 @@ pub(crate) unsafe fn boot_apply() {
     excl_ensure();
     if APPLY_MODE == 0 { BOOT_APPLIED = 1; return; }
     if KEEP_N == 0 { BOOT_APPLIED = 1; return; }
+    if BOOT_TRIES == 0 { crate::log::kv("开机补偿开始, 名单 ", KEEP_N as u32); }
     // 注册表可能比模块晚就绪: 每秒试一次, 最多 5 分钟。
     // 不能只试 120 拍就放弃, 否则关机前的隐藏名单会因节点未就绪而失效。
     BOOT_WAIT = BOOT_WAIT.wrapping_add(1);
