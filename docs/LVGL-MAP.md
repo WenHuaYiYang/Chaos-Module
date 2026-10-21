@@ -100,7 +100,11 @@ Total: 38 classes. Base lv_obj_class = 0x2CCE0308.
 |---|---|
 | 类描述 | `0x2CCE5F0C` |
 | `lv_arc_create` | `0x1C0641D0`（Thumb `0x1C0641D1`） |
-| value 字段 | `obj + 0x34`，int32，0..100 |
+| value | `obj + 0x34`，i32，0..100 |
+| min / max | `obj + 0x38` / `obj + 0x3C`，i32 |
+| bg_start / bg_end | `obj + 0x40` / `obj + 0x42`，u16 角度 |
+| indic_start / indic_end | `obj + 0x44` / `obj + 0x46`，u16 角度 |
+| rotation | `obj + 0x48`，u16 |
 | 强制重绘 | `0x1C02B304`（Thumb `0x1C02B305`） |
 | 绘制实现 | `0x1C063EE0` 起（读 +0x34 算角度） |
 | 角度 setter 候选 | `0x1C0641F0` / `0x1C064338` / `0x1C06447C` |

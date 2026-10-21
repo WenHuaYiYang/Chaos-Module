@@ -526,26 +526,26 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
 /// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
-    let p = (arc as usize + 0x2E) as *mut i16;
-    core::ptr::write_volatile(p, if pct > 100 { 100 } else { pct as i16 });
+    let p = (arc as usize + 0x34) as *mut i32;
+    core::ptr::write_volatile(p, if pct > 100 { 100 } else { pct as i32 });
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
 
 /// 把 arc 改成整圆并从正底部开始。
 ///
-/// 角度是 u16，value/min/max 是 i16；按 f32 写过一次，
-/// 把角度全写坏，表现就是“整圈填满 + 圆点在乱跑”。
+/// value/min/max 是 i32，角度是 u16；value 在 +0x34，
+/// 之前一直写 +0x2E，值根本没写进去，所以只剩一个圆点。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
     let p = arc as usize;
-    core::ptr::write_volatile((p + 0x24) as *mut u16, 0);      // rotation
-    core::ptr::write_volatile((p + 0x26) as *mut u16, 90);     // indic_start
-    core::ptr::write_volatile((p + 0x28) as *mut u16, 450);    // indic_end
-    core::ptr::write_volatile((p + 0x2A) as *mut u16, 90);     // bg_start
-    core::ptr::write_volatile((p + 0x2C) as *mut u16, 450);    // bg_end
-    core::ptr::write_volatile((p + 0x30) as *mut i16, 0);      // min
-    core::ptr::write_volatile((p + 0x32) as *mut i16, 100);    // max
+    core::ptr::write_volatile((p + 0x38) as *mut i32, 0);      // min
+    core::ptr::write_volatile((p + 0x3C) as *mut i32, 100);    // max
+    core::ptr::write_volatile((p + 0x40) as *mut u16, 90);     // bg_start
+    core::ptr::write_volatile((p + 0x42) as *mut u16, 450);    // bg_end
+    core::ptr::write_volatile((p + 0x44) as *mut u16, 90);     // indic_start
+    core::ptr::write_volatile((p + 0x46) as *mut u16, 450);    // indic_end
+    core::ptr::write_volatile((p + 0x48) as *mut u16, 0);      // rotation
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
