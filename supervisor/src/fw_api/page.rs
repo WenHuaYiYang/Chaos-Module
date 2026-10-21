@@ -179,14 +179,26 @@ pub struct RingRow {
     pub pct1: Obj,
 }
 
-/// 两个 104x104 圆环并排（自绘 72 段，不用 lv_arc），百分比在环心。
+/// 两个 104x104 圆环并排，百分比在环心，名称在环下方。
 pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> RingRow {
     let mut r = RingRow { row: 0, arc0: 0, arc1: 0, pct0: 0, pct1: 0 };
     let row = row_create(parent, b" \0".as_ptr(), NONE_PTR, 0);
     if row == 0 { return r; }
     obj_set_size_wh(row, 328, 156);
-    r.arc0 = ring_build(row, 12, 2);
-    r.arc1 = ring_build(row, 212, 2);
+    r.arc0 = arc_create(row);
+    if r.arc0 != 0 {
+        obj_set_size_wh(r.arc0, 104, 104);
+        obj_align(r.arc0, align::TOP_LEFT, 12, 2);
+        arc_make_full(r.arc0);
+        arc_disable_input(r.arc0);
+    }
+    r.arc1 = arc_create(row);
+    if r.arc1 != 0 {
+        obj_set_size_wh(r.arc1, 104, 104);
+        obj_align(r.arc1, align::TOP_LEFT, 212, 2);
+        arc_make_full(r.arc1);
+        arc_disable_input(r.arc1);
+    }
     // 百分比：96 宽环内水平居中（字号 24 时 4 字符约 52px，起点 12+26=38）
     r.pct0 = label_create(row);
     if r.pct0 != 0 {
