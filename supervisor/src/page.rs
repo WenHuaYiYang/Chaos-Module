@@ -734,10 +734,15 @@ impl Page for InfoPage {
                     let v2e = core::ptr::read_volatile((arc as usize + 0x2E) as *const i16);
                     let mn = core::ptr::read_volatile((arc as usize + 0x30) as *const i16);
                     let mx = core::ptr::read_volatile((arc as usize + 0x32) as *const i16);
-                    crate::log::kv(if i == 0 { "环0 pct " } else { "环1 pct " }, pct[i]);
-                    crate::log::kv("  f32@34 bits ", f34.to_bits());
-                    crate::log::kv("  i16@2E ", v2e as u32);
-                    crate::log::kv("  minmax ", ((mn as u32 & 0xffff) << 16) | (mx as u32 & 0xffff));
+                    if i == 1 {
+                        crate::log::kv("环1 pct ", pct[i]);
+                        let mut k = 0usize;
+                        while k < 6 {
+                            let w = core::ptr::read_volatile((arc as usize + 0x38 + k * 4) as *const u32);
+                            crate::log::kv(match k { 0 => "w38 ", 1 => "w3C ", 2 => "w40 ", 3 => "w44 ", 4 => "w48 ", _ => "w4C " }, w);
+                            k += 1;
+                        }
+                    }
                 }
                 let lab = read_volatile(rp.add(2 + i));
                 if lab != 0 {
