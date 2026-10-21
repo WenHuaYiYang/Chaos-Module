@@ -190,7 +190,6 @@ pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> Ri
         obj_set_size_wh(r.arc0, 104, 104);
         obj_align(r.arc0, align::TOP_LEFT, 12, 2);
         arc_make_full(r.arc0);
-        arc_set_colors(r.arc0, ARC_FILL_RGB, ARC_TRACK_RGB);
         arc_disable_input(r.arc0);
     }
     r.arc1 = arc_create(row);
@@ -198,7 +197,6 @@ pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> Ri
         obj_set_size_wh(r.arc1, 104, 104);
         obj_align(r.arc1, align::TOP_LEFT, 212, 2);
         arc_make_full(r.arc1);
-        arc_set_colors(r.arc1, ARC_FILL_RGB, ARC_TRACK_RGB);
         arc_disable_input(r.arc1);
     }
     // 百分比：96 宽环内水平居中（字号 24 时 4 字符约 52px，起点 12+26=38）
