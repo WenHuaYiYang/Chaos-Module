@@ -631,7 +631,12 @@ impl Page for InfoPage {
                 (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
-                (6, RowSpec::clickable("设置\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/版本(页14)
+                (6, RowSpec::clickable("设置\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/日志(页14)
+                (7, RowSpec::display("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
+                (8, RowSpec::display("编译时间\0".as_bytes(), about_build_time().as_ptr())),
+                (9, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
+                (10, RowSpec::display("开发者\0".as_bytes(), "文华逸洋 / IKUN_CXKPRO\0".as_bytes().as_ptr())),
+                (11, RowSpec::display("贡献者\0".as_bytes(), "谦虚的海鸥\0".as_bytes().as_ptr())),
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -896,63 +901,37 @@ impl Page for ExclPage {
 
 
 // ===== 页17: 运行日志 =====
-//
-// 只读 /data/chaos/chaos.log 的尾部 2KB, 最多展示最后 7 行; 清空 = 删文件。
-// 不做分页/滚动: 日志页的定位是"出问题时快速看一眼", 不是日志浏览器。
-
+// 直接显示一段文字，不再逐行建列表。只读尾部 2KB，截到最后一个换行后的 512B。
 pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
 const LOG_VIEW_CAP: usize = 2048;
-const LOG_SHOW_LINES: usize = 8;
-const LOG_LINE_CAP: usize = 64;
-
+const LOG_TEXT_CAP: usize = 512;
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
-static mut LOG_LINES: [[u8; LOG_LINE_CAP]; LOG_SHOW_LINES] = [[0; LOG_LINE_CAP]; LOG_SHOW_LINES];
-static mut LOG_LINE_N: usize = 0;
+static mut LOG_TEXT: [u8; LOG_TEXT_CAP] = [0; LOG_TEXT_CAP];
 static mut LOG_MSG: [u8; 48] = [0; 48];
 static mut LOG_CLEAR_ARMED: u32 = 0;
 
 unsafe fn log_page_load() {
     let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
     let n = crate::log::tail(buf, LOG_VIEW_CAP);
-    LOG_LINE_N = 0;
-    // 从尾部往前找 8 个行首, 保证显示的是最新行。
-    let mut ends: [usize; LOG_SHOW_LINES] = [0; LOG_SHOW_LINES];
-    let mut cnt = 0usize;
-    let mut e = n;
-    while e > 0 && cnt < LOG_SHOW_LINES {
-        // 去掉行尾的 '\n'
-        while e > 0 && read_volatile(buf.add(e - 1)) == b'\n' { e -= 1; }
-        if e == 0 { break; }
-        let end = e;
-        while e > 0 && read_volatile(buf.add(e - 1)) != b'\n' { e -= 1; }
-        ends[cnt] = (e << 16) | (end - e);   // 高 16 位起点, 低 16 位长度
-        cnt += 1;
-        if e > 0 { e -= 1; }
+    let out = core::ptr::addr_of_mut!(LOG_TEXT) as *mut u8;
+    let mut start = if n > LOG_TEXT_CAP - 1 { n - (LOG_TEXT_CAP - 1) } else { 0 };
+    while start < n && read_volatile(buf.add(start)) != b'\n' { start += 1; }
+    if start < n { start += 1; }
+    let mut i = 0usize;
+    while start + i < n && i + 1 < LOG_TEXT_CAP {
+        let mut c = read_volatile(buf.add(start + i));
+        if c == b'\r' { c = b' '; }
+        write_volatile(out.add(i), c);
+        i += 1;
     }
-    LOG_LINE_N = cnt;
-    let mut k = 0usize;
-    while k < cnt {
-        let rec = ends[cnt - 1 - k];          // 倒序写入 -> 旧行在上
-        let start = rec >> 16;
-        let len = rec & 0xffff;
-        let dst = (core::ptr::addr_of_mut!(LOG_LINES) as *mut u8).add(k * LOG_LINE_CAP);
-        let mut j = 0usize;
-        while j < len && j + 1 < LOG_LINE_CAP {
-            write_volatile(dst.add(j), read_volatile(buf.add(start + j)));
-            j += 1;
-        }
-        write_volatile(dst.add(j), 0);
-        k += 1;
-    }
+    write_volatile(out.add(i), 0);
     let msg = core::ptr::addr_of_mut!(LOG_MSG) as *mut u8;
     if n == 0 {
         put_str(msg, "暂无日志\0".as_bytes());
     } else {
-        let mut w = crate::text::W::new(msg, 48);
-        w.s("日志 ".as_bytes()).n(LOG_LINE_N as u32).s(" 行, 最多显示 8 行\0".as_bytes());
-        w.end();
+        put_str(msg, "日志尾部\0".as_bytes());
     }
 }
 
@@ -963,23 +942,26 @@ impl Page for LogPage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             log_page_load();
-            let mut specs: [(usize, RowSpec); 4 + LOG_SHOW_LINES] =
-                [(0, RowSpec::clickable(b"\0".as_slice())); 4 + LOG_SHOW_LINES];
-            specs[0] = (0, RowSpec::clickable("返回\0".as_bytes()));
-            specs[1] = (1, RowSpec::clickable("刷新\0".as_bytes()));
-            specs[2] = (2, RowSpec::clickable(if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() }));
-            specs[3] = (3, RowSpec::display(
-                core::slice::from_raw_parts(core::ptr::addr_of!(LOG_MSG) as *const u8,
-                    cstr_len(core::ptr::addr_of!(LOG_MSG) as *const u8) + 1),
-                core::ptr::null()));
-            let mut i = 0usize;
-            while i < LOG_LINE_N && i < LOG_SHOW_LINES {
-                let p = (core::ptr::addr_of!(LOG_LINES) as *const u8).add(i * LOG_LINE_CAP);
-                specs[4 + i] = (4 + i, RowSpec::display(
-                    core::slice::from_raw_parts(p, cstr_len(p) + 1), core::ptr::null()));
-                i += 1;
+            let specs: [(usize, RowSpec); 4] = [
+                (0, RowSpec::clickable("返回\0".as_bytes())),
+                (1, RowSpec::clickable("刷新\0".as_bytes())),
+                (2, RowSpec::clickable(if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() })),
+                (3, RowSpec::display(
+                    core::slice::from_raw_parts(core::ptr::addr_of!(LOG_MSG) as *const u8,
+                        cstr_len(core::ptr::addr_of!(LOG_MSG) as *const u8) + 1),
+                    core::ptr::null())),
+            ];
+            build_rows(ctx, ctx.title, &specs)?;
+            let rp = page_rows_ptr(17);
+            let prev = if rp.is_null() { 0 } else { read_volatile(rp.add(3)) };
+            let lab = fw_api::label_create(ctx.content);
+            if lab != 0 {
+                fw_api::style_apply(lab, crate::FW_STYLE_HR_NAME, 255, 0);
+                fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
+                fw_api::obj_set_size_wh(lab, 320, 240);
+                fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
+                    fw_api::align::OUT_BOTTOM_MID, 0, 8);
             }
-            build_rows(ctx, ctx.title, &specs[..4 + LOG_LINE_N])?;
             Ok(())
         }
     }
@@ -1890,13 +1872,7 @@ impl Page for SettingsPage {
                 (2, RowSpec::clickable("亮度\0".as_bytes())),
                 (3, RowSpec::clickable("震动\0".as_bytes())),
                 (4, RowSpec::clickable("缓存清理\0".as_bytes())),
-                (5, RowSpec::display("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("编译时间\0".as_bytes(), about_build_time().as_ptr())),
-                (7, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
-                (8, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (9, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (10, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (11, RowSpec::clickable("运行日志\0".as_bytes())),
+                (5, RowSpec::clickable("运行日志\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1908,7 +1884,7 @@ impl Page for SettingsPage {
                 2 => nav_goto(11, 0),   // 亮度
                 3 => nav_goto(16, 0),   // 震动
                 4 => nav_goto(12, 0),   // 缓存清理
-                11 => nav_goto(17, 0),  // 运行日志
+                5 => nav_goto(17, 0),   // 运行日志
                 _ => {}
             }
         }
