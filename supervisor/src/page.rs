@@ -730,6 +730,14 @@ impl Page for InfoPage {
                 if arc != 0 && read_volatile(pp.add(i)) != p {
                     write_volatile(pp.add(i), p);
                     fw_api::arc_set_pct(arc, pct[i]);
+                    let f34 = core::ptr::read_volatile((arc as usize + 0x34) as *const f32);
+                    let v2e = core::ptr::read_volatile((arc as usize + 0x2E) as *const i16);
+                    let mn = core::ptr::read_volatile((arc as usize + 0x30) as *const i16);
+                    let mx = core::ptr::read_volatile((arc as usize + 0x32) as *const i16);
+                    crate::log::kv(if i == 0 { "环0 pct " } else { "环1 pct " }, pct[i]);
+                    crate::log::kv("  f32@34 bits ", f34.to_bits());
+                    crate::log::kv("  i16@2E ", v2e as u32);
+                    crate::log::kv("  minmax ", ((mn as u32 & 0xffff) << 16) | (mx as u32 & 0xffff));
                 }
                 let lab = read_volatile(rp.add(2 + i));
                 if lab != 0 {
