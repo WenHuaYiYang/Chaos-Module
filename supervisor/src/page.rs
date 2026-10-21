@@ -632,6 +632,7 @@ impl Page for InfoPage {
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
                 (6, RowSpec::clickable("设置\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/日志(页14)
+                (7, RowSpec::clickable("关于\0".as_bytes())),   // 版本/编译时间/固件/开发者(页18)
             ])?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -1868,7 +1869,6 @@ impl Page for SettingsPage {
                 (3, RowSpec::clickable("震动\0".as_bytes())),
                 (4, RowSpec::clickable("缓存清理\0".as_bytes())),
                 (5, RowSpec::clickable("运行日志\0".as_bytes())),
-                (6, RowSpec::clickable("关于\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1881,7 +1881,6 @@ impl Page for SettingsPage {
                 3 => nav_goto(16, 0),   // 震动
                 4 => nav_goto(12, 0),   // 缓存清理
                 5 => nav_goto(17, 0),   // 运行日志
-                6 => nav_goto(18, 0),   // 关于
                 _ => {}
             }
         }
@@ -1908,7 +1907,6 @@ impl Page for AboutPage {
                 (4, RowSpec::display("开发者\0".as_bytes(), "IKUN_CXKPRO\0".as_bytes().as_ptr())),
                 (5, RowSpec::display("开发者\0".as_bytes(), "谦虚的海鸥\0".as_bytes().as_ptr())),
                 (6, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
-                (7, RowSpec::display("项目主页\0".as_bytes(), "github.com/WenHuaYiYang/Chaos-Module\0".as_bytes().as_ptr())),
             ])?;
             Ok(())
         }
@@ -2075,5 +2073,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 19] = [
     &PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
     &PAGE_VIBP,         // 16 主页 -> 震动
     &PAGE_LOG,          // 17 设置 -> 运行日志
-    &PAGE_ABOUT_PAGE,   // 18 设置 -> 关于
+    &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
 ];
