@@ -102,6 +102,7 @@ python3 tools/build.py
 ```text
 dist/chaos_sup.ko               内核模块
 dist/chaos-installer-p67.bin    可直接安装的 p67 容器
+dist/assets/                   图标、容器内 ko 副本、字体占位
 ```
 
 常用组合：

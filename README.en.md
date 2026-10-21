@@ -101,6 +101,7 @@ Outputs:
 ```text
 dist/chaos_sup.ko               kernel module
 dist/chaos-installer-p67.bin    installable p67 container
+dist/assets/                   icons, ko copy, font placeholder
 ```
 
 Useful flags:
