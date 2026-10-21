@@ -563,3 +563,12 @@ pub unsafe fn arc_disable_input(arc: Obj) {
     let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
     inv(arc);
 }
+
+/// 清掉对象 flags(+0x2C) 的 SCROLLABLE(bit2)，禁止该容器左右/上下滑动。
+/// 主页圆环行比屏宽时，父容器会把手势当横向滚动，用户一划整行就跟着动。
+pub unsafe fn obj_clear_scrollable(obj: Obj) {
+    if obj == 0 { return; }
+    let p = (obj as usize + 0x2C) as *mut u32;
+    let v = core::ptr::read_volatile(p);
+    core::ptr::write_volatile(p, v & !0x4);
+}
