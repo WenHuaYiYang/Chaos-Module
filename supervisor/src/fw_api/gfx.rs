@@ -575,3 +575,17 @@ pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
     let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
     func(obj, f);
 }
+
+// ===== arc 颜色 =====
+// 依据: 固件 0xc143e3e 的样式初始化里 `movs r1,#0x55; ... bl 0xc124180`，
+// 与 0xc2099ba 处 arc 控件自身设色同用 0x55；对应 LVGL 的 LV_STYLE_ARC_COLOR
+// （8.3 头文件为 82，固件属性号整体比头文件高 3，text_font 87→0x5A 同源）。
+// selector: MAIN=0x000000 画轨道，INDICATOR=0x020000 画进度。
+pub const LV_STYLE_ARC_COLOR: u32 = 0x55;
+pub const ARC_TRACK_RGB: u32 = 0x26_2626;
+pub const ARC_FILL_RGB: u32 = 0x27_7AF7;
+
+pub unsafe fn arc_set_colors(arc: Obj, fill_rgb: u32, track_rgb: u32) {
+    let _ = obj_set_local_style_prop(arc, LV_STYLE_ARC_COLOR, track_rgb, 0x0000_0000);
+    let _ = obj_set_local_style_prop(arc, LV_STYLE_ARC_COLOR, fill_rgb, 0x0002_0000);
+}
