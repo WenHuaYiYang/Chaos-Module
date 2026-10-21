@@ -27,7 +27,7 @@ It started as a research harness for the 10 Pro and grew into a full device-mana
 
 ## Features
 
-- **App manager**: hide/show, batch actions, exclusions, and an optional "show without reboot" mode (see [App manager](docs/APP-MANAGER.md)).
+- **App manager**: hide/show, batch actions, exclusions, and normal / deep hiding modes (see [App manager](docs/APP-MANAGER.md)).
 - **Customization**: fonts, home-screen icon packs, system blur, translucent watchface background.
 - **Watchfaces**: switch built-in/market faces, shake-to-rotate, face management.
 - **Device tools**: brightness, cache cleanup, time/date, vibration test.
@@ -131,7 +131,7 @@ Chaos-Module/
 
 ## Documentation
 
-- [App manager: hide/show and the no-reboot mode](docs/APP-MANAGER.md)
+- [App manager: hide/show, exclusions and hiding modes](docs/APP-MANAGER.md)
 - Firmware research, address tables and format notes: see the research repository's `docs/`.
 - Installer: [`installer/chaos_installer.lua`](installer/chaos_installer.lua)
 

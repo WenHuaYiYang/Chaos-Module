@@ -793,8 +793,9 @@ unsafe fn refresh_excl_rows() {
             crate::appmgr::excl_hint().as_ptr(), fw_api::NONE_PTR, 0, 0);
     }
     if EX_MSG_ROW != 0 {
+        let m = if mode == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() };
         fw_api::row_update(EX_MSG_ROW, fw_api::NONE_PTR,
-            crate::appmgr::excl_msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
+            m.as_ptr(), fw_api::NONE_PTR, 0, 0);
     }
 }
 
@@ -817,7 +818,7 @@ impl Page for ExclPage {
                 (0, RowSpec::clickable("返回\0".as_bytes())),
                 (1, RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null())),
                 (2, RowSpec::clickable(crate::appmgr::mode_label())),
-                (3, RowSpec::display(crate::appmgr::excl_msg(), core::ptr::null())),
+                (3, RowSpec::display(if crate::appmgr::excl_mode() == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() }, core::ptr::null())),
             ])?;
             EX_HINT_ROW = read_volatile(ctx.rows.add(1));
             EX_MSG_ROW = read_volatile(ctx.rows.add(3));
