@@ -525,11 +525,7 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
 /// LVGL 8.4.0 `lv_arc_t`：obj 24B；+0x24 rotation、+0x26 indic_start、+0x28 indic_end、
 /// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
-    if arc == 0 { return; }
-    let p = (arc as usize + 0x34) as *mut i32;
-    core::ptr::write_volatile(p, if pct > 100 { 100 } else { pct as i32 });
-    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
-    inv(arc);
+    ring_set_pct(arc, pct);
 }
 
 /// 把 arc 改成整圆并从正底部开始。
@@ -574,4 +570,57 @@ pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
     if obj == 0 { return; }
     let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
     func(obj, f);
+}
+
+// ===== 自绘分段圆环（完全不使用 arc） =====
+pub unsafe fn obj_create(parent: Obj) -> Obj {
+    let f: unsafe extern "C" fn(Obj, u32) -> Obj = transmute(0x0C58_81E1usize);
+    f(parent, 0)
+}
+
+const RING_N: usize = 72;
+const RING_TRACK: u32 = 0x26_2626;
+const RING_FILL: u32 = 0x27_7AF7;
+const RING_DXY: [(i16, i16); RING_N] = [
+(0,44),(-4,44),(-8,43),(-11,43),(-15,41),(-19,40),(-22,38),(-25,36),(-28,34),(-31,31),(-34,28),(-36,25),(-38,22),(-40,19),(-41,15),(-43,11),(-43,8),(-44,4),(-44,0),(-44,-4),(-43,-8),(-43,-11),(-41,-15),(-40,-19),(-38,-22),(-36,-25),(-34,-28),(-31,-31),(-28,-34),(-25,-36),(-22,-38),(-19,-40),(-15,-41),(-11,-43),(-8,-43),(-4,-44),(0,-44),(4,-44),(8,-43),(11,-43),(15,-41),(19,-40),(22,-38),(25,-36),(28,-34),(31,-31),(34,-28),(36,-25),(38,-22),(40,-19),(41,-15),(43,-11),(43,-8),(44,-4),(44,0),(44,4),(43,8),(43,11),(41,15),(40,19),(38,22),(36,25),(34,28),(31,31),(28,34),(25,36),(22,38),(19,40),(15,41),(11,43),(8,43),(4,44),
+];
+static mut RING_OBJ: [Obj; 2] = [0; 2];
+static mut RING_SEG: [[Obj; RING_N]; 2] = [[0; RING_N]; 2];
+
+pub unsafe fn ring_build(parent: Obj, cx: i32, cy: i32) -> Obj {
+    let c = obj_create(parent);
+    if c == 0 { return 0; }
+    obj_set_size_wh(c, 104, 104);
+    obj_align(c, align::TOP_LEFT, cx, cy);
+    obj_clear_scrollable(c);
+    let idx = if RING_OBJ[0] == 0 { 0 } else { 1 };
+    RING_OBJ[idx] = c;
+    let mut i = 0usize;
+    while i < RING_N {
+        let s = obj_create(c);
+        if s != 0 {
+            obj_set_size_wh(s, 7, 7);
+            let (dx, dy) = RING_DXY[i];
+            obj_align(s, align::TOP_LEFT, 49 + dx as i32, 49 + dy as i32);
+            obj_style_color(s, RING_TRACK, 0);
+            RING_SEG[idx][i] = s;
+        }
+        i += 1;
+    }
+    c
+}
+
+pub unsafe fn ring_set_pct(obj: Obj, pct: u32) {
+    let mut idx = 2usize;
+    if obj != 0 && obj == RING_OBJ[0] { idx = 0; }
+    else if obj != 0 && obj == RING_OBJ[1] { idx = 1; }
+    if idx == 2 { return; }
+    let mut k = (pct.min(100) as usize * RING_N) / 100;
+    if pct > 0 && k == 0 { k = 1; }
+    let mut i = 0usize;
+    while i < RING_N {
+        let s = RING_SEG[idx][i];
+        if s != 0 { obj_style_color(s, if i < k { RING_FILL } else { RING_TRACK }, 0); }
+        i += 1;
+    }
 }
