@@ -742,15 +742,17 @@ unsafe fn cstr_len(s: *const u8) -> usize {
 /// 单条切换后只改复选框与状态文本, 不重建整页(避免列表跳回顶部)。
 unsafe fn refresh_appmgr_rows() {
     let rows = crate::appmgr::rows_ptr();
-    let n = crate::appmgr::count();
-    let mut i = 0usize;
-    while i < n {
-        let r = read_volatile(rows.add(i));
+    let n = crate::appmgr::view_count();
+    let mut v = 0usize;
+    while v < n {
+        let i = crate::appmgr::view_at(v);
+        if i == usize::MAX { break; }
+        let r = read_volatile(rows.add(v));
         if r != 0 {
             fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
                 crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
         }
-        i += 1;
+        v += 1;
     }
     if AM_MSG_ROW != 0 {
         fw_api::row_update(AM_MSG_ROW, fw_api::NONE_PTR,
@@ -1594,8 +1596,11 @@ impl Page for AppMgrPage {
             } else if idx == 3 {
                 nav_goto(7, 0);
             } else if idx >= 12 {
-                let e = idx - 12;
-                if e < crate::appmgr::count() { crate::appmgr::click(e); }
+                let v = idx - 12;
+                if v < crate::appmgr::view_count() {
+                    let e = crate::appmgr::view_at(v);
+                    if e != usize::MAX { crate::appmgr::click(e); }
+                }
             }
         }
     }
@@ -1622,10 +1627,10 @@ impl Page for AppMgrPage {
                 render_req(1);
             } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
-                refresh_appmgr_rows();
+                render_req(1);
             } else if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
-                refresh_appmgr_rows();
+                render_req(1);
             }
         }
     }
