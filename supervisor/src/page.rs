@@ -903,8 +903,8 @@ impl Page for ExclPage {
 pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
-const LOG_VIEW_CAP: usize = 2048;
-const LOG_TEXT_CAP: usize = 512;
+const LOG_VIEW_CAP: usize = 10240;
+const LOG_TEXT_CAP: usize = 8192;
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
 static mut LOG_TEXT: [u8; LOG_TEXT_CAP] = [0; LOG_TEXT_CAP];
 static mut LOG_MSG: [u8; 48] = [0; 48];
@@ -957,7 +957,7 @@ impl Page for LogPage {
             if lab != 0 {
                 fw_api::style_apply(lab, crate::FW_STYLE_HR_NAME, 255, 0);
                 fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
-                fw_api::obj_set_size_wh(lab, 320, 640);
+                fw_api::obj_set_size_wh(lab, 320, 2000);
                 fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
                     fw_api::align::OUT_BOTTOM_MID, 0, 8);
             }
