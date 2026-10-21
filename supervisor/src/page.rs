@@ -902,8 +902,8 @@ impl Page for ExclPage {
 pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
-const LOG_VIEW_CAP: usize = 4096;
-const LOG_SHOW_LINES: usize = 8;
+const LOG_VIEW_CAP: usize = 2048;
+const LOG_SHOW_LINES: usize = 5;
 const LOG_LINE_CAP: usize = 64;
 
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
@@ -916,7 +916,7 @@ unsafe fn log_page_load() {
     let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
     let n = crate::log::tail(buf, LOG_VIEW_CAP);
     LOG_LINE_N = 0;
-    // 从尾部往前找 7 个行首, 保证显示的是最新行。
+    // 从尾部往前找 5 个行首, 保证显示的是最新行。
     let mut ends: [usize; LOG_SHOW_LINES] = [0; LOG_SHOW_LINES];
     let mut cnt = 0usize;
     let mut e = n;
@@ -950,7 +950,7 @@ unsafe fn log_page_load() {
         put_str(msg, "暂无日志\0".as_bytes());
     } else {
         let mut w = crate::text::W::new(msg, 48);
-        w.s("日志 ".as_bytes()).n(LOG_LINE_N as u32).s(" 行, 最多显示 8 行\0".as_bytes());
+        w.s("日志 ".as_bytes()).n(LOG_LINE_N as u32).s(" 行, 最多显示 5 行\0".as_bytes());
         w.end();
     }
 }
