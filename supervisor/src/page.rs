@@ -1966,6 +1966,7 @@ static mut DBG_VAL: u32 = 50;
 static mut DBG_TXT: [u8; 8] = [0; 8];
 static mut DBG_DUMP_MSG: [u8; 32] = [0; 32];
 static mut DBG_DUMP_ARM: u32 = 0;
+static mut DBG_TICKS: u32 = 0;
 
 unsafe fn dbg_text() {
     let v = DBG_VAL;
@@ -1973,6 +1974,19 @@ unsafe fn dbg_text() {
     if v >= 100 { write_volatile(d.add(0), b'1'); write_volatile(d.add(1), b'0'); write_volatile(d.add(2), b'0'); write_volatile(d.add(3), b'%'); write_volatile(d.add(4), 0); }
     else if v >= 10 { write_volatile(d.add(0), b'0' + (v / 10) as u8); write_volatile(d.add(1), b'0' + (v % 10) as u8); write_volatile(d.add(2), b'%'); write_volatile(d.add(3), 0); }
     else { write_volatile(d.add(0), b'0' + v as u8); write_volatile(d.add(1), b'%'); write_volatile(d.add(2), 0); }
+}
+
+unsafe fn dbg_fields(a: fw_api::Obj) {
+    if a == 0 { return; }
+    let p = a as usize;
+    crate::log::kv("dbg34 ", core::ptr::read_volatile((p + 0x34) as *const u32));
+    crate::log::kv("dbg38 ", core::ptr::read_volatile((p + 0x38) as *const u32));
+    crate::log::kv("dbg3C ", core::ptr::read_volatile((p + 0x3C) as *const u32));
+    crate::log::kv("dbg40 ", core::ptr::read_volatile((p + 0x40) as *const u32));
+    crate::log::kv("dbg44 ", core::ptr::read_volatile((p + 0x44) as *const u32));
+    crate::log::kv("dbg48 ", core::ptr::read_volatile((p + 0x48) as *const u32));
+    crate::log::kv("dbg4C ", core::ptr::read_volatile((p + 0x4C) as *const u32));
+    crate::log::kv("dbg50 ", core::ptr::read_volatile((p + 0x50) as *const u32));
 }
 
 unsafe fn dbg_dump() {
@@ -2013,6 +2027,7 @@ impl Page for AboutPage {
                     fw_api::arc_make_full(arc);
                     fw_api::arc_disable_input(arc);
                     fw_api::arc_set_pct(arc, DBG_VAL);
+                    dbg_fields(arc);
                 }
                 let lab = fw_api::label_create(ctx.content);
                 if lab != 0 {
@@ -2049,6 +2064,7 @@ impl Page for AboutPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             if DBG_ON != 0 {
+                if DBG_TICKS < 5 { return; }
                 if idx == 1 {
                     if DBG_DUMP_ARM == 0 {
                         DBG_DUMP_ARM = 1;
@@ -2067,11 +2083,14 @@ impl Page for AboutPage {
             }
             if idx == 0 {
                 DBG_CLICKS += 1;
-                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; crate::ui::render_req(18); }
+                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
             }
         }
     }
+    fn needs_tick(&self) -> bool { unsafe { DBG_ON != 0 } }
+    fn tick(&self) { unsafe { if DBG_ON != 0 { DBG_TICKS = DBG_TICKS.wrapping_add(1); } } }
 }
+
 // ===== 页2: 时间设置(时 + 分) =====
 //
 // 只做时分两轮, 与系统闹钟页同形。日期(月+日)是页3 的独立入口。
