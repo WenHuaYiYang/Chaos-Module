@@ -2036,6 +2036,7 @@ impl Page for AboutPage {
                             fw_api::arc_set_color(t, 0x2F3237, fw_api::PART_MAIN);
                             fw_api::arc_set_width(t, 12, fw_api::PART_MAIN);
                             fw_api::arc_set_bg_full(t);
+                            fw_api::arc_clear_indicator(t);
                             fw_api::arc_hide_knob(t);
                             fw_api::arc_disable_input(t);
                         }
@@ -2048,6 +2049,7 @@ impl Page for AboutPage {
                             fw_api::arc_set_color(arc, 0x2196F3, fw_api::PART_MAIN);
                             fw_api::arc_set_width(arc, 12, fw_api::PART_MAIN);
                             fw_api::arc_set_progress(arc, pct);
+                            fw_api::arc_clear_indicator(arc);
                             fw_api::arc_hide_knob(arc);
                             fw_api::arc_disable_input(arc);
                         }

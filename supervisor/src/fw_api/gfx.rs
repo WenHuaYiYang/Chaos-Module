@@ -555,6 +555,7 @@ pub const STYLE_BG_OPA: u32 = 29;
 pub const STYLE_ARC_WIDTH: u32 = 80;
 pub const STYLE_ARC_ROUNDED: u32 = 81;
 pub const STYLE_ARC_COLOR: u32 = 82;
+pub const STYLE_ARC_OPA: u32 = 83;
 pub const PART_MAIN: u32 = 0x0;
 pub const PART_INDICATOR: u32 = 0x2_0000;
 pub const PART_KNOB: u32 = 0x3_0000;
@@ -577,6 +578,21 @@ pub unsafe fn arc_set_width(arc: Obj, w: u32, part: u32) {
 pub unsafe fn arc_hide_knob(arc: Obj) {
     style_set(arc, STYLE_BG_OPA, 0, PART_KNOB);
     style_set(arc, STYLE_ARC_WIDTH, 0, PART_KNOB);
+}
+
+/// 清掉 INDICATOR 弧。
+/// 构造函数把它初始化成 `+0x38=135` / `+0x3C=270`（蓝弧，主题主色），
+/// 所以只画 MAIN 时那段蓝弧仍然会画出来：25% 的进度（90..180）会和它拼成
+/// 90..270 的 180° 蓝弧——看上去正是“25% 变成了半环”。
+/// 这里角度置零（start == end 时 `lv_draw_arc` 直接返回），再把宽度/不透明度清零兜底。
+pub unsafe fn arc_clear_indicator(arc: Obj) {
+    if arc == 0 { return; }
+    let a = arc as usize;
+    core::ptr::write_volatile((a + 0x38) as *mut f32, 0.0);
+    core::ptr::write_volatile((a + 0x3C) as *mut f32, 0.0);
+    style_set(arc, STYLE_ARC_WIDTH, 0, PART_INDICATOR);
+    style_set(arc, STYLE_ARC_OPA, 0, PART_INDICATOR);
+    arc_invalidate(arc);
 }
 
 /// 进度环：MAIN 弧从正底部(90°)起，画 pct%。pct=100 时结束角 450 = 90+360，
