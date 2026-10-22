@@ -525,12 +525,18 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
 /// LVGL 8.4.0 `lv_arc_t`：obj 24B；+0x24 rotation、+0x26 indic_start、+0x28 indic_end、
 /// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
 #[cfg(target_arch = "arm")]
-#[target_feature(enable = "fpregs")]
 unsafe fn arc_set_value_hw(arc: Obj, bits: u32) {
-    // 固件 lv_arc_set_value(obj, float): r0=obj, s0=value。
-    // 单独开 fpregs 让 Rust 按硬浮点 ABI 把 f32 放进 s0；本函数只接收整数，调用方仍是软浮点 ABI。
-    let f: unsafe extern "C" fn(Obj, f32) = core::mem::transmute(0x0C58_8D09usize);
-    f(arc, f32::from_bits(bits));
+    // 同时满足两种 ABI: r1 带 bits(软浮点)，s0 也放同一值(硬浮点)；固件不管按哪种取都能拿到 68.0。
+    core::arch::asm!(
+        ".fpu fpv5-sp-d16",
+        "vmov s0, r1",
+        "blx r2",
+        in("r0") arc,
+        in("r1") bits,
+        in("r2") 0x0C58_8D09usize,
+        out("s0") _,
+        clobber_abi("C"),
+    );
 }
 
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
