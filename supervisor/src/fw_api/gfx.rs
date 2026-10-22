@@ -526,10 +526,18 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
 /// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
-    let p = (arc as usize + 0x34) as *mut f32;
-    core::ptr::write_volatile(p, if pct > 100 { 100.0 } else { pct as f32 });
-    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
-    inv(arc);
+    let v = if pct > 100 { 100.0f32 } else { pct as f32 };
+    // 调固件 lv_arc_set_value(obj, float): r0=obj, s0=value。
+    // 本 crate 用 -fpregs 编译，Rust 的 f32 参数不会进 s0，所以这里用内联汇编写 s0 再 blx。
+    core::arch::asm!(
+        "vmov s0, {b}",
+        "blx {f}",
+        b = in(reg) v.to_bits(),
+        f = in(reg) 0x0C58_8D09u32,
+        in("r0") arc,
+        out("r1") _, out("r2") _, out("r3") _, out("r12") _, out("lr") _,
+        options(nostack)
+    );
 }
 
 /// 把 arc 改成整圆并从正底部开始。
