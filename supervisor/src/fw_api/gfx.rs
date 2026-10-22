@@ -583,3 +583,15 @@ pub unsafe fn arc_set_bg_full(arc: Obj) {
     core::ptr::write_volatile((a + 0x3C) as *mut f32, 360.0);
     arc_invalidate(arc);
 }
+
+/// 手动设指示弧起止角（+0x40/+0x44，f32），不写 value。
+pub unsafe fn arc_set_angles_pct(arc: Obj, start: f32, pct: u32) {
+    if arc == 0 { return; }
+    let a = arc as usize;
+    let p = if pct > 100 { 100 } else { pct } as f32;
+    let mut end = start + p * 3.6;
+    if end > 449.5 { end = 449.5; }
+    core::ptr::write_volatile((a + 0x40) as *mut f32, start);
+    core::ptr::write_volatile((a + 0x44) as *mut f32, end);
+    arc_invalidate(arc);
+}
