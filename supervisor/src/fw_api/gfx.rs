@@ -548,6 +548,9 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
 /// 之前一直写 +0x2E，值根本没写进去，所以只剩一个圆点。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
+    // 官方电池环没有圆点: 把 KNOB 部件的透明度设成 0(selector 0x20000 = LV_PART_KNOB)。
+    let f: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_92F9usize);
+    f(arc, 0, 0x20000);
     let p = arc as usize;
     core::ptr::write_volatile((p + 0x38) as *mut f32, 0.0);
     core::ptr::write_volatile((p + 0x3C) as *mut f32, 100.0);
