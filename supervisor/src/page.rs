@@ -604,6 +604,9 @@ impl Page for InfoPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
+            // 回到主页即退出调试态: 调试页只能靠关于页连点 5 次进入。
+            DBG_ON = 0;
+            DBG_CLICKS = 0;{
             // 展示顺序: CPU(标准行) -> 存储 -> 内存 -> 导航。
             // 句柄槽位不变(数据行仍 0/1, CPU 仍 2), 只改悬挂位置。
             stat_fill(2);
