@@ -2020,16 +2020,18 @@ impl Page for AboutPage {
         unsafe {
             if DBG_ON != 0 {
                 dbg_text();
-                let specs: [(i32, i32, u32, bool, f32); 4] = [(52, 96, 25, false, 135.0), (196, 96, 75, false, 135.0), (52, 268, 25, true, 0.0), (196, 268, 75, true, 0.0)];
-                let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 25%\0", b"D 75%\0"];
-                for (i, &(x, y, pct, full, start)) in specs.iter().enumerate() {
+                let specs: [(i32, i32, u32, bool); 4] = [(52, 96, 25, true), (196, 96, 75, true), (52, 268, 100, true), (196, 268, 0, false)];
+                let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 100%\0", b"D def\0"];
+                for (i, &(x, y, pct, paint)) in specs.iter().enumerate() {
                     let arc = fw_api::arc_create(ctx.content);
                     if arc == 0 { continue; }
                     fw_api::obj_set_size_wh(arc, 120, 120);
                     fw_api::obj_align(arc, fw_api::align::TOP_LEFT, x, y);
-                    if full { fw_api::arc_set_bg_full(arc); }
+                    if paint {
+                        fw_api::arc_set_color(arc, 0x2196F3, 0);
+                        fw_api::arc_set_progress(arc, pct);
+                    }
                     fw_api::arc_disable_input(arc);
-                    fw_api::arc_set_angles_pct(arc, start, pct);
                     let cl = fw_api::label_create(ctx.content);
                     if cl != 0 {
                         fw_api::style_apply(cl, crate::FW_STYLE_HR_NAME, 255, 0);

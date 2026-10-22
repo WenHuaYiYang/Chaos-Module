@@ -529,31 +529,47 @@ unsafe fn arc_invalidate(arc: Obj) {
     f(arc);
 }
 
-/// 写 arc 的 value(i32, +0x34)。dump 里 arc 构造函数把 +0x34/+0x38/+0x3C
-/// 当整数初始化(value/min/max)，角度从 +0x40 起是 i16；之前按 f32 写是错的。
-pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
+/// 写 arc 的 MAIN（背景）弧起止角并失效重绘。
+/// 字段依据 analysis/arc-disasm.zh.md §4.1：draw 的 MAIN 分支只读 +0x40/+0x44(f32)，
+/// rotation 在 +0x34(i32)，两条角都会被加上 rotation，所以这里顺带清零。
+unsafe fn arc_set_main_angles(arc: Obj, start: f32, end: f32) {
     if arc == 0 { return; }
-    let p = if pct > 100 { 100 } else { pct } as f32;
     let a = arc as usize;
-    let mut end = 90.0 + p * 3.6;
-    if end > 449.0 { end = 449.0; }
     core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
-    core::ptr::write_volatile((a + 0x38) as *mut f32, 90.0);
-    core::ptr::write_volatile((a + 0x3C) as *mut f32, end);
+    core::ptr::write_volatile((a + 0x40) as *mut f32, start);
+    core::ptr::write_volatile((a + 0x44) as *mut f32, end);
     arc_invalidate(arc);
 }
 
-/// 整圆、从正底部开始。dump 构造函数：value +0x34 i32；bg_start/bg_end
-/// +0x38/+0x3C f32；indic_start/end +0x40/+0x44 f32；min/max +0x4C/+0x50 i32。
-pub unsafe fn arc_make_full(arc: Obj) {
+/// 设某一 part 的弧颜色（LVGL style 属性 0x52 ARC_COLOR，part 0=MAIN / 0x20000=INDICATOR）。
+pub unsafe fn arc_set_color(arc: Obj, rgb: u32, part: u32) {
     if arc == 0 { return; }
     let f: unsafe extern "C" fn(Obj, u32, u32) = core::mem::transmute(0x0C58_82E1u32);
-    f(arc, 0x002F3237, 0);
-    f(arc, 0x002196F3, 0x20000);
-    core::ptr::write_volatile((arc as usize + 0x40) as *mut f32, 135.0);
-    core::ptr::write_volatile((arc as usize + 0x44) as *mut f32, 450.0);
-    core::ptr::write_volatile((arc as usize + 0x34) as *mut i32, 0);
-    arc_invalidate(arc);
+    f(arc, rgb & 0x00FF_FFFF, part);
+}
+
+/// 进度环：MAIN 弧从正底部(90°)起，画 pct%。pct=100 时结束角 450 = 90+360，
+/// 命中渲染器的“整圈特例”(§4.2/§10.5)，得到完整圆环。
+pub unsafe fn arc_set_progress(arc: Obj, pct: u32) {
+    let p = if pct > 100 { 100 } else { pct };
+    arc_set_main_angles(arc, 90.0, 90.0 + p as f32 * 3.6);
+}
+
+/// 只把 MAIN 弧做成整圆（作底环/track 用），不碰 INDICATOR。
+pub unsafe fn arc_set_bg_full(arc: Obj) {
+    arc_set_main_angles(arc, 0.0, 360.0);
+}
+
+/// 整圆、从正底部开始。MAIN = 90..450（整圈），MAIN 灰、INDICATOR 蓝。
+pub unsafe fn arc_make_full(arc: Obj) {
+    arc_set_color(arc, 0x2F3237, 0);
+    arc_set_color(arc, 0x2196F3, 0x20000);
+    arc_set_main_angles(arc, 90.0, 450.0);
+}
+
+/// 兼容旧调用：按百分比画 MAIN 进度弧。
+pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
+    arc_set_progress(arc, pct);
 }
 
 /// 关掉 arc 的触摸交互：清 obj flags(+0x1C) 的 CLICKABLE(bit1)。
@@ -580,25 +596,4 @@ pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
     if obj == 0 { return; }
     let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
     func(obj, f);
-}
-
-/// 只把背景弧改成 0..360（整圆），指示弧仍交给 value；用于调试页对比。
-pub unsafe fn arc_set_bg_full(arc: Obj) {
-    if arc == 0 { return; }
-    let a = arc as usize;
-    core::ptr::write_volatile((a + 0x38) as *mut f32, 0.0);
-    core::ptr::write_volatile((a + 0x3C) as *mut f32, 360.0);
-    arc_invalidate(arc);
-}
-
-/// 手动设指示弧起止角（+0x40/+0x44，f32），不写 value。
-pub unsafe fn arc_set_angles_pct(arc: Obj, start: f32, pct: u32) {
-    if arc == 0 { return; }
-    let a = arc as usize;
-    let p = if pct > 100 { 100 } else { pct } as f32;
-    let mut end = start + p * 3.6;
-    if end > 449.5 { end = 449.5; }
-    core::ptr::write_volatile((a + 0x40) as *mut f32, start);
-    core::ptr::write_volatile((a + 0x44) as *mut f32, end);
-    arc_invalidate(arc);
 }
