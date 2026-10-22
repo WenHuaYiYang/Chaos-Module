@@ -1962,13 +1962,52 @@ impl Page for SettingsPage {
 // ===== 页18: 关于 =====
 pub(crate) struct AboutPage;
 static PAGE_ABOUT_PAGE: AboutPage = AboutPage;
+static mut DBG_ON: u32 = 0;
+static mut DBG_CLICKS: u32 = 0;
+static mut DBG_VAL: u32 = 50;
+static mut DBG_TXT: [u8; 8] = [0; 8];
+
+unsafe fn dbg_text() {
+    let v = DBG_VAL;
+    let d = core::ptr::addr_of_mut!(DBG_TXT) as *mut u8;
+    if v >= 100 { write_volatile(d.add(0), b'1'); write_volatile(d.add(1), b'0'); write_volatile(d.add(2), b'0'); write_volatile(d.add(3), b'%'); write_volatile(d.add(4), 0); }
+    else if v >= 10 { write_volatile(d.add(0), b'0' + (v / 10) as u8); write_volatile(d.add(1), b'0' + (v % 10) as u8); write_volatile(d.add(2), b'%'); write_volatile(d.add(3), 0); }
+    else { write_volatile(d.add(0), b'0' + v as u8); write_volatile(d.add(1), b'%'); write_volatile(d.add(2), 0); }
+}
 
 impl Page for AboutPage {
     fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "关于\0".as_bytes()); }
+        unsafe {
+            if DBG_ON != 0 { put_str(buf, "调试\0".as_bytes()); }
+            else { put_str(buf, "关于\0".as_bytes()); }
+        }
     }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
+            if DBG_ON != 0 {
+                dbg_text();
+                let arc = fw_api::arc_create(ctx.content);
+                if arc != 0 {
+                    fw_api::obj_set_size_wh(arc, 180, 180);
+                    fw_api::obj_align(arc, fw_api::align::TOP_MID, 0, 40);
+                    fw_api::arc_make_full(arc);
+                    fw_api::arc_disable_input(arc);
+                    fw_api::arc_set_pct(arc, DBG_VAL);
+                }
+                let lab = fw_api::label_create(ctx.content);
+                if lab != 0 {
+                    fw_api::style_apply(lab, crate::FW_STYLE_HR_VALUE, 255, 0);
+                    fw_api::label_set_text(lab, core::ptr::addr_of!(DBG_TXT) as *const u8);
+                    fw_api::obj_align(lab, fw_api::align::TOP_MID, 0, 120);
+                }
+                let tip = fw_api::label_create(ctx.content);
+                if tip != 0 {
+                    fw_api::style_apply(tip, crate::FW_STYLE_HR_NAME, 255, 0);
+                    fw_api::label_set_text(tip, "点击切换 0/25/50/75/100\0".as_ptr());
+                    fw_api::obj_align(tip, fw_api::align::TOP_MID, 0, 200);
+                }
+                return Ok(());
+            }
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
@@ -1983,7 +2022,19 @@ impl Page for AboutPage {
             Ok(())
         }
     }
-    fn on_click(&self, _idx: usize) {}
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if DBG_ON != 0 {
+                DBG_VAL = match DBG_VAL { 0 => 25, 25 => 50, 50 => 75, 75 => 100, _ => 0 };
+                crate::ui::render_req(18);
+                return;
+            }
+            if idx == 0 {
+                DBG_CLICKS += 1;
+                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; crate::ui::render_req(18); }
+            }
+        }
+    }
 }
 // ===== 页2: 时间设置(时 + 分) =====
 //
