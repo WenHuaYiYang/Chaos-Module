@@ -533,9 +533,10 @@ unsafe fn arc_invalidate(arc: Obj) {
 /// 当整数初始化(value/min/max)，角度从 +0x40 起是 i16；之前按 f32 写是错的。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
-    let p = if pct > 100 { 100 } else { pct };
+    let p = if pct > 100 { 100 } else { pct } as f32;
     let a = arc as usize;
-    core::ptr::write_volatile((a + 0x34) as *mut f32, p as f32);
+    core::ptr::write_volatile((a + 0x40) as *mut f32, 135.0);
+    core::ptr::write_volatile((a + 0x44) as *mut f32, 135.0 + p * 2.7);
     arc_invalidate(arc);
 }
 
@@ -544,8 +545,7 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
     let a = arc as usize;
-    // 官方文档: value 与手动设角度互斥。这里只写 value, 角度保持固件默认。
-    core::ptr::write_volatile((a + 0x34) as *mut f32, 0.0);
+    let _ = a;
     arc_invalidate(arc);
 }
 
