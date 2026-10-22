@@ -537,8 +537,9 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     let a = arc as usize;
     let mut end = 90.0 + p * 3.6;
     if end > 449.0 { end = 449.0; }
-    core::ptr::write_volatile((a + 0x38) as *mut f32, 90.0);
-    core::ptr::write_volatile((a + 0x3C) as *mut f32, end);
+    core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x40) as *mut f32, 90.0);
+    core::ptr::write_volatile((a + 0x44) as *mut f32, end);
     arc_invalidate(arc);
 }
 
@@ -546,8 +547,10 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
 /// +0x38/+0x3C f32；indic_start/end +0x40/+0x44 f32；min/max +0x4C/+0x50 i32。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
-    let a = arc as usize;
-    let _ = a;
+    let f: unsafe extern "C" fn(Obj, u32, u32) = core::mem::transmute(0x0C58_82E1u32);
+    f(arc, 0x0000A8FF, 0);
+    f(arc, 0x0000A8FF, 0x20000);
+    core::ptr::write_volatile((arc as usize + 0x34) as *mut i32, 0);
     arc_invalidate(arc);
 }
 
