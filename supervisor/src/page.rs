@@ -2009,6 +2009,7 @@ impl Page for AboutPage {
                     fw_api::label_set_text(tip, "点击切换 0/25/50/75/100\0".as_ptr());
                     fw_api::obj_align(tip, fw_api::align::TOP_MID, 0, 200);
                 }
+                let _ = build_row(ctx, tip, 0, &RowSpec::tap("切换 0/25/50/75/100\0".as_bytes(), core::ptr::null()));
                 return Ok(());
             }
             let bt = about_build_time();
