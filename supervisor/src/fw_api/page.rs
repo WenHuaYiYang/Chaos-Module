@@ -4,7 +4,6 @@
 
 use core::mem::transmute;
 use super::*;
-use core::ptr::{read_volatile, write_volatile};
 
 // ===========================================================================
 // 4. 行（stock list row）
@@ -181,49 +180,25 @@ pub struct RingRow {
 }
 
 /// 两个 104x104 圆环并排，百分比在环心，名称在环下方。
-pub const RING_SEG_N: usize = 60;
-pub static mut RING_SEG: [u32; 120] = [0; 120];
-const RING_DXY: [(i16, i16); 60] = [(49,95),(44,95),(39,94),(35,93),(30,91),(26,89),(22,86),(18,83),(15,80),(12,76),(9,72),(7,68),(5,63),(4,59),(3,54),(3,49),(3,44),(4,39),(5,35),(7,30),(9,26),(12,22),(15,18),(18,15),(22,12),(26,9),(30,7),(35,5),(39,4),(44,3),(49,3),(54,3),(59,4),(63,5),(68,7),(72,9),(76,12),(80,15),(83,18),(86,22),(89,26),(91,30),(93,35),(94,39),(95,44),(95,49),(95,54),(94,59),(93,63),(91,68),(89,72),(86,76),(83,80),(80,83),(76,86),(72,89),(68,91),(63,93),(59,94),(54,95)];
-
-pub unsafe fn ring_paint(i: usize, pct: u32) {
-    let on = (pct.min(100) as usize) * RING_SEG_N / 100;
-    let segs = core::ptr::addr_of_mut!(RING_SEG) as *mut u32;
-    let mut k = 0usize;
-    while k < RING_SEG_N {
-        let h = read_volatile(segs.add(i * RING_SEG_N + k));
-        if h != 0 {
-            let c = if k < on { 0x00A8FF } else { 0x2A2A2A };
-            obj_style_color(h, c, 0);
-        }
-        k += 1;
-    }
-}
-
 pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> RingRow {
     let mut r = RingRow { row: 0, arc0: 0, arc1: 0, pct0: 0, pct1: 0 };
     let row = row_create(parent, b" \0".as_ptr(), NONE_PTR, 0);
     if row == 0 { return r; }
     obj_set_size_wh(row, 328, 156);
-    let segs = core::ptr::addr_of_mut!(RING_SEG) as *mut u32;
-    let mut ri = 0usize;
-    while ri < 2 {
-        let ox = if ri == 0 { 12 } else { 212 };
-        let mut k = 0usize;
-        while k < RING_SEG_N {
-            let o = bar_new(row);
-            if o != 0 {
-                obj_set_size_wh(o, 6, 6);
-                obj_style_color(o, 0x2A2A2A, 0);
-                let (dx, dy) = RING_DXY[k];
-                obj_align(o, align::TOP_LEFT, ox as i32 + dx as i32, 2 + dy as i32);
-                write_volatile(segs.add(ri * RING_SEG_N + k), o);
-            }
-            k += 1;
-        }
-        ri += 1;
+    r.arc0 = arc_create(row);
+    if r.arc0 != 0 {
+        obj_set_size_wh(r.arc0, 104, 104);
+        obj_align(r.arc0, align::TOP_LEFT, 12, 2);
+        arc_make_full(r.arc0);
+        arc_disable_input(r.arc0);
     }
-    r.arc0 = 1;
-    r.arc1 = 2;
+    r.arc1 = arc_create(row);
+    if r.arc1 != 0 {
+        obj_set_size_wh(r.arc1, 104, 104);
+        obj_align(r.arc1, align::TOP_LEFT, 212, 2);
+        arc_make_full(r.arc1);
+        arc_disable_input(r.arc1);
+    }
     // 百分比：96 宽环内水平居中（字号 24 时 4 字符约 52px，起点 12+26=38）
     r.pct0 = label_create(row);
     if r.pct0 != 0 {
