@@ -729,7 +729,7 @@ impl Page for InfoPage {
                 let p = pct[i] as i32;
                 if arc != 0 && read_volatile(pp.add(i)) != p {
                     write_volatile(pp.add(i), p);
-                    fw_api::arc_set_pct(arc, pct[i]);
+                    fw_api::ring_paint(i, pct[i]);
                     let f34 = core::ptr::read_volatile((arc as usize + 0x34) as *const f32);
                     let v2e = core::ptr::read_volatile((arc as usize + 0x2E) as *const i16);
                     let mn = core::ptr::read_volatile((arc as usize + 0x30) as *const i16);
