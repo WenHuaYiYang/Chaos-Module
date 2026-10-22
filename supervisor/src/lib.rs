@@ -2,6 +2,7 @@
 //! 关键：register_app 内部 malloc/memset 是 thunk→段B(LVGL)，需 fops.write 上下文。
 
 #![no_std]
+#![feature(arm_target_feature)]
 #![no_main]
 #![allow(static_mut_refs)]
 
