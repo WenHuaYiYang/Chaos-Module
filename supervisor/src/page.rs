@@ -2008,7 +2008,7 @@ impl Page for AboutPage {
                 let arc = fw_api::arc_create(ctx.content);
                 if arc != 0 {
                     fw_api::obj_set_size_wh(arc, 180, 180);
-                    fw_api::obj_align(arc, fw_api::align::TOP_MID, 0, 40);
+                    fw_api::obj_align(arc, fw_api::align::TOP_MID, 0, 120);
                     fw_api::arc_make_full(arc);
                     fw_api::arc_disable_input(arc);
                     fw_api::arc_set_pct(arc, DBG_VAL);
@@ -2019,19 +2019,13 @@ impl Page for AboutPage {
                     fw_api::label_set_text(lab, core::ptr::addr_of!(DBG_TXT) as *const u8);
                     fw_api::obj_align(lab, fw_api::align::TOP_MID, 0, 120);
                 }
-                let tip = fw_api::label_create(ctx.content);
-                if tip != 0 {
-                    fw_api::style_apply(tip, crate::FW_STYLE_HR_NAME, 255, 0);
-                    fw_api::label_set_text(tip, "点击切换 0/25/50/75/100\0".as_ptr());
-                    fw_api::obj_align(tip, fw_api::align::TOP_MID, 0, 200);
-                }
-                let _ = build_row(ctx, tip, 0, &RowSpec::tap("切换 0/25/50/75/100\0".as_bytes(), core::ptr::null()));
-                let _ = build_row(ctx, tip, 1, &RowSpec::tap("导出 LVGL dump\0".as_bytes(), core::ptr::null()));
+                let _ = build_row(ctx, ctx.content, 0, &RowSpec::tap("切换 0/25/50/75/100\0".as_bytes(), core::ptr::null()));
+                let _ = build_row(ctx, ctx.content, 1, &RowSpec::tap("导出 LVGL dump\0".as_bytes(), core::ptr::null()));
                 let msg = fw_api::label_create(ctx.content);
                 if msg != 0 {
                     fw_api::style_apply(msg, crate::FW_STYLE_HR_NAME, 255, 0);
                     fw_api::label_set_text(msg, core::ptr::addr_of!(DBG_DUMP_MSG) as *const u8);
-                    fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 240);
+                    fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 420);
                 }
                 return Ok(());
             }
