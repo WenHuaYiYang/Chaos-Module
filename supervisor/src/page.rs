@@ -1965,6 +1965,7 @@ static mut DBG_CLICKS: u32 = 0;
 static mut DBG_VAL: u32 = 50;
 static mut DBG_TXT: [u8; 8] = [0; 8];
 static mut DBG_DUMP_MSG: [u8; 32] = [0; 32];
+static mut DBG_DUMP_ARM: u32 = 0;
 
 unsafe fn dbg_text() {
     let v = DBG_VAL;
@@ -2019,8 +2020,10 @@ impl Page for AboutPage {
                     fw_api::label_set_text(lab, core::ptr::addr_of!(DBG_TXT) as *const u8);
                     fw_api::obj_align(lab, fw_api::align::TOP_MID, 0, 120);
                 }
-                let _ = build_row(ctx, ctx.content, 0, &RowSpec::tap("切换 0/25/50/75/100\0".as_bytes(), core::ptr::null()));
-                let _ = build_row(ctx, ctx.content, 1, &RowSpec::tap("导出 LVGL dump\0".as_bytes(), core::ptr::null()));
+                let _ = build_rows(ctx, ctx.content, &[
+                    (0, RowSpec::tap("① 切换 0/25/50/75/100\0".as_bytes(), core::ptr::null())),
+                    (1, RowSpec::tap("② 导出 LVGL dump\0".as_bytes(), core::ptr::null())),
+                ]);
                 let msg = fw_api::label_create(ctx.content);
                 if msg != 0 {
                     fw_api::style_apply(msg, crate::FW_STYLE_HR_NAME, 255, 0);
@@ -2046,7 +2049,18 @@ impl Page for AboutPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             if DBG_ON != 0 {
-                if idx == 1 { dbg_dump(); crate::ui::render_req(18); return; }
+                if idx == 1 {
+                    if DBG_DUMP_ARM == 0 {
+                        DBG_DUMP_ARM = 1;
+                        let m = core::ptr::addr_of_mut!(DBG_DUMP_MSG) as *mut u8;
+                        for (i, c) in "再点一次确认导出\0".as_bytes().iter().enumerate() { write_volatile(m.add(i), *c); }
+                    } else {
+                        DBG_DUMP_ARM = 0;
+                        dbg_dump();
+                    }
+                    crate::ui::render_req(18);
+                    return;
+                }
                 DBG_VAL = match DBG_VAL { 0 => 25, 25 => 50, 50 => 75, 75 => 100, _ => 0 };
                 crate::ui::render_req(18);
                 return;
