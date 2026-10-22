@@ -524,56 +524,32 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
 /// 写 arc 的 value 字段(+0x2E，i16，0..100)并失效重绘。
 /// LVGL 8.4.0 `lv_arc_t`：obj 24B；+0x24 rotation、+0x26 indic_start、+0x28 indic_end、
 /// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
-#[cfg(target_arch = "arm")]
-unsafe fn arc_set_value_hw(arc: Obj, bits: u32) {
-    // 同时满足两种 ABI: r1 带 bits(软浮点)，s0 也放同一值(硬浮点)；固件不管按哪种取都能拿到 68.0。
-    core::arch::asm!(
-        ".fpu fpv5-sp-d16",
-        "vmov s0, r1",
-        "blx r2",
-        in("r0") arc,
-        in("r1") bits,
-        in("r2") 0x0C58_8D09usize,
-        out("s0") _,
-        clobber_abi("C"),
-    );
+unsafe fn arc_invalidate(arc: Obj) {
+    let f: unsafe extern "C" fn(Obj) = core::mem::transmute(0x1C02_B305usize);
+    f(arc);
 }
 
+/// 写 arc 的 value(i32, +0x34)。dump 里 arc 构造函数把 +0x34/+0x38/+0x3C
+/// 当整数初始化(value/min/max)，角度从 +0x40 起是 i16；之前按 f32 写是错的。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
-    let p = if pct > 100 { 100 } else { pct } as f32;
-    #[cfg(target_arch = "arm")]
-    arc_set_value_hw(arc, p.to_bits());
-    #[cfg(not(target_arch = "arm"))]
-    core::ptr::write_volatile((arc as usize + 0x34) as *mut f32, p);
+    let p = if pct > 100 { 100 } else { pct } as i32;
+    let a = arc as usize;
+    core::ptr::write_volatile((a + 0x34) as *mut i32, p);
+    arc_invalidate(arc);
 }
 
-/// 把 arc 改成整圆并从正底部开始。
-///
-/// value/min/max 是 i32，角度是 u16；value 在 +0x34，
-/// 之前一直写 +0x2E，值根本没写进去，所以只剩一个圆点。
+/// 整圆、从正底部开始：value=0,min=0,max=100；bg/ind 角度都写 90..450。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
-    // 照搬官方电池环 0xC5D7DCE..0xC5D7E24 的初始化序列（全部整数参数）。
-    let f1: unsafe extern "C" fn(Obj, u32) -> Obj = core::mem::transmute(0x0C58_8961usize);
-    let f2: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_93C1usize);
-    let f3: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_8A99usize);
-    let f4: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_92F9usize);
-    f1(arc, 0x10);
-    f2(arc, 0x20, 0);
-    f3(arc, 0x0C, 0);
-    f4(arc, 0x7F, 0);
-    f4(arc, 0xFF, 0x20000);
-
-    if arc == 0 { return; }
-    // 官方电池环没有圆点: 把 KNOB 部件的透明度设成 0(selector 0x20000 = LV_PART_KNOB)。
-    let f: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_92F9usize);
-    f(arc, 0, 0x20000);
-    let p = arc as usize;
-    core::ptr::write_volatile((p + 0x38) as *mut f32, 0.0);
-    core::ptr::write_volatile((p + 0x3C) as *mut f32, 100.0);
-    let inv: unsafe extern "C" fn(Obj) = transmute(0x1C02_B305usize);
-    inv(arc);
+    let a = arc as usize;
+    core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x38) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x3C) as *mut i32, 100);
+    let pair: u32 = (90u32 & 0xffff) | (450u32 << 16);
+    core::ptr::write_volatile((a + 0x40) as *mut u32, pair); // bg_start/bg_end
+    core::ptr::write_volatile((a + 0x44) as *mut u32, pair); // indic_start/indic_end
+    arc_invalidate(arc);
 }
 
 /// 关掉 arc 的触摸交互：清 obj flags(+0x1C) 的 CLICKABLE(bit1)。
