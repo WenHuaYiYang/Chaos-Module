@@ -1963,6 +1963,7 @@ static mut DBG_ON: u32 = 0;
 static mut DBG_CLICKS: u32 = 0;
 static mut DBG_VAL: u32 = 50;
 static mut DBG_TXT: [u8; 8] = [0; 8];
+static mut DBG_DUMP_MSG: [u8; 32] = [0; 32];
 
 unsafe fn dbg_text() {
     let v = DBG_VAL;
@@ -1970,6 +1971,26 @@ unsafe fn dbg_text() {
     if v >= 100 { write_volatile(d.add(0), b'1'); write_volatile(d.add(1), b'0'); write_volatile(d.add(2), b'0'); write_volatile(d.add(3), b'%'); write_volatile(d.add(4), 0); }
     else if v >= 10 { write_volatile(d.add(0), b'0' + (v / 10) as u8); write_volatile(d.add(1), b'0' + (v % 10) as u8); write_volatile(d.add(2), b'%'); write_volatile(d.add(3), 0); }
     else { write_volatile(d.add(0), b'0' + v as u8); write_volatile(d.add(1), b'%'); write_volatile(d.add(2), 0); }
+}
+
+unsafe fn dbg_dump() {
+    const BASE: usize = 0x1C06_0000;
+    const LEN: usize = 512 * 1024;
+    let path = b"/data/chaos/lvgl_dump.bin\0";
+    let fd = fw_api::open(path.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+    let mut ok = fd >= 0;
+    if ok {
+        let mut off = 0usize;
+        while off < LEN {
+            let got = fw_api::write(fd, (BASE + off) as *const u8, (LEN - off) as u32);
+            if got <= 0 { ok = false; break; }
+            off += got as usize;
+        }
+        fw_api::close(fd);
+    }
+    let m = core::ptr::addr_of_mut!(DBG_DUMP_MSG) as *mut u8;
+    let t: &[u8] = if ok { "dump 完成 512KB\0".as_bytes() } else { "dump 失败\0".as_bytes() };
+    for i in 0..t.len() { write_volatile(m.add(i), t[i]); }
 }
 
 impl Page for AboutPage {
@@ -2004,6 +2025,13 @@ impl Page for AboutPage {
                     fw_api::obj_align(tip, fw_api::align::TOP_MID, 0, 200);
                 }
                 let _ = build_row(ctx, tip, 0, &RowSpec::tap("切换 0/25/50/75/100\0".as_bytes(), core::ptr::null()));
+                let _ = build_row(ctx, tip, 1, &RowSpec::tap("导出 LVGL dump\0".as_bytes(), core::ptr::null()));
+                let msg = fw_api::label_create(ctx.content);
+                if msg != 0 {
+                    fw_api::style_apply(msg, crate::FW_STYLE_HR_NAME, 255, 0);
+                    fw_api::label_set_text(msg, core::ptr::addr_of!(DBG_DUMP_MSG) as *const u8);
+                    fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 240);
+                }
                 return Ok(());
             }
             let bt = about_build_time();
@@ -2023,6 +2051,7 @@ impl Page for AboutPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             if DBG_ON != 0 {
+                if idx == 1 { dbg_dump(); crate::ui::render_req(18); return; }
                 DBG_VAL = match DBG_VAL { 0 => 25, 25 => 50, 50 => 75, 75 => 100, _ => 0 };
                 crate::ui::render_req(18);
                 return;
