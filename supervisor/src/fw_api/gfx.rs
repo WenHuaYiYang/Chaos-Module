@@ -551,7 +551,7 @@ pub unsafe fn arc_make_full(arc: Obj) {
     f(arc, 0x002F3237, 0);
     f(arc, 0x002196F3, 0x20000);
     core::ptr::write_volatile((arc as usize + 0x40) as *mut f32, 135.0);
-    core::ptr::write_volatile((arc as usize + 0x44) as *mut f32, 45.0);
+    core::ptr::write_volatile((arc as usize + 0x44) as *mut f32, 450.0);
     core::ptr::write_volatile((arc as usize + 0x34) as *mut i32, 0);
     arc_invalidate(arc);
 }
