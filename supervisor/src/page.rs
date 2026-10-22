@@ -2020,24 +2020,19 @@ impl Page for AboutPage {
         unsafe {
             if DBG_ON != 0 {
                 dbg_text();
-                // 4 环 = 2x2 验证矩阵：
-                //   A/B 底环(track) + 蓝进度 25%/75%，验证 track 与进度叠放
-                //   C   只有 100% 整圈，验证 end=start+360 特例
-                //   D   只有底环，验证 track 本身
-                // 四环都关掉 KNOB（之前那个“正上方圆点”）。
-                let specs: [(i32, i32, u32, bool, bool); 4] = [(52, 96, 25, true, true), (196, 96, 75, true, true), (52, 268, 100, false, true), (196, 268, 0, true, false)];
-                let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 100%\0", b"D track\0"];
+                // 4 环 = 2x2 验证矩阵（全部只写角度字段，不碰样式 API）：
+                //   A/B 灰底环(MAIN 整圈) + 蓝进度(INDICATOR 90..90+pct*3.6) 25%/75%
+                //   C   只有 INDICATOR 整圈 90..450，验证整圈特例
+                //   D   对照：一个字段都不写，看构造函数默认值到底画出什么
+                let specs: [(i32, i32, u32, bool, bool); 4] = [(52, 96, 25, true, true), (196, 96, 75, true, true), (52, 268, 100, false, true), (196, 268, 0, false, false)];
+                let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 100%\0", b"D def\0"];
                 for (i, &(x, y, pct, track, progress)) in specs.iter().enumerate() {
                     if track {
                         let t = fw_api::arc_create(ctx.content);
                         if t != 0 {
                             fw_api::obj_set_size_wh(t, 120, 120);
                             fw_api::obj_align(t, fw_api::align::TOP_LEFT, x, y);
-                            fw_api::arc_set_color(t, 0x2F3237, fw_api::PART_MAIN);
-                            fw_api::arc_set_width(t, 12, fw_api::PART_MAIN);
                             fw_api::arc_set_bg_full(t);
-                            fw_api::arc_clear_indicator(t);
-                            fw_api::arc_hide_knob(t);
                             fw_api::arc_disable_input(t);
                         }
                     }
@@ -2046,11 +2041,7 @@ impl Page for AboutPage {
                         if arc != 0 {
                             fw_api::obj_set_size_wh(arc, 120, 120);
                             fw_api::obj_align(arc, fw_api::align::TOP_LEFT, x, y);
-                            fw_api::arc_set_color(arc, 0x2196F3, fw_api::PART_MAIN);
-                            fw_api::arc_set_width(arc, 12, fw_api::PART_MAIN);
                             fw_api::arc_set_progress(arc, pct);
-                            fw_api::arc_clear_indicator(arc);
-                            fw_api::arc_hide_knob(arc);
                             fw_api::arc_disable_input(arc);
                         }
                     }

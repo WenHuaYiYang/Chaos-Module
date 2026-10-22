@@ -541,76 +541,46 @@ unsafe fn arc_set_main_angles(arc: Obj, start: f32, end: f32) {
     arc_invalidate(arc);
 }
 
-/// 通用局部样式写入：`lv_obj_set_local_style_prop` 0x0C107791
-/// (obj, prop, value, selector)。Canopus 3.101.043 目标里 94 个 stock style
-/// 包装函数全部落到这个派发器，是本固件写样式的唯一入口。
-pub unsafe fn style_set(obj: Obj, prop: u32, value: u32, selector: u32) {
-    if obj == 0 { return; }
-    let f: unsafe extern "C" fn(Obj, u32, u32, u32) = core::mem::transmute(0x0C10_7791usize);
-    f(obj, prop, value, selector);
-}
-
-// LVGL v9.1 lv_style_prop_t（docs/15 表）与 v9 部件选择子。
-pub const STYLE_BG_OPA: u32 = 29;
-pub const STYLE_ARC_WIDTH: u32 = 80;
-pub const STYLE_ARC_ROUNDED: u32 = 81;
-pub const STYLE_ARC_COLOR: u32 = 82;
-pub const STYLE_ARC_OPA: u32 = 83;
-pub const PART_MAIN: u32 = 0x0;
-pub const PART_INDICATOR: u32 = 0x2_0000;
-pub const PART_KNOB: u32 = 0x3_0000;
-
-/// 设某一 part 的弧颜色（ARC_COLOR=82，part 0=MAIN / 0x20000=INDICATOR）。
-/// 之前走的是 0x0C5882E1，行为等价；改走本符号是为了同一处还能设宽度/圆角。
-pub unsafe fn arc_set_color(arc: Obj, rgb: u32, part: u32) {
-    style_set(arc, STYLE_ARC_COLOR, rgb & 0x00FF_FFFF, part);
-}
-
-/// 设弧线宽度（像素）。
-pub unsafe fn arc_set_width(arc: Obj, w: u32, part: u32) {
-    style_set(arc, STYLE_ARC_WIDTH, w, part);
-}
-
-/// 关掉端点圆点（KNOB）。
-/// 固件主题给 arc 的 KNOB 挂了 style C（theme+0x1B4，圆角+不透明填充），
-/// 只要 arc 有角度，draw 每帧都会在 INDICATOR 末端画出来（默认 270° = 正上方）。
-/// 把 KNOB 的 bg_opa 与 arc_width 都置 0，绘制阶段自然什么都不留。
-pub unsafe fn arc_hide_knob(arc: Obj) {
-    style_set(arc, STYLE_BG_OPA, 0, PART_KNOB);
-    style_set(arc, STYLE_ARC_WIDTH, 0, PART_KNOB);
-}
-
-/// 清掉 INDICATOR 弧。
-/// 构造函数把它初始化成 `+0x38=135` / `+0x3C=270`（蓝弧，主题主色），
-/// 所以只画 MAIN 时那段蓝弧仍然会画出来：25% 的进度（90..180）会和它拼成
-/// 90..270 的 180° 蓝弧——看上去正是“25% 变成了半环”。
-/// 这里角度置零（start == end 时 `lv_draw_arc` 直接返回），再把宽度/不透明度清零兜底。
-pub unsafe fn arc_clear_indicator(arc: Obj) {
+/// 写 arc 的 INDICATOR 弧起止角并失效重绘。
+/// 依据 analysis/arc-disasm.zh.md §4.1：draw 的 INDICATOR 分支只读 +0x38/+0x3C(f32)。
+/// INDICATOR 走主题主色（蓝 #2196F3），是唯一不需要写样式就能拿到非灰色弧的部件。
+unsafe fn arc_set_indic_angles(arc: Obj, start: f32, end: f32) {
     if arc == 0 { return; }
     let a = arc as usize;
-    core::ptr::write_volatile((a + 0x38) as *mut f32, 0.0);
-    core::ptr::write_volatile((a + 0x3C) as *mut f32, 0.0);
-    style_set(arc, STYLE_ARC_WIDTH, 0, PART_INDICATOR);
-    style_set(arc, STYLE_ARC_OPA, 0, PART_INDICATOR);
+    core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x38) as *mut f32, start);
+    core::ptr::write_volatile((a + 0x3C) as *mut f32, end);
     arc_invalidate(arc);
 }
 
-/// 进度环：MAIN 弧从正底部(90°)起，画 pct%。pct=100 时结束角 450 = 90+360，
-/// 命中渲染器的“整圈特例”(§4.2/§10.5)，得到完整圆环。
-pub unsafe fn arc_set_progress(arc: Obj, pct: u32) {
-    let p = if pct > 100 { 100 } else { pct };
-    arc_set_main_angles(arc, 90.0, 90.0 + p as f32 * 3.6);
+/// 清掉 MAIN 弧（start == end == 0 时渲染器直接返回）。
+pub unsafe fn arc_clear_main(arc: Obj) {
+    arc_set_main_angles(arc, 0.0, 0.0);
 }
 
-/// 只把 MAIN 弧做成整圆（作底环/track 用），不碰 INDICATOR。
+/// 清掉 INDICATOR 弧（构造函数默认 135..270，会让“25% 看起来像半环”）。
+pub unsafe fn arc_clear_indicator(arc: Obj) {
+    arc_set_indic_angles(arc, 0.0, 0.0);
+}
+
+/// 进度环：INDICATOR 弧从正底部(90°)起画 pct%，MAIN 清空。
+/// INDICATOR 默认蓝、默认宽，不需要写样式；pct=100 时 450 = 90+360 命中整圈特例。
+pub unsafe fn arc_set_progress(arc: Obj, pct: u32) {
+    let p = if pct > 100 { 100 } else { pct };
+    arc_clear_main(arc);
+    arc_set_indic_angles(arc, 90.0, 90.0 + p as f32 * 3.6);
+}
+
+/// 只把 MAIN 弧做成整圆（作底环/track 用），并清掉 INDICATOR。
+/// MAIN 走主题默认灰 #2F3237，同样不需要写样式。
 pub unsafe fn arc_set_bg_full(arc: Obj) {
+    arc_set_indic_angles(arc, 0.0, 0.0);
     arc_set_main_angles(arc, 0.0, 360.0);
 }
 
-/// 整圆、从正底部开始。MAIN = 90..450（整圈），MAIN 灰、INDICATOR 蓝。
+/// 整圆、从正底部开始：MAIN = 90..450（整圈），INDICATOR 清空。
 pub unsafe fn arc_make_full(arc: Obj) {
-    arc_set_color(arc, 0x2F3237, 0);
-    arc_set_color(arc, 0x2196F3, 0x20000);
+    arc_set_indic_angles(arc, 0.0, 0.0);
     arc_set_main_angles(arc, 90.0, 450.0);
 }
 
