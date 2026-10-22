@@ -539,16 +539,18 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     arc_invalidate(arc);
 }
 
-/// 整圆、从正底部开始：value=0,min=0,max=100；bg/ind 角度都写 90..450。
+/// 整圆、从正底部开始。dump 构造函数：value +0x34 i32；bg_start/bg_end
+/// +0x38/+0x3C f32；indic_start/end +0x40/+0x44 f32；min/max +0x4C/+0x50 i32。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
     let a = arc as usize;
     core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
-    core::ptr::write_volatile((a + 0x38) as *mut i32, 0);
-    core::ptr::write_volatile((a + 0x3C) as *mut i32, 100);
-    let pair: u32 = (90u32 & 0xffff) | (450u32 << 16);
-    core::ptr::write_volatile((a + 0x40) as *mut u32, pair); // bg_start/bg_end
-    core::ptr::write_volatile((a + 0x44) as *mut u32, pair); // indic_start/indic_end
+    core::ptr::write_volatile((a + 0x38) as *mut f32, 90.0);
+    core::ptr::write_volatile((a + 0x3C) as *mut f32, 450.0);
+    core::ptr::write_volatile((a + 0x40) as *mut f32, 90.0);
+    core::ptr::write_volatile((a + 0x44) as *mut f32, 450.0);
+    core::ptr::write_volatile((a + 0x4C) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x50) as *mut i32, 100);
     arc_invalidate(arc);
 }
 
