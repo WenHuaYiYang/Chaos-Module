@@ -526,21 +526,16 @@ pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
 /// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
 pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
-    let v = if pct > 100 { 100.0f32 } else { pct as f32 };
-    // 调固件 lv_arc_set_value(obj, float): r0=obj, s0=value。
-    // 本 crate 用 -fpregs 编译，Rust 的 f32 参数不会进 s0，所以这里用内联汇编写 s0 再 blx。
-    #[cfg(target_arch = "arm")]
-    core::arch::asm!(
-        "vmov s0, {b}",
-        "blx {f}",
-        b = in(reg) v.to_bits(),
-        f = in(reg) 0x0C58_8D09u32,
-        in("r0") arc,
-        out("r1") _, out("r2") _, out("r3") _, out("r12") _, out("lr") _,
-        options(nostack)
-    );
-    #[cfg(not(target_arch = "arm"))]
-    core::ptr::write_volatile((arc as usize + 0x34) as *mut f32, v);
+    let p = if pct > 100 { 100 } else { pct } as i32;
+    core::ptr::write_volatile((arc as usize + 0x34) as *mut f32, p as f32);
+    // LVGL 8.4 lv_arc_t: +0x40 bg_start, +0x42 bg_end, +0x44 start_angle, +0x46 end_angle。
+    // 固件绘制只看 end_angle, 不按 value 重算, 所以直接把终点角度写进去。
+    let a = 135 + (270 * p) / 100;
+    let e = if a > 180 { a - 360 } else { a };
+    core::ptr::write_volatile((arc as usize + 0x44) as *mut i16, 135i16);
+    core::ptr::write_volatile((arc as usize + 0x46) as *mut i16, e as i16);
+    let inv: unsafe extern "C" fn(Obj) = core::mem::transmute(0x1C02_B305usize);
+    inv(arc);
 }
 
 /// 把 arc 改成整圆并从正底部开始。
