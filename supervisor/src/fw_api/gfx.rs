@@ -554,6 +554,18 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
 /// 之前一直写 +0x2E，值根本没写进去，所以只剩一个圆点。
 pub unsafe fn arc_make_full(arc: Obj) {
     if arc == 0 { return; }
+    // 照搬官方电池环 0xC5D7DCE..0xC5D7E24 的初始化序列（全部整数参数）。
+    let f1: unsafe extern "C" fn(Obj, u32) -> Obj = core::mem::transmute(0x0C58_8961usize);
+    let f2: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_93C1usize);
+    let f3: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_8A99usize);
+    let f4: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_92F9usize);
+    f1(arc, 0x10);
+    f2(arc, 0x20, 0);
+    f3(arc, 0x0C, 0);
+    f4(arc, 0x7F, 0);
+    f4(arc, 0xFF, 0x20000);
+
+    if arc == 0 { return; }
     // 官方电池环没有圆点: 把 KNOB 部件的透明度设成 0(selector 0x20000 = LV_PART_KNOB)。
     let f: unsafe extern "C" fn(Obj, u32, u32) -> Obj = core::mem::transmute(0x0C58_92F9usize);
     f(arc, 0, 0x20000);
