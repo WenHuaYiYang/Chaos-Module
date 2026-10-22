@@ -574,3 +574,12 @@ pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
     let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
     func(obj, f);
 }
+
+/// 只把背景弧改成 0..360（整圆），指示弧仍交给 value；用于调试页对比。
+pub unsafe fn arc_set_bg_full(arc: Obj) {
+    if arc == 0 { return; }
+    let a = arc as usize;
+    core::ptr::write_volatile((a + 0x38) as *mut f32, 0.0);
+    core::ptr::write_volatile((a + 0x3C) as *mut f32, 360.0);
+    arc_invalidate(arc);
+}

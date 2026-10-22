@@ -2020,23 +2020,25 @@ impl Page for AboutPage {
         unsafe {
             if DBG_ON != 0 {
                 dbg_text();
-                let arc = fw_api::arc_create(ctx.content);
-                if arc != 0 {
-                    fw_api::obj_set_size_wh(arc, 180, 180);
-                    fw_api::obj_align(arc, fw_api::align::TOP_MID, 0, 120);
-                    fw_api::arc_make_full(arc);
+                let specs: [(i32, i32, u32, bool); 4] = [(52, 96, 25, false), (196, 96, 75, false), (52, 268, 25, true), (196, 268, 75, true)];
+                let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 25%\0", b"D 75%\0"];
+                for (i, &(x, y, pct, full)) in specs.iter().enumerate() {
+                    let arc = fw_api::arc_create(ctx.content);
+                    if arc == 0 { continue; }
+                    fw_api::obj_set_size_wh(arc, 120, 120);
+                    fw_api::obj_align(arc, fw_api::align::TOP_LEFT, x, y);
+                    if full { fw_api::arc_set_bg_full(arc); }
                     fw_api::arc_disable_input(arc);
-                    fw_api::arc_set_pct(arc, DBG_VAL);
-                    dbg_fields(arc);
-                }
-                let lab = fw_api::label_create(ctx.content);
-                if lab != 0 {
-                    fw_api::style_apply(lab, crate::FW_STYLE_HR_VALUE, 255, 0);
-                    fw_api::label_set_text(lab, core::ptr::addr_of!(DBG_TXT) as *const u8);
-                    fw_api::obj_align(lab, fw_api::align::TOP_MID, 0, 120);
+                    fw_api::arc_set_pct(arc, pct);
+                    let cl = fw_api::label_create(ctx.content);
+                    if cl != 0 {
+                        fw_api::style_apply(cl, crate::FW_STYLE_HR_NAME, 255, 0);
+                        fw_api::label_set_text(cl, caps[i].as_ptr());
+                        fw_api::obj_align(cl, fw_api::align::TOP_LEFT, x + 34, y + 122);
+                    }
                 }
                 let _ = build_rows(ctx, ctx.content, &[
-                    (0, RowSpec::tap("① 切换 0/25/50/75/100\0".as_bytes(), core::ptr::null())),
+                    (0, RowSpec::tap("① 重绘四个对比环\0".as_bytes(), core::ptr::null())),
                     (1, RowSpec::tap("② 导出 LVGL dump\0".as_bytes(), core::ptr::null())),
                 ]);
                 let msg = fw_api::label_create(ctx.content);
@@ -2077,7 +2079,6 @@ impl Page for AboutPage {
                     crate::ui::render_req(18);
                     return;
                 }
-                DBG_VAL = match DBG_VAL { 0 => 25, 25 => 50, 50 => 75, 75 => 100, _ => 0 };
                 crate::ui::render_req(18);
                 return;
             }
