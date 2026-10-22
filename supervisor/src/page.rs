@@ -760,64 +760,296 @@ unsafe fn cstr_len(s: *const u8) -> usize {
     n
 }
 
-// ===== 页7: 文件查看 =====
+// ===== 页7: 排除项管理 =====
+//
+// 从页1 行3 进入。列表显示**全部**应用(含已隐藏), 勾选 = 加入排除名单;
+// 排除项不参与页1 的一键隐藏/显示, 且在页1 列表里不出现。
+// 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
 
-pub(crate) struct ViewerPage;
-
-impl Page for ViewerPage {
-
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe {
-            if path_basename(core::ptr::addr_of!(VIEW_PATH) as *const u8, buf, 48) == 0 {
-                put_str(buf, "文件查看".as_bytes());
-            }
+/// 单条切换后只改复选框与状态文本, 不重建整页(避免列表跳回顶部)。
+unsafe fn refresh_appmgr_rows() {
+    let rows = crate::appmgr::rows_ptr();
+    let n = crate::appmgr::view_count();
+    let mut v = 0usize;
+    while v < n {
+        let i = crate::appmgr::view_at(v);
+        if i == usize::MAX { break; }
+        let r = read_volatile(rows.add(v));
+        if r != 0 {
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
         }
+        v += 1;
+    }
+    if AM_MSG_ROW != 0 {
+        fw_api::row_update(AM_MSG_ROW, fw_api::NONE_PTR,
+            crate::appmgr::msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
+unsafe fn refresh_excl_rows() {
+    let rows = crate::appmgr::rows_ptr();
+    let mode = crate::appmgr::excl_mode();
+    let n = crate::appmgr::count();
+    let mut i = 0usize;
+    while i < n {
+        if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
+        let r = read_volatile(rows.add(i));
+        if r != 0 {
+            let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
+            let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+        }
+        i += 1;
+    }
+    if EX_HINT_ROW != 0 {
+        fw_api::row_update(EX_HINT_ROW, fw_api::NONE_PTR,
+            crate::appmgr::excl_hint().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+    if EX_MSG_ROW != 0 {
+        let m = if mode == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() };
+        fw_api::row_update(EX_MSG_ROW, fw_api::NONE_PTR,
+            m.as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
+pub(crate) struct ExclPage;
+
+static mut AM_MSG_ROW: u32 = 0;
+static mut EX_HINT_ROW: u32 = 0;
+static mut EX_MSG_ROW: u32 = 0;
+
+impl Page for ExclPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "排除项管理\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            refresh_view_text();
-            let lb = fw_api::label_create(ctx.content);
-            if lb == 0 { return Err(PageError::ContentFailed); }
-            fw_api::label_set_text(lb, core::ptr::addr_of!(VIEW_TEXT) as *const u8);
-            let sa: unsafe extern "C" fn(u32, u32, u32, u32) -> i32 = fw_api::style_apply;
-            sa(lb, FW_STYLE_MISANS_REG_24, 255, 0);
-            fw_api::obj_align_to(lb, ctx.title, 14, 0, 4);
-            PAGES[7].label = lb;
-            let r0 = build_row(ctx, lb, 0, &RowSpec::clickable("下一段\0".as_bytes()));
-            let vn = st_rd!(FILE_VIEW_N);
-            let vmore = vn >= 0 && vn < 2047;
-            let base = if vmore && r0 != 0 { r0 } else { lb };
-            let backtxt = core::slice::from_raw_parts(
-                core::ptr::addr_of!(VIEW_BACKTXT) as *const u8, cstr_len(core::ptr::addr_of!(VIEW_BACKTXT) as *const u8) + 1);
-            build_row(ctx, base, 1, &RowSpec::clickable(backtxt));   // 必须 clickable: display() 不挂事件 -> 点了没反应
+            crate::appmgr::ensure();
+            crate::appmgr::rows_reset();
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::clickable("返回\0".as_bytes())),
+                (1, RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null())),
+                (2, RowSpec::clickable(crate::appmgr::mode_label())),
+                (3, RowSpec::display(if crate::appmgr::excl_mode() == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() }, core::ptr::null())),
+            ])?;
+            EX_HINT_ROW = read_volatile(ctx.rows.add(1));
+            EX_MSG_ROW = read_volatile(ctx.rows.add(3));
+            let mut prev = read_volatile(ctx.rows.add(3));
+            if prev == 0 { prev = ctx.title; }
+            let rows = crate::appmgr::rows_ptr();
+            let mode = crate::appmgr::excl_mode();
+            // 排除项在前, 稳定排序
+            crate::appmgr::build_excl_view();
+            let n = crate::appmgr::excl_view_count();
+            let mut v = 0usize;
+            while v < n {
+                let i = crate::appmgr::excl_view_at(v);
+                v += 1;
+                if i == usize::MAX { break; }
+                // 管理显隐模式下只列排除项; 非排除项在页1 管理
+                if mode != 0 && !crate::appmgr::excl_on(i) { continue; }
+                let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
+                let r = fw_api::row_create(ctx.content,
+                    crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
+                if r == 0 { return Err(PageError::RowFailed(i)); }
+                write_volatile(rows.add(i), r);
+                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
+                let tobj = fw_api::row_trailing(r);
+                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                fw_api::obj_align_to(r, prev, 14, 0, 8);
+                prev = r;
+                // 复选框: 排除模式 = 是否排除; 显隐模式 = 是否可见(勾=显示中)
+                let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
+                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+            }
             Ok(())
         }
     }
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            match idx {
-                0 => {
-                    st_wr!(VIEW_BLK, st_rd!(VIEW_BLK) + 1);
-                    st_wr!(VIEW_LOADED, 0);
-                    render_req(7);
+            if idx == 0 {
+                nav_back();
+            } else if idx == 2 {
+                crate::appmgr::toggle_excl_mode();
+                render_req(7);
+            } else if idx >= 12 {
+                let i = idx - 12;
+                if crate::appmgr::excl_mode() == 0 {
+                    crate::appmgr::request_excl(i);
+                } else {
+                    crate::appmgr::click(i);
                 }
-                1 => nav_back(),
-                _ => {}
             }
         }
     }
 
-    fn apply_visibility(&self) {
+    fn needs_tick(&self) -> bool {
+        unsafe { crate::appmgr::excl_has_req() || crate::appmgr::has_req() }
+    }
+
+    fn tick(&self) {
         unsafe {
-            let sh = fw_api::obj_set_hidden;
-            let rows = page_rows_ptr(7);
-            let n = st_rd!(FILE_VIEW_N);
-            let op0 = read_volatile(rows.add(0));
-            if op0 != 0 { sh(op0, if n >= 2047 || n < 0 { 0 } else { 1 }); }
-            let op1 = read_volatile(rows.add(1));
-            if op1 != 0 { sh(op1, 0); }
+            let mut dirty = false;
+            if crate::appmgr::excl_has_req() {
+                crate::appmgr::do_excl();
+                dirty = true;
+            }
+            if crate::appmgr::has_req() {
+                crate::appmgr::do_op();
+                dirty = true;
+            }
+            if dirty { refresh_excl_rows(); }
+        }
+    }
+}
+
+
+// ===== 页17: 运行日志 =====
+// 直接显示一段文字，不再逐行建列表。只读尾部 2KB，截到最后一个换行后的 512B。
+pub(crate) struct LogPage;
+static PAGE_LOG: LogPage = LogPage;
+
+const LOG_VIEW_CAP: usize = 48 * 1024;
+const LOG_PAGE_LINES: usize = 8;
+static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
+static mut LOG_TEXT: [u8; 4096] = [0; 4096];
+static mut LOG_LINE_OFF: [u32; 1024] = [0; 1024];
+static mut LOG_LINES: usize = 0;
+static mut LOG_PAGE: usize = 0;
+static mut LOG_MSG: [u8; 48] = [0; 48];
+static mut LOG_CLEAR_ARMED: u32 = 0;
+
+unsafe fn log_page_load() {
+    let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
+    let n = crate::log::tail(buf, LOG_VIEW_CAP - 1);
+    if n + 1 < LOG_VIEW_CAP { write_volatile(buf.add(n), 0); }
+
+    let offs = core::ptr::addr_of_mut!(LOG_LINE_OFF) as *mut u32;
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i < n && count < 1024 {
+        write_volatile(offs.add(count), i as u32);
+        count += 1;
+        while i < n && read_volatile(buf.add(i)) != b'\n' { i += 1; }
+        if i < n { i += 1; }
+    }
+    LOG_LINES = count;
+    let maxp = if count == 0 { 0 } else { (count - 1) / LOG_PAGE_LINES };
+    if LOG_PAGE > maxp { LOG_PAGE = maxp; }
+
+    let out = core::ptr::addr_of_mut!(LOG_TEXT) as *mut u8;
+    let mut o = 0usize;
+    let start_line = if count > (LOG_PAGE + 1) * LOG_PAGE_LINES {
+        count - (LOG_PAGE + 1) * LOG_PAGE_LINES
+    } else { 0 };
+    let end_line = if count > LOG_PAGE * LOG_PAGE_LINES {
+        count - LOG_PAGE * LOG_PAGE_LINES
+    } else { 0 };
+    let mut li = start_line;
+    while li < end_line {
+        let s = read_volatile(offs.add(li)) as usize;
+        let e = if li + 1 < count { read_volatile(offs.add(li + 1)) as usize } else { n };
+        let mut j = s;
+        while j < e && o + 1 < 4096 {
+            let mut c = read_volatile(buf.add(j));
+            if c == b'\r' { c = b' '; }
+            write_volatile(out.add(o), c);
+            o += 1;
+            j += 1;
+        }
+        if o + 1 < 4096 { write_volatile(out.add(o), b'\n'); o += 1; }
+        li += 1;
+    }
+    if o == 0 {
+        put_str(out, "暂无日志\0".as_bytes());
+    } else {
+        write_volatile(out.add(o), 0);
+    }
+
+    let msg = core::ptr::addr_of_mut!(LOG_MSG) as *mut u8;
+    if count == 0 {
+        put_str(msg, "暂无日志\0".as_bytes());
+    } else {
+        let mut b = [0u8; 48];
+        let mut w = crate::text::W::new(b.as_mut_ptr(), 48);
+        w.s("共 ".as_bytes());
+        w.n(count as u32);
+        w.s(" 行 第 ".as_bytes());
+        w.n((LOG_PAGE + 1) as u32);
+        w.s("/".as_bytes());
+        w.n((maxp + 1) as u32);
+        w.s(" 页".as_bytes());
+        w.end();
+        let len = w.len();
+        let mut k = 0usize;
+        while k < len && k + 1 < 48 { write_volatile(msg.add(k), b[k]); k += 1; }
+        write_volatile(msg.add(k), 0);
+    }
+}
+
+impl Page for LogPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "运行日志\0".as_bytes()); }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            log_page_load();
+            let maxp = if LOG_LINES == 0 { 0 } else { (LOG_LINES - 1) / LOG_PAGE_LINES };
+            let specs: [(usize, RowSpec); 6] = [
+                (0, RowSpec::clickable("返回\0".as_bytes())),
+                (1, RowSpec::clickable(if LOG_PAGE < maxp { "更早一页\0".as_bytes() } else { "已到最早\0".as_bytes() })),
+                (2, RowSpec::clickable(if LOG_PAGE > 0 { "更新一页\0".as_bytes() } else { "已是最新\0".as_bytes() })),
+                (3, RowSpec::clickable("刷新\0".as_bytes())),
+                (4, RowSpec::clickable(if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() })),
+                (5, RowSpec::display(
+                    core::slice::from_raw_parts(core::ptr::addr_of!(LOG_MSG) as *const u8,
+                        cstr_len(core::ptr::addr_of!(LOG_MSG) as *const u8) + 1),
+                    core::ptr::null())),
+            ];
+            build_rows(ctx, ctx.title, &specs)?;
+            let rp = page_rows_ptr(17);
+            let prev = if rp.is_null() { 0 } else { read_volatile(rp.add(5)) };
+            let lab = fw_api::label_create(ctx.content);
+            if lab != 0 {
+                fw_api::style_apply(lab, crate::FW_STYLE_HR_NAME, 255, 0);
+                fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
+                fw_api::obj_set_size_wh(lab, 320, 320);
+                fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
+                    fw_api::align::OUT_BOTTOM_MID, 0, 8);
+            }
+            Ok(())
+        }
+    }
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx == 0 {
+                LOG_CLEAR_ARMED = 0;
+                nav_back();
+            } else if idx == 1 {
+                let maxp = if LOG_LINES == 0 { 0 } else { (LOG_LINES - 1) / LOG_PAGE_LINES };
+                if LOG_PAGE < maxp { LOG_PAGE += 1; }
+                render_req(17);
+            } else if idx == 2 {
+                if LOG_PAGE > 0 { LOG_PAGE -= 1; }
+                render_req(17);
+            } else if idx == 3 {
+                render_req(17);
+            } else if idx == 4 {
+                if LOG_CLEAR_ARMED == 0 {
+                    LOG_CLEAR_ARMED = 1;
+                    render_req(17);
+                } else {
+                    let ok = crate::log::clear();
+                    LOG_CLEAR_ARMED = 0;
+                    put_str(core::ptr::addr_of_mut!(LOG_MSG) as *mut u8,
+                        if ok { "日志已清空\0".as_bytes() } else { "清空失败\0".as_bytes() });
+                    LOG_PAGE = 0;
+                    render_req(17);
+                }
+            }
         }
     }
 }
@@ -1465,8 +1697,8 @@ impl Page for IconSubPage {
 // 行句柄/事件槽位约束: 条目行**不走 ctx.rows**(只有 12 格) —— 句柄自管在
 // appmgr::APP_ROWS, 事件槽号 = 条目下标 + 12(12..=51; 0..11 是 ctx.rows 的
 // 批量按钮/状态行, 条目复用会被派发成点按钮), 回调是 lib.rs 的 chaos_row_ev12..51。
-// 布局: 行0=一键隐藏全部 行1=一键显示全部 行2=状态 —— 放最上面, 列表再长也不怕
-// 按钮滚出屏幕; 之后是应用条目。
+// 布局: 行0=一键隐藏全部 行1=一键显示全部 行2=状态 行3=排除项管理入口 —— 放最上面,
+// 列表再长也不怕按钮滚出屏幕; 之后是应用条目(已排除的条目不在本页显示)。
 
 pub(crate) struct AppMgrPage;
 
@@ -1479,28 +1711,39 @@ impl Page for AppMgrPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();   // 旧对象树已随上次 content 销毁, 丢旧句柄
-            // 顶部三行(走 ctx.rows 槽 0..2)
+            // 顶部五行(走 ctx.rows 槽 0..4)
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe9\x9a\x90\xe8\x97\x8f\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键隐藏全部
                 (1, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe6\x98\xbe\xe7\xa4\xba\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键显示全部
                 (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
+                (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
+                (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 深度隐藏(全局)
             ])?;
-            // 条目行(全量, 事件槽 = 下标; 句柄存 appmgr::APP_ROWS)
-            let mut prev = read_volatile(ctx.rows.add(2));
+            AM_MSG_ROW = read_volatile(ctx.rows.add(2));
+            // 勾选(=可见)在前, 隐藏在后
+            crate::appmgr::sort_view_visible_first();
+            // 补写开关初态(开关态 = 深度隐藏是否开启)
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::appmgr::deep_on() as u8);
+            // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
+            let mut prev = read_volatile(ctx.rows.add(4));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
-            let n = crate::appmgr::count();
-            let mut i = 0usize;
-            while i < n {
+            let n = crate::appmgr::view_count();
+            let mut v = 0usize;
+            while v < n {
+                let i = crate::appmgr::view_at(v);
+                if i == usize::MAX { break; }
                 let r = fw_api::row_create(ctx.content,
                     crate::appmgr::entry_primary(i), crate::appmgr::pkg_ptr(i),
                     fw_api::trailing::CHECKBOX);
-                if r == 0 { return Err(PageError::RowFailed(i)); }
-                write_volatile(rows.add(i), r);
-                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);   // 事件槽 = 条目下标 + 12
+                if r == 0 { return Err(PageError::RowFailed(v)); }
+                write_volatile(rows.add(v), r);
+                fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);   // 事件槽 = 视图下标 + 12
                 // 复选框自己也挂一份(点到圈上也算点这一行, 与图标页同款)
                 let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
+                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
                 fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
                 // 勾选态: 勾 = 当前可见(原地补写)
@@ -1508,7 +1751,7 @@ impl Page for AppMgrPage {
                 // 已存在的副标签(0x0C4C8904 反编译实证), 传 NONE 会把 row_create 建出的包名洗掉
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
                     crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
-                i += 1;
+                v += 1;
             }
             Ok(())
         }
@@ -1516,7 +1759,8 @@ impl Page for AppMgrPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            // 槽0/1 = 顶部批量按钮(ctx.rows); 条目事件槽 = 条目下标 + 12
+            // 槽0/1/3 = 顶部按钮(ctx.rows); 槽4 是开关(只走 on_switch);
+            // 条目事件槽 = 视图下标 + 12。
             // (0..11 被 ctx.rows 占用: 不错开的话点条目会被派发成点按钮 —— 2026-10-15 修)
             if idx == 0 {
                 crate::appmgr::request_batch(true);
@@ -1524,20 +1768,39 @@ impl Page for AppMgrPage {
             } else if idx == 1 {
                 crate::appmgr::request_batch(false);
                 render_req(1);
+            } else if idx == 3 {
+                nav_goto(7, 0);
             } else if idx >= 12 {
-                let e = idx - 12;
-                if e < crate::appmgr::count() { crate::appmgr::click(e); }
+                let v = idx - 12;
+                if v < crate::appmgr::view_count() {
+                    let e = crate::appmgr::view_at(v);
+                    if e != usize::MAX { crate::appmgr::click(e); }
+                }
+            }
+        }
+    }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 4 }
+
+    fn on_switch(&self, idx: usize) {
+        if idx == 4 {
+            unsafe {
+                crate::appmgr::toggle_apply_mode();
+                render_req(1);
             }
         }
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() }
+        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() || crate::appmgr::mode_pending() }
     }
 
     fn tick(&self) {
         unsafe {
-            if crate::appmgr::batch_pending() {
+            if crate::appmgr::mode_pending() {
+                crate::appmgr::do_mode_apply();
+                render_req(1);
+            } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
                 render_req(1);
             } else if crate::appmgr::has_req() {
@@ -1603,7 +1866,7 @@ impl Page for VibPage {
 
 static PAGE_INFO: InfoPage = InfoPage;
 static PAGE_APPMGR: AppMgrPage = AppMgrPage;
-static PAGE_VIEWER: ViewerPage = ViewerPage;
+static PAGE_EXCL: ExclPage = ExclPage;
 static PAGE_WF_LIST_8: WatchfaceListPage = WatchfaceListPage { pid: 8 };
 static PAGE_WF_LIST_9: WatchfaceListPage = WatchfaceListPage { pid: 9 };
 static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage;
@@ -1674,11 +1937,7 @@ impl Page for SettingsPage {
                 (2, RowSpec::clickable("亮度\0".as_bytes())),
                 (3, RowSpec::clickable("震动\0".as_bytes())),
                 (4, RowSpec::clickable("缓存清理\0".as_bytes())),
-                (5, RowSpec::display("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("编译时间\0".as_bytes(), about_build_time().as_ptr())),
-                (7, RowSpec::display("运行固件\0".as_bytes(), about_firmware().as_ptr())),
-                (8, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (9, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (5, RowSpec::clickable("运行日志\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1690,12 +1949,91 @@ impl Page for SettingsPage {
                 2 => nav_goto(11, 0),   // 亮度
                 3 => nav_goto(16, 0),   // 震动
                 4 => nav_goto(12, 0),   // 缓存清理
+                5 => nav_goto(17, 0),   // 运行日志
                 _ => {}
             }
         }
     }
 }
 
+// ===== 页18: 关于 =====
+pub(crate) struct AboutPage;
+static PAGE_ABOUT_PAGE: AboutPage = AboutPage;
+static mut DBG_ON: u32 = 0;
+static mut DBG_CLICKS: u32 = 0;
+static mut DBG_VAL: u32 = 50;
+static mut DBG_TXT: [u8; 8] = [0; 8];
+
+unsafe fn dbg_text() {
+    let v = DBG_VAL;
+    let d = core::ptr::addr_of_mut!(DBG_TXT) as *mut u8;
+    if v >= 100 { write_volatile(d.add(0), b'1'); write_volatile(d.add(1), b'0'); write_volatile(d.add(2), b'0'); write_volatile(d.add(3), b'%'); write_volatile(d.add(4), 0); }
+    else if v >= 10 { write_volatile(d.add(0), b'0' + (v / 10) as u8); write_volatile(d.add(1), b'0' + (v % 10) as u8); write_volatile(d.add(2), b'%'); write_volatile(d.add(3), 0); }
+    else { write_volatile(d.add(0), b'0' + v as u8); write_volatile(d.add(1), b'%'); write_volatile(d.add(2), 0); }
+}
+
+impl Page for AboutPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe {
+            if DBG_ON != 0 { put_str(buf, "调试\0".as_bytes()); }
+            else { put_str(buf, "关于\0".as_bytes()); }
+        }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            if DBG_ON != 0 {
+                dbg_text();
+                let arc = fw_api::arc_create(ctx.content);
+                if arc != 0 {
+                    fw_api::obj_set_size_wh(arc, 180, 180);
+                    fw_api::obj_align(arc, fw_api::align::TOP_MID, 0, 40);
+                    fw_api::arc_make_full(arc);
+                    fw_api::arc_disable_input(arc);
+                    fw_api::arc_set_pct(arc, DBG_VAL);
+                }
+                let lab = fw_api::label_create(ctx.content);
+                if lab != 0 {
+                    fw_api::style_apply(lab, crate::FW_STYLE_HR_VALUE, 255, 0);
+                    fw_api::label_set_text(lab, core::ptr::addr_of!(DBG_TXT) as *const u8);
+                    fw_api::obj_align(lab, fw_api::align::TOP_MID, 0, 120);
+                }
+                let tip = fw_api::label_create(ctx.content);
+                if tip != 0 {
+                    fw_api::style_apply(tip, crate::FW_STYLE_HR_NAME, 255, 0);
+                    fw_api::label_set_text(tip, "点击切换 0/25/50/75/100\0".as_ptr());
+                    fw_api::obj_align(tip, fw_api::align::TOP_MID, 0, 200);
+                }
+                let _ = build_row(ctx, tip, 0, &RowSpec::tap("切换 0/25/50/75/100\0".as_bytes(), core::ptr::null()));
+                return Ok(());
+            }
+            let bt = about_build_time();
+            let fw = about_firmware();
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.2\0".as_bytes().as_ptr())),
+                (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
+                (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
+                (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (6, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+            ])?;
+            Ok(())
+        }
+    }
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if DBG_ON != 0 {
+                DBG_VAL = match DBG_VAL { 0 => 25, 25 => 50, 50 => 75, 75 => 100, _ => 0 };
+                crate::ui::render_req(18);
+                return;
+            }
+            if idx == 0 {
+                DBG_CLICKS += 1;
+                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; crate::ui::render_req(18); }
+            }
+        }
+    }
+}
 // ===== 页2: 时间设置(时 + 分) =====
 //
 // 只做时分两轮, 与系统闹钟页同形。日期(月+日)是页3 的独立入口。
@@ -1837,7 +2175,7 @@ impl Page for BlurZonePage {
     }
 }
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
+pub(crate) static PAGE_TABLE: [&dyn Page; 19] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
     &PAGE_TIMESET,      // 2  时间设置 / 日期第一步(年)(原目录 2 级, 文件管理退役后空出)
@@ -1845,7 +2183,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
     &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
     &PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
-    &PAGE_VIEWER,     // 7
+    &PAGE_EXCL,       // 7  应用管理 -> 排除项管理(原文件查看退役)
     &PAGE_WF_LIST_8,  // 8
     &PAGE_WF_LIST_9,  // 9
     &PAGE_WF_MGMT,    // 10
@@ -1855,6 +2193,6 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 17] = [
     &PAGE_SETTINGS,     // 14  设置(时间/日期/亮度/震动/缓存/版本)
     &PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
     &PAGE_VIBP,         // 16 主页 -> 震动
+    &PAGE_LOG,          // 17 设置 -> 运行日志
+    &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
 ];
-
-
