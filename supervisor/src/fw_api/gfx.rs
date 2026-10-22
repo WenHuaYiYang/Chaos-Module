@@ -535,8 +535,10 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
     let p = if pct > 100 { 100 } else { pct } as f32;
     let a = arc as usize;
-    core::ptr::write_volatile((a + 0x40) as *mut f32, 135.0);
-    core::ptr::write_volatile((a + 0x44) as *mut f32, 135.0 + p * 2.7);
+    let mut end = 90.0 + p * 3.6;
+    if end > 449.0 { end = 449.0; }
+    core::ptr::write_volatile((a + 0x38) as *mut f32, 90.0);
+    core::ptr::write_volatile((a + 0x3C) as *mut f32, end);
     arc_invalidate(arc);
 }
 
