@@ -528,12 +528,12 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     if arc == 0 { return; }
     let p = if pct > 100 { 100 } else { pct } as i32;
     core::ptr::write_volatile((arc as usize + 0x34) as *mut f32, p as f32);
-    // LVGL 8.4 lv_arc_t: +0x40 bg_start, +0x42 bg_end, +0x44 start_angle, +0x46 end_angle。
-    // 固件绘制只看 end_angle, 不按 value 重算, 所以直接把终点角度写进去。
+    // LVGL 8.4 lv_arc_t: +0x40 bg_start, +0x42 bg_end, +0x46 indic_angle_start, +0x48 indic_angle_end。
+    // 固件绘制只看 end_angle, 不按 value 重算, 绘制指示弧用的是 indic_angle_*，不是 bg_angle_*。
     let a = 135 + (270 * p) / 100;
     let e = if a > 180 { a - 360 } else { a };
-    core::ptr::write_volatile((arc as usize + 0x44) as *mut i16, 135i16);
-    core::ptr::write_volatile((arc as usize + 0x46) as *mut i16, e as i16);
+    core::ptr::write_volatile((arc as usize + 0x46) as *mut i16, 135i16);
+    core::ptr::write_volatile((arc as usize + 0x48) as *mut i16, e as i16);
     let inv: unsafe extern "C" fn(Obj) = core::mem::transmute(0x1C02_B305usize);
     inv(arc);
 }
