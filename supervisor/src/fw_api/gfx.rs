@@ -529,6 +529,7 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
     let v = if pct > 100 { 100.0f32 } else { pct as f32 };
     // 调固件 lv_arc_set_value(obj, float): r0=obj, s0=value。
     // 本 crate 用 -fpregs 编译，Rust 的 f32 参数不会进 s0，所以这里用内联汇编写 s0 再 blx。
+    #[cfg(target_arch = "arm")]
     core::arch::asm!(
         "vmov s0, {b}",
         "blx {f}",
@@ -538,6 +539,8 @@ pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
         out("r1") _, out("r2") _, out("r3") _, out("r12") _, out("lr") _,
         options(nostack)
     );
+    #[cfg(not(target_arch = "arm"))]
+    core::ptr::write_volatile((arc as usize + 0x34) as *mut f32, v);
 }
 
 /// 把 arc 改成整圆并从正底部开始。
