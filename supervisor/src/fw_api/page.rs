@@ -190,7 +190,7 @@ pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> Ri
         obj_set_size_wh(r.arc0, 140, 14);
         obj_align(r.arc0, align::TOP_LEFT, 6, 70);
     }
-    r.arc1 = bar_create_rgb(row, 0, 0x00A8FF);
+    r.arc1 = bar_create_rgb(row, 0, 0x34C759);
     if r.arc1 != 0 {
         obj_set_size_wh(r.arc1, 140, 14);
         obj_align(r.arc1, align::TOP_LEFT, 182, 70);
