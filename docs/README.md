@@ -13,6 +13,7 @@
 | 改代码前了解整体结构 | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | 查固件 LVGL 类描述与构造入口 | [LVGL-MAP.md](LVGL-MAP.md) |
 | 看版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
+| 对比基线版本的完整改动 | [CHANGELOG-DEV.md](CHANGELOG-DEV.md)（开发者） · [CHANGELOG-USER.md](CHANGELOG-USER.md)（使用者） |
 
 ## 文档清单
 
@@ -25,6 +26,8 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 目录结构、启动链、页面模型、IPC、固件耦合 | 维护者 |
 | [LVGL-MAP.md](LVGL-MAP.md) | p67 固件里 LVGL 类描述、构造入口、绘制函数地址 | 维护者 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 | 所有人 |
+| [CHANGELOG-DEV.md](CHANGELOG-DEV.md) | 与基线 `d31f1e5` 的逐项技术差异 | 维护者 |
+| [CHANGELOG-USER.md](CHANGELOG-USER.md) | 与上一公开版的差异，含排除项/深度隐藏说明 | 使用者 |
 
 ## 约定
 
