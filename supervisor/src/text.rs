@@ -411,6 +411,21 @@ impl W {
         self
     }
 
+    /// 追加人类可读的体积: B / KB / MB / GB(MB 以上保留一位小数)
+    pub(crate) unsafe fn sz(&mut self, v: u32) -> &mut Self {
+        const KB: u32 = 1024;
+        const MB: u32 = 1024 * 1024;
+        const GB: u32 = 1024 * 1024 * 1024;
+        if v < KB { return self.n(v).s(b" B"); }
+        if v < MB { return self.n(v / KB).s(b" KB"); }
+        let (div, unit): (u32, &[u8]) = if v < GB { (MB, b" MB") } else { (GB, b" GB") };
+        let mut whole = v / div;
+        let rem = (v % div) as u64;
+        let mut frac = ((rem * 10 + (div as u64) / 2) / (div as u64)) as u32;
+        if frac >= 10 { whole += 1; frac = 0; }
+        self.n(whole).c(b'.').n(frac).s(unit)
+    }
+
     /// 追加 8 位十六进制(大写, 指针/句柄判据用)
     pub(crate) unsafe fn x(&mut self, v: u32) -> &mut Self {
         let hex = *b"0123456789ABCDEF";

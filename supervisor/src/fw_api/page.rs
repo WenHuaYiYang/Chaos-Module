@@ -169,3 +169,62 @@ pub unsafe fn data_row_place(d: &DataRow, prev: Obj) {
         obj_align_to(d.row, prev, align::OUT_BOTTOM_MID, 0, 8);
     }
 }
+
+// ===== 主页圆环（存储/内存并排） =====
+pub struct RingRow {
+    pub row: Obj,
+    pub arc0: Obj,
+    pub arc1: Obj,
+    pub pct0: Obj,
+    pub pct1: Obj,
+}
+
+/// 两个 104x104 圆环并排，百分比在环心，名称在环下方。
+pub unsafe fn ring_row_create(parent: Obj, n0: Cp, n1: Cp, p0: Cp, p1: Cp) -> RingRow {
+    let mut r = RingRow { row: 0, arc0: 0, arc1: 0, pct0: 0, pct1: 0 };
+    let row = row_create(parent, b" \0".as_ptr(), NONE_PTR, 0);
+    if row == 0 { return r; }
+    obj_set_size_wh(row, 328, 156);
+    r.arc0 = bar_create_rgb(row, 0, 0x00A8FF);
+    if r.arc0 != 0 {
+        obj_set_size_wh(r.arc0, 140, 14);
+        obj_align(r.arc0, align::TOP_LEFT, 6, 70);
+    }
+    r.arc1 = bar_create_rgb(row, 0, 0x34C759);
+    if r.arc1 != 0 {
+        obj_set_size_wh(r.arc1, 140, 14);
+        obj_align(r.arc1, align::TOP_LEFT, 182, 70);
+    }
+    // 百分比：96 宽环内水平居中（字号 24 时 4 字符约 52px，起点 12+26=38）
+    r.pct0 = label_create(row);
+    if r.pct0 != 0 {
+        style_apply(r.pct0, crate::FW_STYLE_HR_VALUE, 255, 0);
+        label_set_text(r.pct0, p0);
+        obj_align(r.pct0, align::TOP_LEFT, 50, 32);
+    }
+    r.pct1 = label_create(row);
+    if r.pct1 != 0 {
+        style_apply(r.pct1, crate::FW_STYLE_HR_VALUE, 255, 0);
+        label_set_text(r.pct1, p1);
+        obj_align(r.pct1, align::TOP_LEFT, 226, 32);
+    }
+    // 名称：环下方居中（小字号）
+    let nm0 = label_create(row);
+    if nm0 != 0 {
+        style_apply(nm0, crate::FW_STYLE_HR_NAME, 255, 0);
+        label_set_text(nm0, n0);
+        obj_align(nm0, align::TOP_LEFT, 24, 92);
+    }
+    let nm1 = label_create(row);
+    if nm1 != 0 {
+        style_apply(nm1, crate::FW_STYLE_HR_NAME, 255, 0);
+        label_set_text(nm1, n1);
+        obj_align(nm1, align::TOP_LEFT, 200, 92);
+    }
+    r.row = row;
+    r
+}
+
+pub unsafe fn ring_row_place(r: &RingRow, prev: Obj) {
+    if r.row != 0 { obj_align_to(r.row, prev, align::OUT_BOTTOM_MID, 0, 8); }
+}

@@ -655,15 +655,15 @@ lvgl.Label(main_view, {
   text = "Chaos 安装器",
   text_color = V_TXT,
   text_font = lvgl.Font(F_BODY, 32),
-  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -198 },
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -212 },
 })
 
 local card = lvgl.Object(main_view, {
-  w = SCR_W - 32, h = 94,
+  w = SCR_W - 32, h = 68,
   bg_opa = lvgl.OPA(100), bg_color = V_MID,
   border_width = 1, border_color = V_LINE2,
   radius = V_R, pad_all = 0,
-  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -126 },
+  align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -150 },
 })
 card:clear_flag(lvgl.FLAG.SCROLLABLE)
 card:add_flag(lvgl.FLAG.EVENT_BUBBLE)
@@ -721,7 +721,7 @@ end
 local run_button
 detect_language()
 
-run_button = make_button(main_view, "运行", -30, "primary", function()
+run_button = make_button(main_view, "运行", -76, "primary", function()
   if runner then set_status("正在运行"); return end
   if module_loaded() then
     set_status("正在更新模块")
@@ -735,13 +735,50 @@ run_button = make_button(main_view, "运行", -30, "primary", function()
   if not started then set_status("运行失败: " .. tostring(err), V_ERR) end
 end)
 
-make_button(main_view, "注入设置", 60, "ghost", function()
+-- 重启按钮: 点一次进入 3 秒倒计时, 倒计时结束再 reboot; 运行中禁止重启。
+local restart_btn, restart_lbl
+local reboot_timer = nil
+restart_btn, restart_lbl = make_button(main_view, "重启", 80, "ghost", function()
+  if reboot_timer then return end
+  if runner then set_status("运行中, 请等待", V_WARN); return end
+  local left = 3
+  restart_btn:clear_flag(lvgl.FLAG.CLICKABLE)
+  restart_lbl:set { text = "重启 " .. left }
+  set_status("3 秒后重启", V_WARN)
+  reboot_timer = lvgl.Timer {
+    period = 1000, repeat_count = -1, paused = true,
+    cb = function(t)
+      left = left - 1
+      if left > 0 then
+        restart_lbl:set { text = "重启 " .. left }
+        set_status(left .. " 秒后重启", V_WARN)
+        return
+      end
+      t:delete()
+      reboot_timer = nil
+      if not exec("reboot") then
+        restart_btn:add_flag(lvgl.FLAG.CLICKABLE)
+        restart_lbl:set { text = "重启" }
+        set_status("重启失败, 请手动重启", V_ERR)
+      end
+    end,
+  }
+  if not reboot_timer then
+    restart_btn:add_flag(lvgl.FLAG.CLICKABLE)
+    restart_lbl:set { text = "重启" }
+    set_status("定时器创建失败", V_ERR)
+    return
+  end
+  reboot_timer:resume()
+end)
+
+make_button(main_view, "注入设置", 2, "ghost", function()
   settings_refresh()
   as_set(autostart_state_text(), V_TXT2)
   view_show("as")
 end)
 
-make_button(main_view, "清除重置", 150, "danger", function()
+make_button(main_view, "清除重置", 158, "danger", function()
   if runner then set_status("运行中, 请等待", V_WARN); return end
   if not wipe_armed then wipe_armed = true; set_status("再按一次以确认清除", V_WARN); return end
   wipe_armed = false

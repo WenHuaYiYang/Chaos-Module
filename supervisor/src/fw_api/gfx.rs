@@ -513,3 +513,104 @@ pub unsafe fn obj_is_child_of(parent: Obj, obj: Obj) -> bool {
     }
     false
 }
+
+/// `lv_arc_create` 0x1C0641D0(Thumb 0x1C0641D1): 类描述 0x2CCE5F0C, 内部
+/// `lv_obj_class_create_obj` + `lv_obj_class_init_obj`。反汇编自 LVGL 代码段 dump。
+pub unsafe extern "C" fn arc_create(parent: Obj) -> Obj {
+    let f: unsafe extern "C" fn(Obj) -> Obj = transmute(0x1C06_41D1usize);
+    f(parent)
+}
+
+/// 写 arc 的 value 字段(+0x2E，i16，0..100)并失效重绘。
+/// LVGL 8.4.0 `lv_arc_t`：obj 24B；+0x24 rotation、+0x26 indic_start、+0x28 indic_end、
+/// +0x2A bg_start、+0x2C bg_end、+0x2E value、+0x30 min、+0x32 max（角度 u16，值 i16）。
+unsafe fn arc_invalidate(arc: Obj) {
+    let f: unsafe extern "C" fn(Obj) = core::mem::transmute(0x1C02_B305usize);
+    f(arc);
+}
+
+/// 写 arc 的 MAIN（背景）弧起止角并失效重绘。
+/// 字段依据 analysis/arc-disasm.zh.md §4.1：draw 的 MAIN 分支只读 +0x40/+0x44(f32)，
+/// rotation 在 +0x34(i32)，两条角都会被加上 rotation，所以这里顺带清零。
+unsafe fn arc_set_main_angles(arc: Obj, start: f32, end: f32) {
+    if arc == 0 { return; }
+    let a = arc as usize;
+    core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x40) as *mut f32, start);
+    core::ptr::write_volatile((a + 0x44) as *mut f32, end);
+    arc_invalidate(arc);
+}
+
+/// 写 arc 的 INDICATOR 弧起止角并失效重绘。
+/// 依据 analysis/arc-disasm.zh.md §4.1：draw 的 INDICATOR 分支只读 +0x38/+0x3C(f32)。
+/// INDICATOR 走主题主色（蓝 #2196F3），是唯一不需要写样式就能拿到非灰色弧的部件。
+unsafe fn arc_set_indic_angles(arc: Obj, start: f32, end: f32) {
+    if arc == 0 { return; }
+    let a = arc as usize;
+    core::ptr::write_volatile((a + 0x34) as *mut i32, 0);
+    core::ptr::write_volatile((a + 0x38) as *mut f32, start);
+    core::ptr::write_volatile((a + 0x3C) as *mut f32, end);
+    arc_invalidate(arc);
+}
+
+/// 清掉 MAIN 弧（start == end == 0 时渲染器直接返回）。
+pub unsafe fn arc_clear_main(arc: Obj) {
+    arc_set_main_angles(arc, 0.0, 0.0);
+}
+
+/// 清掉 INDICATOR 弧（构造函数默认 135..270，会让“25% 看起来像半环”）。
+pub unsafe fn arc_clear_indicator(arc: Obj) {
+    arc_set_indic_angles(arc, 0.0, 0.0);
+}
+
+/// 进度环：INDICATOR 弧从正底部(90°)起画 pct%，MAIN 清空。
+/// INDICATOR 默认蓝、默认宽，不需要写样式；pct=100 时 450 = 90+360 命中整圈特例。
+pub unsafe fn arc_set_progress(arc: Obj, pct: u32) {
+    let p = if pct > 100 { 100 } else { pct };
+    arc_clear_main(arc);
+    arc_set_indic_angles(arc, 90.0, 90.0 + p as f32 * 3.6);
+}
+
+/// 只把 MAIN 弧做成整圆（作底环/track 用），并清掉 INDICATOR。
+/// MAIN 走主题默认灰 #2F3237，同样不需要写样式。
+pub unsafe fn arc_set_bg_full(arc: Obj) {
+    arc_set_indic_angles(arc, 0.0, 0.0);
+    arc_set_main_angles(arc, 0.0, 360.0);
+}
+
+/// 整圆、从正底部开始：MAIN = 90..450（整圈），INDICATOR 清空。
+pub unsafe fn arc_make_full(arc: Obj) {
+    arc_set_indic_angles(arc, 0.0, 0.0);
+    arc_set_main_angles(arc, 90.0, 450.0);
+}
+
+/// 兼容旧调用：按百分比画 MAIN 进度弧。
+pub unsafe fn arc_set_pct(arc: Obj, pct: u32) {
+    arc_set_progress(arc, pct);
+}
+
+/// 关掉 arc 的触摸交互：清 obj flags(+0x1C) 的 CLICKABLE(bit1)。
+/// 否则 LVGL 的 arc 会把手势变成数值拖拽（用户能直接把环拖大拖小）。
+pub unsafe fn arc_disable_input(arc: Obj) {
+    obj_clear_flag(arc, 0x2);
+}
+
+/// 清掉对象 flags(+0x1C) 的 SCROLLABLE(bit4)，禁止该容器左右/上下滑动。
+/// 主页圆环行比屏宽时，父容器会把手势当横向滚动，用户一划整行就跟着动。
+pub unsafe fn obj_clear_scrollable(obj: Obj) {
+    obj_clear_flag(obj, 0x10);
+}
+
+/// 调固件 lv_obj_clear_flag(obj, f) 0x1C028C85，不再手写 flags 偏移。
+pub unsafe fn obj_clear_flag(obj: Obj, f: u32) {
+    if obj == 0 { return; }
+    let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8C85usize);
+    func(obj, f);
+}
+
+/// 调固件 lv_obj_add_flag(obj, f) 0x1C028BD8。
+pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
+    if obj == 0 { return; }
+    let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
+    func(obj, f);
+}

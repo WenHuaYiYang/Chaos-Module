@@ -122,9 +122,9 @@ pub(crate) unsafe fn build_structures() {
     let cb_destroy = chaos_on_destroy as *const () as u32;
     let cb_ui_destroy = chaos_on_ui_destroy as *const () as u32;
     // 17 页注册(固件自带模块是 3 页模式, 这里扩到 17 页; 全部填充无空页 —— 空描述符会崩):
-// page0=信息 page1..4=目录0..3级 page5=更换字体 page6=桌面图标 page7=文件查看
-// page8/9=表盘切换/摇一摇轮换 page10=表盘管理 page11=亮度 page12=缓存 page13=系统美化菜单
-// page14=关于 page15=系统模糊->模糊区域 page16=主页->震动。
+// page0=信息 page1=应用管理 page2/3=时间/日期设置 page4=系统模糊 page5=更换字体
+// page6=桌面图标 page7=应用管理·排除项 page8/9=表盘切换/摇一摇轮换 page10=表盘管理
+// page11=亮度 page12=缓存 page13=系统美化菜单 page14=设置 page15=模糊区域 page16=震动。
 // **每级目录独立 page_id → 进入/返回/标题< 全走 page_goto/page_back 固件动画**;
 // 美化页的两个二级页同样给独立 page_id, 就是为了让它们也有这个动画。
 let cb_create = chaos_on_create as *const () as u32;
@@ -140,7 +140,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_BLUR) as u32,
     core::ptr::addr_of!(PAGE_TXTSUB) as u32,
     core::ptr::addr_of!(PAGE_ICONSUB) as u32,
-    core::ptr::addr_of!(PAGE_VIEWR) as u32,
+    core::ptr::addr_of!(PAGE_EXCL) as u32,
     core::ptr::addr_of!(PAGE_WFACES) as u32,
     core::ptr::addr_of!(PAGE_ROT) as u32,
     core::ptr::addr_of!(PAGE_MGR) as u32,
@@ -150,6 +150,8 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_ABOUT) as u32,
     core::ptr::addr_of!(PAGE_ZONE) as u32,
     core::ptr::addr_of!(PAGE_VIB) as u32,
+    core::ptr::addr_of!(PAGE_LOG) as u32,
+    core::ptr::addr_of!(PAGE_ABOUT2) as u32,
 ];
 let mut pg = 0usize;
 while pg < PAGE_COUNT {
@@ -266,7 +268,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
         desc_addr + 0x1D0, desc_addr + 0x244, desc_addr + 0x2B8, desc_addr + 0x32C,
         desc_addr + 0x3A0, desc_addr + 0x414, desc_addr + 0x488, desc_addr + 0x4FC,
         desc_addr + 0x570, desc_addr + 0x5E4, desc_addr + 0x658, desc_addr + 0x6CC,
-        desc_addr + 0x740,
+        desc_addr + 0x740, desc_addr + 0x7B4, desc_addr + 0x828,
     ];
     trace_step(12); // register_app 前
     let install_result = install(meta, items.as_ptr(), PAGE_COUNT as u32);

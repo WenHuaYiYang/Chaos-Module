@@ -1,88 +1,180 @@
 #!/usr/bin/env python3
-"""编译 Chaos 的两个 Rust 模块并输出为 bin。
+"""Chaos 一键构建：Rust 模块 -> 图标 -> p67 安装器容器。
 
-输出规则：
-  installer/chaos-install/_Lua 存在时，输出到该目录；
-  否则输出到 installer/。
+所有编译产物都写在 dist/ 下，源目录 installer/ 只保留源码：
 
-实际编译、链接、布局修正和 ELF 校验统一复用 build_ko.sh。
+  dist/chaos_sup.ko                内核模块
+  dist/chaos-installer-p67.bin     可直接安装的 p67 容器
+  dist/assets/chaos_sup.bin        容器内使用的 ko 副本
+  dist/assets/chaos_icon.bin       112px 应用图标
+  dist/assets/chaos_icon_settings.bin  64px 设置图标
+  dist/assets/lxgw.ttf             字体槽占位文件
+  dist/stage/                      打包临时目录（spec.json 等）
+
+依赖：
+  * nightly Rust + rust-src + thumbv8m.main-none-eabi（build_ko.sh 使用）
+  * Python 3 + Pillow（生成图标）
+  * p67_pack.py（本仓库，纯 Python，无额外依赖）
+
+常用参数：
+  --skip-ko        不重新编译 Rust，复用 dist/chaos_sup.ko
+  --no-container   只出 ko 和图标，不打容器
+  --no-icons       不重新生成图标，复用 dist/assets 里的图标
 """
 
 from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
+DEVICE_DIR = "xiaomi-band-10-pro"
+DEFAULT_ID = "979820260926"
+DEFAULT_NAME = "Chaos 安装器"
 
 
-def run_build(repo: Path, build: Path, source: str, output: Path) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    command = ["sh", str(build), source, str(output)]
-    print("+", " ".join(command), flush=True)
-    build_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
-    build_env = os.environ.copy()
-    build_env["CHAOS_BUILD_TIME"] = build_time
-    print(f"Chaos BuildTime: {build_time}", flush=True)
-    subprocess.run(command, cwd=repo, env=build_env, check=True)
-    if not output.is_file() or output.stat().st_size == 0:
-        raise RuntimeError(f"构建完成但没有生成有效文件: {output}")
-    print(f"已生成: {output} ({output.stat().st_size} bytes)", flush=True)
+def run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
+    print("+", " ".join(cmd), flush=True)
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
-def build_icon(repo: Path, output: Path, size: int = 112) -> None:
-    """生成真实的 LVGL/固件图像资源；不能把 module.ko 当作图标。"""
-    generator = repo / "tools" / "gen_chaos_icon.py"
-    source = repo / "tools" / "chaos.png"
-    command = [sys.executable, str(generator), str(source), str(output)]
+def build_ko(repo: Path, out: Path, build_time: str) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["CHAOS_BUILD_TIME"] = build_time
+    run(["sh", str(repo / "tools" / "build_ko.sh"), "supervisor", str(out)], repo, env)
+    if not out.is_file() or out.stat().st_size == 0:
+        raise RuntimeError(f"没有生成有效 ko: {out}")
+
+
+def build_icon(repo: Path, out: Path, size: int) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["CHAOS_ICON_SIZE"] = str(size)
-    print("+", " ".join(command), flush=True)
-    subprocess.run(command, cwd=repo, env=env, check=True)
-    data = output.read_bytes()
+    run([sys.executable, str(repo / "tools" / "gen_chaos_icon.py"),
+         str(repo / "tools" / "chaos.png"), str(out)], repo, env)
+    data = out.read_bytes()
     if len(data) != 12 + size * size * 4 or data[:4] != bytes((0x19, 0x10, 0, 0)):
-        raise RuntimeError(f"生成的图标格式错误: {output}")
-    print(f"已生成: {output} ({len(data)} bytes)", flush=True)
+        raise RuntimeError(f"图标格式错误: {out}")
+
+
+def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
+    """把容器要带的文件按 _lua/<设备目录>/<名字> 收集到 dist/stage。"""
+    font = assets / "lxgw.ttf"
+    if not font.is_file():
+        # 与旧包一致：字体槽只放占位说明，安装器按内容判断后跳过。
+        font.write_bytes("Chaos 字体占位：字体由独立投递包安装，不是 TTF。\n".encode("utf-8"))
+
+    sources = [
+        ("main.lua", repo / "installer" / "chaos_installer.lua"),
+        ("chaos_sup.bin", assets / "chaos_sup.bin"),
+        ("chaos_icon.bin", assets / "chaos_icon.bin"),
+        ("chaos_icon_settings.bin", assets / "chaos_icon_settings.bin"),
+        ("lxgw.ttf", font),
+    ]
+    out = []
+    for name, path in sources:
+        if not path.is_file():
+            raise RuntimeError(f"缺少容器资源: {path}")
+        staged = stage / name
+        shutil.copyfile(path, staged)
+        out.append({
+            "name": f"_lua/{DEVICE_DIR}/{name}",
+            "path": str(staged),
+        })
+    return out
+
+
+def build_container(repo: Path, out: Path, preview: Path, stage: Path, assets: Path,
+                    ident: str, name: str, style: str) -> dict:
+    sys.path.insert(0, str(repo / "tools"))
+    import p67_pack  # noqa: PLC0415
+
+    files = stage_installer(repo, stage, assets)
+    spec = {
+        "id": ident,
+        "name": name,
+        "styleName": style,
+        "preview": str(preview),
+        "files": files,
+    }
+    spec_path = stage / "spec.json"
+    spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+    info = p67_pack.build(spec, out)
+    check = p67_pack.inspect(out)
+    if check["magic"] != p67_pack.MAGIC or check["version"] != p67_pack.VERSION:
+        raise RuntimeError("容器头校验失败")
+    w, h = check["preview"]
+    if (w, h) != (336, 480):
+        raise RuntimeError(f"预览图尺寸必须是 336x480，当前 {w}x{h}")
+    return info
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="编译 supervisor/module，并将结果输出为 chaos_sup.bin 和 chaos_icon.bin。"
-    )
-    parser.add_argument(
-        "--repo",
-        type=Path,
-        default=DEFAULT_ROOT,
-        help="项目根目录，默认使用本脚本所在项目。",
-    )
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(description="Chaos 一键构建（ko + 图标 + p67 容器）")
+    ap.add_argument("--repo", type=Path, default=DEFAULT_ROOT)
+    ap.add_argument("--out", type=Path, default=None, help="容器输出路径，默认 dist/chaos-installer-p67.bin")
+    ap.add_argument("--skip-ko", action="store_true", help="复用 dist/chaos_sup.ko")
+    ap.add_argument("--no-container", action="store_true")
+    ap.add_argument("--no-icons", action="store_true")
+    ap.add_argument("--id", default=DEFAULT_ID)
+    ap.add_argument("--name", default=DEFAULT_NAME)
+    ap.add_argument("--style", default=DEFAULT_NAME)
+    ap.add_argument("--preview", type=Path, default=None, help="预览块，默认 tools/p67-preview.block")
+    args = ap.parse_args()
 
     repo = args.repo.expanduser().resolve()
-    build = repo / "tools" / "build_ko.sh"
-    if not build.is_file():
-        parser.error(f"找不到构建脚本: {build}")
+    dist = repo / "dist"
+    assets = dist / "assets"
+    stage = dist / "stage"
+    assets.mkdir(parents=True, exist_ok=True)
+    stage.mkdir(parents=True, exist_ok=True)
+    build_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
-    lua_dir = repo / "installer" / "chaos-install" / "_Lua"
-    destination = lua_dir if lua_dir.is_dir() else repo / "installer"
-    destination.mkdir(parents=True, exist_ok=True)
+    ko = dist / "chaos_sup.ko"
+    if not args.skip_ko:
+        build_ko(repo, ko, build_time)
+    elif not ko.is_file():
+        raise RuntimeError("--skip-ko 但 dist/chaos_sup.ko 不存在")
+    shutil.copyfile(ko, assets / "chaos_sup.bin")
+    print(f"ko: {ko} ({ko.stat().st_size} bytes)")
 
-    # 使用绝对路径，避免从其他目录调用时输出位置错误。
-    run_build(repo, build, "supervisor", destination / "chaos_sup.bin")
-    build_icon(repo, destination / "chaos_icon.bin", 112)
-    build_icon(repo, destination / "chaos_icon_settings.bin", 64)
+    if not args.no_icons:
+        build_icon(repo, assets / "chaos_icon.bin", 112)
+        build_icon(repo, assets / "chaos_icon_settings.bin", 64)
+    else:
+        # 兼容旧目录：首次迁移时把 installer/ 里的图标搬进 dist/assets。
+        for icon in ("chaos_icon.bin", "chaos_icon_settings.bin"):
+            dst = assets / icon
+            src = repo / "installer" / icon
+            if not dst.is_file() and src.is_file():
+                shutil.copyfile(src, dst)
 
-    print(f"完成：{destination}", flush=True)
+    if args.no_container:
+        print(f"完成（未打容器）: {dist}")
+        return 0
+
+    preview = args.preview or repo / "tools" / "p67-preview.block"
+    if not preview.is_file():
+        raise RuntimeError(f"缺少预览块: {preview}")
+    out = args.out or dist / "chaos-installer-p67.bin"
+    info = build_container(repo, out, preview, stage, assets, args.id, args.name, args.style)
+    print(f"容器: {out} ({info['size']} bytes)")
+    for name, size in info["blocks"]:
+        print(f"  {name}  {size}")
+    print(f"完成: {out}")
     return 0
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (subprocess.CalledProcessError, RuntimeError) as exc:
-        print(f"构建失败，退出码 {exc.returncode}", file=sys.stderr)
-        raise SystemExit(getattr(exc, "returncode", 1))
+    except (subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
+        print(f"构建失败: {exc}", file=sys.stderr)
+        raise SystemExit(getattr(exc, "returncode", 1) or 1)

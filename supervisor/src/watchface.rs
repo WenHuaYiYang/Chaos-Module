@@ -383,6 +383,9 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
         st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
         return;
     }
+    // 开机补偿: 免重启模式下, 把 Chaos 隐藏名单里的应用重新置位/摘图标。
+    // 必须在 UI 线程(timer)里做: app_launcher_del 会碰 LVGL 对象, 不能在 insmod 线程调。
+    crate::appmgr::boot_apply();
     // 延时窗口结束后才订阅手势；此前不触碰事件总线。
     if st_rd!(SHAKE_SUB) == 0 {
         shake_arm();

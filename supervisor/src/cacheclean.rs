@@ -29,7 +29,7 @@ static mut CC_BYTES: u32 = 0;
 // 按根目录的统计(卡片展示用): 文件数 / 字节数 / 格式化文案
 static mut CC_ROOT_FILES: [u32; 4] = [0; 4];
 static mut CC_ROOT_BYTES: [u32; 4] = [0; 4];
-static mut CC_ROOT_MSG: [[u8; 40]; 4] = [[0; 40]; 4];
+static mut CC_ROOT_MSG: [[u8; 48]; 4] = [[0; 48]; 4];
 
 const ROOTS: [&[u8]; 4] = [
     b"/data/cache\0",
@@ -132,16 +132,16 @@ unsafe fn walk_roots(clean: bool) {
     }
 }
 
-/// 把每个根目录的占用写进 CC_ROOT_MSG(卡片副标签): "N 个文件 / K KB" 或 "空"。
+/// 把每个根目录的占用写进 CC_ROOT_MSG(卡片副标签): "N 个文件 / X" 或 "空"(X 自动用 B/KB/MB/GB)。
 unsafe fn scan_roots() {
     let mut r = 0usize;
     while r < ROOTS.len() {
-        let mut w = W::new((core::ptr::addr_of_mut!(CC_ROOT_MSG) as *mut u8).add(r * 40), 40);
+        let mut w = W::new((core::ptr::addr_of_mut!(CC_ROOT_MSG) as *mut u8).add(r * 48), 48);
         if CC_ROOT_FILES[r] == 0 {
             w.s("空\0".as_bytes());
         } else {
             w.n(CC_ROOT_FILES[r]).s(" 个文件 / ".as_bytes())
-             .n(CC_ROOT_BYTES[r] / 1024).s(" KB\0".as_bytes());
+             .sz(CC_ROOT_BYTES[r]).s("\0".as_bytes());
         }
         w.end();
         r += 1;
@@ -151,7 +151,7 @@ unsafe fn scan_roots() {
 /// 卡片副标签(带结尾 \0 的切片): 根目录 r 的占用文案
 pub(crate) unsafe fn root_usage(r: usize) -> &'static [u8] {
     if r >= ROOTS.len() { return &[]; }
-    let p = (core::ptr::addr_of!(CC_ROOT_MSG) as *const u8).add(r * 40);
+    let p = (core::ptr::addr_of!(CC_ROOT_MSG) as *const u8).add(r * 48);
     core::slice::from_raw_parts(p, cstr_len(p) + 1)
 }
 
@@ -172,7 +172,7 @@ pub(crate) unsafe fn scan_msg() {
         w.s("无可清理缓存\0".as_bytes());
     } else {
         w.s("缓存: ".as_bytes()).n(CC_FILES).s(" 个文件 / ".as_bytes())
-         .n(CC_BYTES / 1024).s(" KB".as_bytes());
+         .sz(CC_BYTES);
     }
     w.end();
 }
@@ -183,7 +183,7 @@ pub(crate) unsafe fn clean() {
     // 先用"本次已删量"出结果文案(下面的重扫会覆盖计数器, 必须先取)
     let mut w = W::new(core::ptr::addr_of_mut!(CC_MSG) as *mut u8, 96);
     w.s("已清理 ".as_bytes()).n(CC_FILES).s(" 个(失败 ".as_bytes())
-     .n(CC_FAIL).s("), 释放 ".as_bytes()).n(CC_BYTES / 1024).s(" KB".as_bytes());
+     .n(CC_FAIL).s("), 释放 ".as_bytes()).sz(CC_BYTES);
     w.end();
     // 只读重扫一遍剩余量: walk_roots(true) 期间 CC_ROOT_* 记的是"已删计数",
     // 不重扫的话卡片显示的占用和清理前一模一样(2026-10-15 用户报告)。

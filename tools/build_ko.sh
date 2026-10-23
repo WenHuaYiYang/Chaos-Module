@@ -30,6 +30,15 @@ case $out in
 esac
 
 cd "$src"
+
+# 关于页的“编译时间”：以前没人设这个变量，option_env! 拿不到就显示 unknown。
+# 这里给本地构建兜底；CI 会显式传同一个变量，保证发布产物时间可追溯。
+if [ -z "${CHAOS_BUILD_TIME:-}" ]; then
+  CHAOS_BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y-%m-%d %H:%M" 2>/dev/null || true)
+  [ -n "$CHAOS_BUILD_TIME" ] || CHAOS_BUILD_TIME=unknown
+  export CHAOS_BUILD_TIME
+fi
+
 RUSTFLAGS="-C target-cpu=cortex-m33 -C target-feature=-fpregs" \
   cargo +nightly build --release --target thumbv8m.main-none-eabi \
     -Z build-std=core,compiler_builtins

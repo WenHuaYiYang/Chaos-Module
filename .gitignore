@@ -14,3 +14,5 @@ fonts/
 installer/chaos-install
 .workbuddy
 .DS_Store
+dist/stage/
+installer/lxgw.ttf

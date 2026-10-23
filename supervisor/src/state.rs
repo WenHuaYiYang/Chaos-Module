@@ -113,7 +113,7 @@ pub static PAGE_TXTSUB: [u8; 8] = *b"textsub\0";
 /// 页6: 系统美化 -> 桌面图标(二级)
 pub static PAGE_ICONSUB: [u8; 8] = *b"iconsub\0";
 
-pub static PAGE_VIEWR: [u8; 7] = *b"viewer\0";
+pub static PAGE_EXCL: [u8; 7] = *b"excl\0\0\0";
 
 pub static PAGE_WFACES: [u8; 7] = *b"wfaces\0";
 
@@ -130,11 +130,17 @@ pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
 /// 页16: 主页 -> 震动(三级)。滑动震动开关 + 测试震动。
 pub static PAGE_VIB: [u8; 8] = *b"vibtest\0";
 
+/// 页17: 设置 -> 运行日志。/data/chaos/chaos.log 的尾部展示与清空。
+pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
+
+/// 页18: 设置 -> 关于。版本、编译时间、固件、开发者分列。
+pub static PAGE_ABOUT2: [u8; 7] = *b"about2\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 17;                   // 注册页数(页0..页16)
+pub const PAGE_COUNT: usize = 19;                   // 注册页数(页0..页18)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 493] = [0; 493];         // 17 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 551] = [0; 551];         // 19 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 
@@ -411,3 +417,8 @@ impl Page {
 pub static mut PAGES: [Page; PAGE_COUNT] = [Page::EMPTY; PAGE_COUNT];
 // 每页标题文本缓冲: 标题 = 进入该页时点的行控件名, 目录页/查看页是动态的
 pub static mut TITLE_TXT: [[u8; 48]; PAGE_COUNT] = [[0; 48]; PAGE_COUNT];
+
+// 主页圆环: [弧0, 弧1, 标签0, 标签1] / 标签文本 / 上次百分比
+pub static mut RING_H: [u32; 4] = [0; 4];
+pub static mut RING_TXT: [[u8; 48]; 2] = [[0; 48]; 2];
+pub static mut RING_PREV: [i32; 2] = [-1; 2];

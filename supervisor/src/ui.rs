@@ -46,11 +46,7 @@ pub(crate) unsafe extern "C" fn chaos_on_create(_page: u32, _p1: u32, _p2: u32) 
         crate::icon_apply::popup_forget(pid);
         st_wr!(HEAL_TRYS, 0);
     st_wr!(APP_FG, 1);   // 我们的应用在前台(逐对象补写那类跑批按这道门过滤)
-        if pid == 7 {
-            // 查看页每次进入 = 新文件: 块归零 + 强制重读(VIEW_PATH 已由目录页写好)
-            st_wr!(VIEW_BLK, 0);
-            st_wr!(VIEW_LOADED, 0);
-        }
+
     }
     0
 }
