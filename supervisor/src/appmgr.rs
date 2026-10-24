@@ -151,6 +151,10 @@ static mut REQ_NAME: [u8; 32] = [0; 32];
 // 排除项切换请求(同样由 tick 消费, 不在事件回调里做文件 IO)
 static mut REQ_EXCL: u32 = 0;
 static mut REQ_EXCL_PKG: [u8; 44] = [0; 44];
+// 重放隐藏名单: 注册表有变化(设备上新装了应用)或用户点"重新应用隐藏"时置位, tick 消费
+static mut REQ_REAPPLY: u32 = 0;
+static mut REG_SIG: u32 = 0;        // 上次注册表的包名指纹(与顺序无关)
+static mut REG_SEEN: u32 = 0;       // 是否已建立基线
 static mut EXCL_MSG: [u8; 48] = [0; 48];
 static mut EXCL_MODE: u32 = 0;              // 0=管理排除项 1=管理显示/隐藏
 static mut MODE_LABEL: [u8; 48] = [0; 48];
@@ -208,6 +212,34 @@ pub(crate) unsafe fn visible(i: usize) -> bool {
 pub(crate) unsafe fn invalidate() { APP_LOADED = 0; }
 
 pub(crate) unsafe fn has_req() -> bool { REQ_OP != 0 }
+
+pub(crate) unsafe fn reapply_pending() -> bool { REQ_REAPPLY != 0 }
+
+/// 请求重放隐藏名单(tick 里做; 事件回调里不做文件/桌面操作)
+pub(crate) unsafe fn request_reapply() { REQ_REAPPLY = 1; }
+
+/// 包名集合指纹: 与顺序无关、且不含显示/隐藏来源 —— 只有"装/卸了应用"才会变,
+/// Chaos 自己改隐藏状态(同一条目换注册表文件)不会触发。
+unsafe fn reg_sig() -> u32 {
+    let mut acc = 0u32;
+    let mut i = 0usize;
+    while i < APP_N {
+        let p = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * 44);
+        let mut h = 2166136261u32;   // FNV-1a
+        let mut k = 0usize;
+        while k < 43 {
+            let c = read_volatile(p.add(k));
+            if c == 0 { break; }
+            h = (h ^ c as u32).wrapping_mul(16777619);
+            k += 1;
+        }
+        acc = acc.wrapping_add(h.rotate_left(7));
+        i += 1;
+    }
+    // 条目数也计入(同包名重复出现时集合指纹不会变, 但数量会变)
+    acc ^ (APP_N as u32).wrapping_mul(2654435761)
+}
+
 
 /// 列表被截断时禁止一切改写
 unsafe fn write_blocked() -> bool { TRUNC != 0 || OVERSIZE != 0 || PARSE_BAD != 0 }
@@ -1263,6 +1295,14 @@ pub(crate) unsafe fn reload() {
     if read_volatile(core::ptr::addr_of!(EXCL_MSG) as *const u8) == 0 {
         eset("点一行切换排除状态\0");
     }
+    // 包名集合变了 = 设备上新装/卸载了应用(Chaos 自己改隐藏状态不会变指纹)。
+    // 普通隐藏模式下图标会被新应用注册顺带复原, 这里自动重放一次隐藏名单。
+    let sig = reg_sig();
+    if REG_SEEN != 0 && sig != REG_SIG {
+        REQ_REAPPLY = 1;
+    }
+    REG_SIG = sig;
+    REG_SEEN = 1;
     APP_LOADED = 1;
 }
 
@@ -1533,6 +1573,31 @@ pub(crate) unsafe fn do_mode_apply() {
         wmsg_keep("深度隐藏已关闭, 存储已迁移; 请重启后生效\0");
         crate::log::line("模式迁移: apps.json_hide -> apps.json 完成");
     }
+}
+
+/// tick: 重放隐藏名单 —— 进页时发现注册表包名集合变化(新装应用)会自动触发,
+/// 也可由应用管理页的"重新应用隐藏"按钮触发。只对普通隐藏模式有意义:
+/// 深度隐藏把条目搬进了 apps.json_hide, 状态由文件本身表达, 重启才生效。
+pub(crate) unsafe fn do_reapply() {
+    if REQ_REAPPLY == 0 { return; }
+    REQ_REAPPLY = 0;
+    if APPLY_MODE == 0 {
+        wmsg("深度隐藏模式: 由注册表决定, 无需重放\0");
+        return;
+    }
+    if KEEP_N == 0 {
+        wmsg("隐藏名单为空, 无需重放\0");
+        return;
+    }
+    let found = keep_apply_all();
+    let d = core::ptr::addr_of_mut!(APP_MSG) as *mut u8;
+    let mut n = put_lit(d, "已重新应用隐藏 ".as_bytes());
+    n += put_u32(d.add(n), found as u32);
+    n += put_lit(d.add(n), "/".as_bytes());
+    n += put_u32(d.add(n), KEEP_N as u32);
+    write_volatile(d.add(n), 0);
+    MSG_KEEP = 1;
+    crate::log::kv("重新应用隐藏, 命中 ", found as u32);
 }
 
 /// 开机补偿: 模块加载后由维护定时器(UI 线程)调用。只对保留条目模式生效,

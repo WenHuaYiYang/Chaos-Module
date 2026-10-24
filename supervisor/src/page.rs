@@ -1719,6 +1719,7 @@ impl Page for AppMgrPage {
                 (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
                 (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
                 (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 深度隐藏(全局)
+                (5, RowSpec::clickable("重新应用隐藏\0".as_bytes())), // 按名单重收一遍(装新应用后)
             ])?;
             AM_MSG_ROW = read_volatile(ctx.rows.add(2));
             // 勾选(=可见)在前, 隐藏在后
@@ -1728,7 +1729,7 @@ impl Page for AppMgrPage {
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
                 0, crate::appmgr::deep_on() as u8);
             // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
-            let mut prev = read_volatile(ctx.rows.add(4));
+            let mut prev = read_volatile(ctx.rows.add(5));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::view_count();
@@ -1760,7 +1761,7 @@ impl Page for AppMgrPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            // 槽0/1/3 = 顶部按钮(ctx.rows); 槽4 是开关(只走 on_switch);
+            // 槽0/1/3/5 = 顶部按钮(ctx.rows); 槽4 是开关(只走 on_switch);
             // 条目事件槽 = 视图下标 + 12。
             // (0..11 被 ctx.rows 占用: 不错开的话点条目会被派发成点按钮 —— 2026-10-15 修)
             if idx == 0 {
@@ -1771,6 +1772,9 @@ impl Page for AppMgrPage {
                 render_req(1);
             } else if idx == 3 {
                 nav_goto(7, 0);
+            } else if idx == 5 {
+                crate::appmgr::request_reapply();
+                render_req(1);
             } else if idx >= 12 {
                 let v = idx - 12;
                 if v < crate::appmgr::view_count() {
@@ -1793,7 +1797,10 @@ impl Page for AppMgrPage {
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() || crate::appmgr::mode_pending() }
+        unsafe {
+            crate::appmgr::has_req() || crate::appmgr::batch_pending()
+                || crate::appmgr::mode_pending() || crate::appmgr::reapply_pending()
+        }
     }
 
     fn tick(&self) {
@@ -1803,6 +1810,9 @@ impl Page for AppMgrPage {
                 render_req(1);
             } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
+                render_req(1);
+            } else if crate::appmgr::reapply_pending() {
+                crate::appmgr::do_reapply();
                 render_req(1);
             } else if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
