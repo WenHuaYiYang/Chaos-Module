@@ -2069,14 +2069,15 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.3\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.4\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
-                (7, RowSpec::clickable("开放源代码许可\0".as_bytes())),
+                (6, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
+                (7, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+                (8, RowSpec::clickable("开放源代码许可\0".as_bytes())),
             ])?;
             Ok(())
         }
