@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Chaos 一键构建：Rust 模块 -> 图标 -> p67 安装器容器。
+"""Chaos 一键构建：Rust 模块 + fetch 模块 -> 图标 -> p67 安装器容器。
 
 所有编译产物都写在 dist/ 下，源目录 installer/ 只保留源码：
 
-  dist/chaos_sup.ko                内核模块
+  dist/chaos_sup.ko                Chaos 内核模块
+  dist/fetch-module.ko             恢复 fetch 支持的 TUN 内核模块
   dist/chaos-installer-p67.bin     可直接安装的 p67 容器
-  dist/assets/chaos_sup.bin        容器内使用的 ko 副本
+  dist/assets/chaos_sup.bin        容器内使用的 Chaos ko 副本
+  dist/assets/fetch-module.bin     容器内使用的 fetch ko 副本
   dist/assets/chaos_icon.bin       112px 应用图标
   dist/assets/chaos_icon_settings.bin  64px 设置图标
   dist/assets/lxgw.ttf             字体槽占位文件
@@ -13,11 +15,13 @@
 
 依赖：
   * nightly Rust + rust-src + thumbv8m.main-none-eabi（build_ko.sh 使用）
+  * clang + ld.lld（chaos-fetch/build.py 自动发现，可用环境变量覆盖）
   * Python 3 + Pillow（生成图标）
   * p67_pack.py（本仓库，纯 Python，无额外依赖）
 
 常用参数：
   --skip-ko        不重新编译 Rust，复用 dist/chaos_sup.ko
+  --skip-fetch     不重新编译 fetch，复用 dist/fetch-module.ko
   --no-container   只出 ko 和图标，不打容器
   --no-icons       不重新生成图标，复用 dist/assets 里的图标
 """
@@ -53,6 +57,14 @@ def build_ko(repo: Path, out: Path, build_time: str) -> None:
         raise RuntimeError(f"没有生成有效 ko: {out}")
 
 
+def build_fetch(repo: Path, out: Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run([sys.executable, str(repo / "chaos-fetch" / "build.py"),
+         "--output", str(out)], repo)
+    if not out.is_file() or out.stat().st_size == 0:
+        raise RuntimeError(f"没有生成有效 fetch 模块: {out}")
+
+
 def build_icon(repo: Path, out: Path, size: int) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -74,6 +86,7 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
     sources = [
         ("main.lua", repo / "installer" / "chaos_installer.lua"),
         ("chaos_sup.bin", assets / "chaos_sup.bin"),
+        ("fetch-module.bin", assets / "fetch-module.bin"),
         ("chaos_icon.bin", assets / "chaos_icon.bin"),
         ("chaos_icon_settings.bin", assets / "chaos_icon_settings.bin"),
         ("lxgw.ttf", font),
@@ -117,10 +130,11 @@ def build_container(repo: Path, out: Path, preview: Path, stage: Path, assets: P
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Chaos 一键构建（ko + 图标 + p67 容器）")
+    ap = argparse.ArgumentParser(description="Chaos 一键构建（双 ko + 图标 + p67 容器）")
     ap.add_argument("--repo", type=Path, default=DEFAULT_ROOT)
     ap.add_argument("--out", type=Path, default=None, help="容器输出路径，默认 dist/chaos-installer-p67.bin")
     ap.add_argument("--skip-ko", action="store_true", help="复用 dist/chaos_sup.ko")
+    ap.add_argument("--skip-fetch", action="store_true", help="复用 dist/fetch-module.ko")
     ap.add_argument("--no-container", action="store_true")
     ap.add_argument("--no-icons", action="store_true")
     ap.add_argument("--id", default=DEFAULT_ID)
@@ -144,6 +158,14 @@ def main() -> int:
         raise RuntimeError("--skip-ko 但 dist/chaos_sup.ko 不存在")
     shutil.copyfile(ko, assets / "chaos_sup.bin")
     print(f"ko: {ko} ({ko.stat().st_size} bytes)")
+
+    fetch = dist / "fetch-module.ko"
+    if not args.skip_fetch:
+        build_fetch(repo, fetch)
+    elif not fetch.is_file():
+        raise RuntimeError("--skip-fetch 但 dist/fetch-module.ko 不存在")
+    shutil.copyfile(fetch, assets / "fetch-module.bin")
+    print(f"fetch: {fetch} ({fetch.stat().st_size} bytes)")
 
     if not args.no_icons:
         build_icon(repo, assets / "chaos_icon.bin", 112)

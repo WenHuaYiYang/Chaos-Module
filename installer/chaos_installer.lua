@@ -47,11 +47,14 @@ local F_BODY  = "MiSans-Regular"
 
 local SUPERVISOR_RESOURCE = SCRIPT_PATH .. "chaos_sup.bin"
 local SUPERVISOR_PATH = "/data/chaos/sup.ko"
+local FETCH_RESOURCE = SCRIPT_PATH .. "fetch-module.bin"
+local FETCH_PATH = "/data/chaos/fetch-module.ko"
 local ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon.bin"
 local SETTINGS_ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon_settings.bin"
 local ICON_PATH = "/data/chaos/chaos_icon.bin"
 local SETTINGS_ICON_PATH = "/data/chaos/chaos_icon_settings.bin"
 local DATA_DIR = "/data/chaos"
+local FETCH_CONFIG = DATA_DIR .. "/fetch.cfg"
 local DEVICE_PATH = "/dev/chaos"
 
 local CMD_MAGIC = 0x53484331           -- "1CHS"
@@ -69,6 +72,7 @@ local status_label
 local runner
 local step_index = 1
 local settings_enabled = true
+local fetch_enabled = false
 local started_once = false
 local wipe_armed = false
 
@@ -204,7 +208,8 @@ local function stage_resource(res, dest)
   exec("mkdir -p " .. DATA_DIR)
   local f = io.open(dest, "wb"); if not f then return false, "cannot open " .. dest end
   local wok, wres = pcall(f.write, f, c); local cok, cres = pcall(f.close, f)
-  if not wok or not cok then return false, "write failed" end
+  if not wok or not wres or not cok or cres == false then return false, "write failed" end
+  if read_all(dest, "rb") ~= c then return false, "模块写入校验失败" end
   return true
 end
 -- 图标素材投递。主包**不内嵌图标包**: 这一槽只有本应用自己的图标
@@ -264,11 +269,17 @@ end
 local send_settings_command
 local function update_supervisor()
   local ko = read_all(SUPERVISOR_RESOURCE)
+  local fetch = read_all(FETCH_RESOURCE)
   if type(ko) ~= "string" or #ko < 52 or ko:sub(1, 4) ~= string.char(127) .. "ELF" then
     return false, "安装包模块无效"
   end
+  if type(fetch) ~= "string" or #fetch < 52 or fetch:sub(1, 4) ~= string.char(127) .. "ELF" then
+    return false, "安装包 fetch 模块无效"
+  end
   exec("mkdir -p " .. DATA_DIR)
   local ok, err = write_file(SUPERVISOR_PATH, ko)
+  if not ok then return false, err end
+  ok, err = write_file(FETCH_PATH, fetch)
   if not ok then return false, err end
   local sf, serr = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
   if not sf then return false, serr end
@@ -283,8 +294,20 @@ end
 local function build_chaos_sh()
   local L = {}
   local function w(s) L[#L + 1] = s end
+  -- 与参考 tun.sh 一致：管理器把 # top 脚本排在系统网络初始化之前。
+  w("# top")
   w("set +e")
   w("echo start > " .. AS_LOG)
+  -- fetch 必须先于 Chaos 本体接管固件；任何启动路径都不得颠倒这个顺序。
+  if fetch_enabled then
+    w("insmod " .. FETCH_PATH .. " tun > /data/chaos/fetch-insmod.log")
+    w("echo fetch_insmod >> " .. AS_LOG)
+    for level = 1, 4 do
+      w("echo " .. level .. " > /dev/tunentry")
+      w("cat /dev/tunsvc > /dev/null")
+      w("echo fetch_arm" .. level .. " >> " .. AS_LOG)
+    end
+  end
   w("insmod " .. SUPERVISOR_PATH .. " chaos_sup")
   w("echo insmod >> " .. AS_LOG)
   w("dd if=" .. DEVICE_PATH .. " of=" .. DATA_DIR .. "/stage1.bin bs="
@@ -350,12 +373,14 @@ local function legacy_cleanup()
 end
 
 local function autostart_install()
-  local ko, icon, settings_icon = read_all(SUPERVISOR_RESOURCE), read_all(ICON_RESOURCE), read_all(SETTINGS_ICON_RESOURCE)
-  if type(ko) ~= "string" or #ko == 0 or type(icon) ~= "string" or #icon == 0 or type(settings_icon) ~= "string" or #settings_icon == 0 then
+  local ko, fetch = read_all(SUPERVISOR_RESOURCE), read_all(FETCH_RESOURCE)
+  local icon, settings_icon = read_all(ICON_RESOURCE), read_all(SETTINGS_ICON_RESOURCE)
+  if type(ko) ~= "string" or #ko == 0 or type(fetch) ~= "string" or #fetch == 0
+    or type(icon) ~= "string" or #icon == 0 or type(settings_icon) ~= "string" or #settings_icon == 0 then
     return false, "安装包资源缺失"
   end
-  if read_all(SUPERVISOR_PATH) == ko and read_all(ICON_PATH) == icon
-    and read_all(SETTINGS_ICON_PATH) == settings_icon
+  if read_all(SUPERVISOR_PATH) == ko and read_all(FETCH_PATH) == fetch
+    and read_all(ICON_PATH) == icon and read_all(SETTINGS_ICON_PATH) == settings_icon
     and read_all(BOOT_FRAME) == build_boot_frame() and read_all(RC_SH) == build_chaos_sh()
     and read_all(LEGACY_FLAG) == nil and read_all(LEGACY_CHAOS_RC) == nil then
     local raw = read_all(LEGACY_RC_PATH)
@@ -368,13 +393,15 @@ local function autostart_install()
     local ok, err = directory_writable(path)
     if not ok then return false, "目录不可写 " .. path .. ": " .. tostring(err) end
   end
-  if read_all(SUPERVISOR_PATH) ~= ko or read_all(ICON_PATH) ~= icon
-    or read_all(SETTINGS_ICON_PATH) ~= settings_icon
+  if read_all(SUPERVISOR_PATH) ~= ko or read_all(FETCH_PATH) ~= fetch
+    or read_all(ICON_PATH) ~= icon or read_all(SETTINGS_ICON_PATH) ~= settings_icon
     or read_all(BOOT_FRAME) ~= build_boot_frame() then
     local ok, err = remove_file(RC_SH)
     if not ok then return false, err end
   end
   local ok, err = write_file(SUPERVISOR_PATH, ko)
+  if not ok then return false, err end
+  ok, err = write_file(FETCH_PATH, fetch)
   if not ok then return false, err end
   ok, err = write_file(ICON_PATH, icon)
   if not ok then return false, err end
@@ -472,27 +499,52 @@ local function install_step(arg0)
       st.dbg_lookup or 0, st.dbg_register or 0, st.dbg_verify or 0, st.step or -1)
 end
 
+local FETCH_BUILD = "v108-20261024-dbg-flag"
+local FETCH_INSMOD_LOG = DATA_DIR .. "/fetch-insmod.log"
+local function fetch_log(message)
+  local f = io.open(FETCH_INSMOD_LOG, "ab")
+  if f then f:write(message .. "\n"); f:close() end
+end
+
+local function verify_early_fetch()
+  if not fetch_enabled then return true end
+  -- 系统启动后不再补装/补布防：fetch 只能由 # top 自启动脚本提前注入。
+  local status = read_all("/dev/tunentry", "r")
+  local running = type(status) == "string" and status:match("mt_build=([^%s]+)") or nil
+  local armed = type(status) == "string" and status:find("mt_armed=1", 1, true) ~= nil
+  fetch_log("early_mt_build=" .. tostring(running))
+  fetch_log("early_mt_armed=" .. tostring(armed and 1 or 0))
+  if not running then return false, "请安装自启动并重启" end
+  if running ~= FETCH_BUILD then return false, "fetch版本不符, 请重启" end
+  if not armed then return false, "fetch早期布防未完成" end
+  return true
+end
+
 -- 安装流水线: 每步一个 timer 拍(步骤之间让 miwear 的事件循环转一圈)。
 -- notify_retry: 通知步骤的重试计数(等 launcher 订阅就绪)。
 local notify_retry = 0
 local pipeline = {
   { name = "1 部署模块",     body = function() return stage_resource(SUPERVISOR_RESOURCE, SUPERVISOR_PATH) end },
+  { name = "1.5 部署fetch", body = function() return stage_resource(FETCH_RESOURCE, FETCH_PATH) end },
   { name = "2 部署应用图标", body = stage_icons },
   { name = "2.5 部署字体",   body = stage_fonts },
-  { name = "3 加载模块", body = function()
-      if module_loaded() then
-        return false, "旧模块还在, 请重启"
-      end
+  { name = "3 检查旧模块", body = function()
+      if module_loaded() then return false, "旧模块还在, 请重启" end
+      return true
+  end },
+  -- 早期 fetch 已经加载并完成布防；这里只验证，绝不进行晚期重复注入。
+  { name = "3.1 验证早期fetch", body = verify_early_fetch },
+  { name = "4 加载Chaos本体", body = function()
       if not exec(string.format("insmod %s chaos_sup", quote_arg(SUPERVISOR_PATH))) then
-        return false, "insmod 失败"
+        return false, "Chaos insmod 失败"
       end
       return true
   end },
-  { name = "4 检查设备", body = function()
+  { name = "4.1 检查设备", body = function()
       if not module_loaded() then return false, "/dev/chaos 不存在" end
       return true
   end },
-  { name = "4.5 设置语言", body = function()
+  { name = "4.2 设置语言", body = function()
       -- 一个语言属性都没读到 => 无法判断, 按中文装
       if not lang_seen then
         set_status("语言: 未知, 按中文装", V_WARN)
@@ -709,6 +761,8 @@ end
 -- 这里切换时先落盘, 下次进页面能看到上次的选择。
 local saved_settings = read_all(DATA_DIR .. "/settings.cfg", "rb")
 settings_enabled = (saved_settings == nil) or saved_settings == string.char(1)
+local saved_fetch = read_all(FETCH_CONFIG, "rb")
+fetch_enabled = (saved_fetch == nil) or saved_fetch ~= string.char(0)
 local autostart_btn_label, settings_btn_label
 local function settings_refresh()
   if autostart_btn_label then
