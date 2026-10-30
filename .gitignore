@@ -16,3 +16,9 @@ installer/chaos-install
 .DS_Store
 dist/stage/
 installer/lxgw.ttf
+
+dist/
+dist/assets/chaos_sup.bin
+dist/chaos-installer-p67.bin
+dist/chaos_sup.ko
+

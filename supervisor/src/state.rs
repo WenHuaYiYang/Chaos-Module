@@ -136,11 +136,20 @@ pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
 /// 页18: 设置 -> 关于。版本、编译时间、固件、开发者分列。
 pub static PAGE_ABOUT2: [u8; 7] = *b"about2\0";
 
+/// 页19: 设置 -> 恢复 fetch 支持。展示自启动安装与使用说明。
+pub static PAGE_FETCH: [u8; 6] = *b"fetch\0";
+
+/// 页20: 关于 -> 开放源代码许可列表。
+pub static PAGE_LICENSES: [u8; 8] = *b"license\0";
+
+/// 页21: MIBAND10PRO-TUNMODULE 的 MPL-2.0 许可正文。
+pub static PAGE_LICENSE_MPL: [u8; 8] = *b"mpl2lic\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 19;                   // 注册页数(页0..页18)
+pub const PAGE_COUNT: usize = 22;                   // 注册页数(页0..页21)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 551] = [0; 551];         // 19 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 638] = [0; 638];         // 22 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

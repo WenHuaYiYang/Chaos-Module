@@ -1949,6 +1949,7 @@ impl Page for SettingsPage {
                 (3, RowSpec::clickable("震动\0".as_bytes())),
                 (4, RowSpec::clickable("缓存清理\0".as_bytes())),
                 (5, RowSpec::clickable("运行日志\0".as_bytes())),
+                (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1961,6 +1962,7 @@ impl Page for SettingsPage {
                 3 => nav_goto(16, 0),   // 震动
                 4 => nav_goto(12, 0),   // 缓存清理
                 5 => nav_goto(17, 0),   // 运行日志
+                6 => nav_goto(19, 0),   // 恢复 fetch 支持
                 _ => {}
             }
         }
@@ -2077,13 +2079,15 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.3\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.4\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+                (6, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
+                (7, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+                (8, RowSpec::clickable("开放源代码许可\0".as_bytes())),
             ])?;
             Ok(())
         }
@@ -2110,6 +2114,8 @@ impl Page for AboutPage {
             if idx == 0 {
                 DBG_CLICKS += 1;
                 if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
+            } else if idx == 7 {
+                nav_goto(20, 0);
             }
         }
     }
@@ -2258,7 +2264,163 @@ impl Page for BlurZonePage {
     }
 }
 
-pub(crate) static PAGE_TABLE: [&dyn Page; 19] = [
+// ===== 页20: 关于 -> 开放源代码许可 =====
+pub(crate) struct LicensesPage;
+static PAGE_LICENSESP: LicensesPage = LicensesPage;
+
+impl Page for LicensesPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "开放源代码许可\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
+                    "MPL-2.0 license\0".as_bytes().as_ptr())),
+            ]).map(|_| ())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx == 0 {
+                MPL_PAGE = 0;
+                nav_goto(21, 0);
+            }
+        }
+    }
+}
+
+// ===== 页21: MIBAND10PRO-TUNMODULE / MPL-2.0 许可正文 =====
+pub(crate) struct MplLicensePage;
+static PAGE_LICENSE_MPLP: MplLicensePage = MplLicensePage;
+static MPL_TEXT: &[u8] = include_bytes!("../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
+const MPL_PAGE_LINES: usize = 8;
+static mut MPL_PAGE: usize = 0;
+static mut MPL_VIEW: [u8; 4096] = [0; 4096];
+static mut MPL_STATUS: [u8; 48] = [0; 48];
+
+fn mpl_line_count() -> usize {
+    let mut lines = 1usize;
+    for &c in MPL_TEXT {
+        if c == b'\n' { lines += 1; }
+    }
+    lines
+}
+
+fn mpl_page_count() -> usize {
+    (mpl_line_count() + MPL_PAGE_LINES - 1) / MPL_PAGE_LINES
+}
+
+unsafe fn mpl_render_page() {
+    let pages = mpl_page_count();
+    if MPL_PAGE >= pages { MPL_PAGE = pages - 1; }
+    let target_line = MPL_PAGE * MPL_PAGE_LINES;
+    let mut line = 0usize;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < MPL_TEXT.len() && line < target_line {
+        if MPL_TEXT[i] == b'\n' { line += 1; }
+        i += 1;
+        start = i;
+    }
+    let mut end = start;
+    line = 0;
+    while end < MPL_TEXT.len() && line < MPL_PAGE_LINES {
+        if MPL_TEXT[end] == b'\n' { line += 1; }
+        end += 1;
+    }
+    let out = core::ptr::addr_of_mut!(MPL_VIEW) as *mut u8;
+    let count = core::cmp::min(end - start, 4095);
+    for i in 0..count { write_volatile(out.add(i), MPL_TEXT[start + i]); }
+    write_volatile(out.add(count), 0);
+
+    let status = core::ptr::addr_of_mut!(MPL_STATUS) as *mut u8;
+    let mut buf = [0u8; 48];
+    let mut w = crate::text::W::new(buf.as_mut_ptr(), buf.len());
+    w.s("第 ".as_bytes());
+    w.n((MPL_PAGE + 1) as u32);
+    w.s("/".as_bytes());
+    w.n(pages as u32);
+    w.s(" 页".as_bytes());
+    w.end();
+    let len = w.len();
+    for i in 0..len { write_volatile(status.add(i), buf[i]); }
+    write_volatile(status.add(len), 0);
+}
+
+impl Page for MplLicensePage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "MPL-2.0 license\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            mpl_render_page();
+            let pages = mpl_page_count();
+            let specs: [(usize, RowSpec); 3] = [
+                (0, RowSpec::clickable(if MPL_PAGE > 0 { "上一页\0".as_bytes() } else { "已到首页\0".as_bytes() })),
+                (1, RowSpec::clickable(if MPL_PAGE + 1 < pages { "下一页\0".as_bytes() } else { "已到末页\0".as_bytes() })),
+                (2, RowSpec::display(
+                    core::slice::from_raw_parts(core::ptr::addr_of!(MPL_STATUS) as *const u8,
+                        cstr_len(core::ptr::addr_of!(MPL_STATUS) as *const u8) + 1),
+                    core::ptr::null())),
+            ];
+            let prev = build_rows(ctx, ctx.title, &specs)?;
+            let label = fw_api::label_create(ctx.content);
+            if label != 0 {
+                fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
+                fw_api::label_set_text(label, core::ptr::addr_of!(MPL_VIEW) as *const u8);
+                fw_api::obj_set_size_wh(label, 320, 320);
+                fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
+            }
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            let pages = mpl_page_count();
+            if idx == 0 && MPL_PAGE > 0 {
+                MPL_PAGE -= 1;
+                render_req(21);
+            } else if idx == 1 && MPL_PAGE + 1 < pages {
+                MPL_PAGE += 1;
+                render_req(21);
+            }
+        }
+    }
+}
+
+// ===== 页19: 设置 -> 恢复 fetch 支持 =====
+pub(crate) struct FetchPage;
+static PAGE_FETCHP: FetchPage = FetchPage;
+static FETCH_HELP: &[u8] = "使用：\n1.前提条件：安装了autorun（如果没安装请在AstroBox上搜索或者加群1018886448获取autorun最新版本）\n2.开启方式：在Chaos的注入器表盘中点击注入设置->注册自启动，然后在autorun表盘中按照流程开启自启动，重启即可。\n3.注意事项：此功能只保证在小米运动健康中正常使用。\0".as_bytes();
+
+impl Page for FetchPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "恢复fetch支持\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            let label = fw_api::label_create(ctx.content);
+            if label != 0 {
+                fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
+                fw_api::label_set_text(label, FETCH_HELP.as_ptr());
+                // 说明页没有开关；完整文本超出首屏后由 content 原生滚动。
+                fw_api::obj_set_size_wh(label, 320, 640);
+                fw_api::obj_align(label, fw_api::align::TOP_MID, 0, 12);
+            }
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, _idx: usize) {}
+}
+
+pub(crate) static PAGE_TABLE: [&dyn Page; 22] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
     &PAGE_TIMESET,      // 2  时间设置 / 日期第一步(年)(原目录 2 级, 文件管理退役后空出)
@@ -2278,4 +2440,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; 19] = [
     &PAGE_VIBP,         // 16 主页 -> 震动
     &PAGE_LOG,          // 17 设置 -> 运行日志
     &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
+    &PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
+    &PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
+    &PAGE_LICENSE_MPLP, // 21 MIBAND10PRO-TUNMODULE / MPL-2.0
 ];
