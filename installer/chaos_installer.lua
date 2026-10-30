@@ -564,18 +564,27 @@ local function fetch_log(message)
   if f then f:write(message .. "\n"); f:close() end
 end
 
-local function verify_early_fetch()
-  if not fetch_enabled then return true end
-  -- 系统启动后不再补装/补布防：fetch 只能由 # top 自启动脚本提前注入。
+local function fetch_state()
   local status = read_all("/dev/tunentry", "r")
   local running = type(status) == "string" and status:match("mt_build=([^%s]+)") or nil
   local armed = type(status) == "string" and status:find("mt_armed=1", 1, true) ~= nil
   local cap_status = read_all("/dev/capatch", "r")
   local https_ok = type(cap_status) == "string" and cap_status:find("pret=0", 1, true) ~= nil
-  fetch_log("early_mt_build=" .. tostring(running))
-  fetch_log("early_mt_armed=" .. tostring(armed and 1 or 0))
-  fetch_log("early_https=" .. tostring(https_ok and 1 or 0))
-  if not running then return false, "请安装自启动并重启" end
+  return running, armed, https_ok
+end
+
+local function ensure_fetch()
+  if not fetch_enabled then return true end
+  -- fetch 只能由特权自启动脚本提前加载；未注册时跳过，绝不在晚期补 insmod。
+  if not autostart_registered() then
+    fetch_log("skip_fetch=no_autostart")
+    return true
+  end
+  local running, armed, https_ok = fetch_state()
+  fetch_log("autostart_mt_build=" .. tostring(running))
+  fetch_log("autostart_mt_armed=" .. tostring(armed and 1 or 0))
+  fetch_log("autostart_https=" .. tostring(https_ok and 1 or 0))
+  if not running then return false, "fetch未自启动, 请重启" end
   if running ~= FETCH_BUILD then return false, "fetch版本不符, 请重启" end
   if not armed then return false, "fetch早期布防未完成" end
   if not https_ok then return false, "HTTPS证书注入未完成" end
@@ -595,8 +604,8 @@ local pipeline = {
       if module_loaded() then return false, "旧模块还在, 请重启" end
       return true
   end },
-  -- 早期 fetch 已经加载并完成布防；这里只验证，绝不进行晚期重复注入。
-  { name = "3.1 验证早期fetch", body = verify_early_fetch },
+  -- 无自启动时跳过 fetch；有自启动时只验证早期加载结果，然后继续注入 Chaos。
+  { name = "3.1 检查/跳过fetch", body = ensure_fetch },
   { name = "4 加载Chaos本体", body = function()
       if not exec(string.format("insmod %s chaos_sup", quote_arg(SUPERVISOR_PATH))) then
         return false, "Chaos insmod 失败"
