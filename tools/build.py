@@ -65,6 +65,14 @@ def build_fetch(repo: Path, out: Path) -> None:
         raise RuntimeError(f"没有生成有效 fetch 模块: {out}")
 
 
+def build_capatch(repo: Path, out: Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run([sys.executable, str(repo / "chaos-fetch" / "capatch" / "build_capatch.py"),
+         "--output", str(out)], repo)
+    if not out.is_file() or out.stat().st_size == 0:
+        raise RuntimeError(f"没有生成有效 capatch 模块: {out}")
+
+
 def build_icon(repo: Path, out: Path, size: int) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -87,6 +95,8 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
         ("main.lua", repo / "installer" / "chaos_installer.lua"),
         ("chaos_sup.bin", assets / "chaos_sup.bin"),
         ("fetch-module.bin", assets / "fetch-module.bin"),
+        ("capatch.bin", assets / "capatch.bin"),
+        ("ca.pem", assets / "ca.pem"),
         ("chaos_icon.bin", assets / "chaos_icon.bin"),
         ("chaos_icon_settings.bin", assets / "chaos_icon_settings.bin"),
         ("lxgw.ttf", font),
@@ -160,12 +170,17 @@ def main() -> int:
     print(f"ko: {ko} ({ko.stat().st_size} bytes)")
 
     fetch = dist / "fetch-module.ko"
+    capatch = dist / "capatch.elf"
     if not args.skip_fetch:
         build_fetch(repo, fetch)
-    elif not fetch.is_file():
-        raise RuntimeError("--skip-fetch 但 dist/fetch-module.ko 不存在")
+        build_capatch(repo, capatch)
+    elif not fetch.is_file() or not capatch.is_file():
+        raise RuntimeError("--skip-fetch 但 dist/fetch-module.ko 或 dist/capatch.elf 不存在")
     shutil.copyfile(fetch, assets / "fetch-module.bin")
+    shutil.copyfile(capatch, assets / "capatch.bin")
+    shutil.copyfile(repo / "chaos-fetch" / "assets" / "ca.pem", assets / "ca.pem")
     print(f"fetch: {fetch} ({fetch.stat().st_size} bytes)")
+    print(f"capatch: {capatch} ({capatch.stat().st_size} bytes)")
 
     if not args.no_icons:
         build_icon(repo, assets / "chaos_icon.bin", 112)

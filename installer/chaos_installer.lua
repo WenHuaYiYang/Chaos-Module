@@ -49,12 +49,16 @@ local SUPERVISOR_RESOURCE = SCRIPT_PATH .. "chaos_sup.bin"
 local SUPERVISOR_PATH = "/data/chaos/sup.ko"
 local FETCH_RESOURCE = SCRIPT_PATH .. "fetch-module.bin"
 local FETCH_PATH = "/data/chaos/fetch-module.ko"
+local CAPATCH_RESOURCE = SCRIPT_PATH .. "capatch.bin"
+local CAPATCH_PATH = "/data/ssl/capatch.elf"
+local PEM_RESOURCE = SCRIPT_PATH .. "ca.pem"
+local PEM_PATH = "/data/ssl/ca.pem"
+local SSL_DIR = "/data/ssl"
 local ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon.bin"
 local SETTINGS_ICON_RESOURCE = SCRIPT_PATH .. "chaos_icon_settings.bin"
 local ICON_PATH = "/data/chaos/chaos_icon.bin"
 local SETTINGS_ICON_PATH = "/data/chaos/chaos_icon_settings.bin"
 local DATA_DIR = "/data/chaos"
-local FETCH_CONFIG = DATA_DIR .. "/fetch.cfg"
 local DEVICE_PATH = "/dev/chaos"
 
 local CMD_MAGIC = 0x53484331           -- "1CHS"
@@ -72,7 +76,8 @@ local status_label
 local runner
 local step_index = 1
 local settings_enabled = true
-local fetch_enabled = false
+-- fetch 已固定启用，不再读取可能残留的 fetch.cfg。
+local fetch_enabled = true
 local started_once = false
 local wipe_armed = false
 
@@ -249,8 +254,10 @@ end
 
 local RC_DIR = "/data/rc.d"
 local RC_SH = RC_DIR .. "/chaos.sh"
+local RC_FETCH_SH = RC_DIR .. "/chaos-fetch.sh"
 local BOOT_FRAME = DATA_DIR .. "/boot.bin"
 local AS_LOG = DATA_DIR .. "/autostart.log"
+local FETCH_AS_LOG = DATA_DIR .. "/fetch-autostart.log"
 local LEGACY_FLAG = DATA_DIR .. "/autostart.on"
 local LEGACY_CHAOS_RC = DATA_DIR .. "/rc"
 local LEGACY_RC_PATH = "/data/rc"
@@ -265,6 +272,22 @@ local function write_file(path, body)
   if read_all(path) ~= body then return false, "回读核对失败" end
   return true
 end
+
+local function deploy_https()
+  local capatch, pem = read_all(CAPATCH_RESOURCE), read_all(PEM_RESOURCE)
+  if type(capatch) ~= "string" or #capatch < 52
+    or capatch:sub(1, 4) ~= string.char(127) .. "ELF" then
+    return false, "安装包 capatch 模块无效"
+  end
+  if type(pem) ~= "string" or #pem == 0 then return false, "安装包 CA 证书无效" end
+  exec("mkdir -p " .. SSL_DIR)
+  local ok, err = write_file(CAPATCH_PATH, capatch)
+  if not ok then return false, err end
+  ok, err = write_file(PEM_PATH, pem)
+  if not ok then return false, err end
+  return true
+end
+
 -- 已加载的模块保持原样，仅部署下次启动的模块文件。
 local send_settings_command
 local function update_supervisor()
@@ -281,6 +304,8 @@ local function update_supervisor()
   if not ok then return false, err end
   ok, err = write_file(FETCH_PATH, fetch)
   if not ok then return false, err end
+  ok, err = deploy_https()
+  if not ok then return false, err end
   local sf, serr = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
   if not sf then return false, serr end
   if settings_enabled and module_loaded() then
@@ -291,23 +316,32 @@ local function update_supervisor()
   return true, settings_enabled and "已更新，重启后设置生效" or "模块已更新，请重启"
 end
 
+local function build_fetch_sh()
+  local L = {}
+  local function w(s) L[#L + 1] = s end
+  -- 特权脚本只负责网络恢复，不能把 Chaos 提前到 launcher 就绪之前。
+  w("# top")
+  w("set +e")
+  w("echo start > " .. FETCH_AS_LOG)
+  w("insmod " .. FETCH_PATH .. " tun > /data/chaos/fetch-insmod.log")
+  w("echo fetch_insmod >> " .. FETCH_AS_LOG)
+  w("insmod " .. CAPATCH_PATH .. " capatch > /data/chaos/capatch-insmod.log")
+  w("echo capatch_insmod >> " .. FETCH_AS_LOG)
+  for level = 1, 4 do
+    w("echo " .. level .. " > /dev/tunentry")
+    w("cat /dev/tunsvc > /dev/null")
+    w("echo fetch_arm" .. level .. " >> " .. FETCH_AS_LOG)
+  end
+  w("echo done >> " .. FETCH_AS_LOG)
+  return table.concat(L, "\n") .. "\n"
+end
+
 local function build_chaos_sh()
   local L = {}
   local function w(s) L[#L + 1] = s end
-  -- 与参考 tun.sh 一致：管理器把 # top 脚本排在系统网络初始化之前。
-  w("# top")
+  -- 普通优先级：等系统及 launcher 就绪后再注册 Chaos。
   w("set +e")
   w("echo start > " .. AS_LOG)
-  -- fetch 必须先于 Chaos 本体接管固件；任何启动路径都不得颠倒这个顺序。
-  if fetch_enabled then
-    w("insmod " .. FETCH_PATH .. " tun > /data/chaos/fetch-insmod.log")
-    w("echo fetch_insmod >> " .. AS_LOG)
-    for level = 1, 4 do
-      w("echo " .. level .. " > /dev/tunentry")
-      w("cat /dev/tunsvc > /dev/null")
-      w("echo fetch_arm" .. level .. " >> " .. AS_LOG)
-    end
-  end
   w("insmod " .. SUPERVISOR_PATH .. " chaos_sup")
   w("echo insmod >> " .. AS_LOG)
   w("dd if=" .. DEVICE_PATH .. " of=" .. DATA_DIR .. "/stage1.bin bs="
@@ -372,6 +406,12 @@ local function legacy_cleanup()
   return remove_file(LEGACY_CHAOS_RC)
 end
 
+local function fetch_autostart_matches()
+  local body = read_all(RC_FETCH_SH)
+  if fetch_enabled then return body == build_fetch_sh() end
+  return body == nil
+end
+
 local function autostart_install()
   local ko, fetch = read_all(SUPERVISOR_RESOURCE), read_all(FETCH_RESOURCE)
   local icon, settings_icon = read_all(ICON_RESOURCE), read_all(SETTINGS_ICON_RESOURCE)
@@ -380,28 +420,37 @@ local function autostart_install()
     return false, "安装包资源缺失"
   end
   if read_all(SUPERVISOR_PATH) == ko and read_all(FETCH_PATH) == fetch
+    and read_all(CAPATCH_PATH) == read_all(CAPATCH_RESOURCE)
+    and read_all(PEM_PATH) == read_all(PEM_RESOURCE)
     and read_all(ICON_PATH) == icon and read_all(SETTINGS_ICON_PATH) == settings_icon
     and read_all(BOOT_FRAME) == build_boot_frame() and read_all(RC_SH) == build_chaos_sh()
+    and fetch_autostart_matches()
     and read_all(LEGACY_FLAG) == nil and read_all(LEGACY_CHAOS_RC) == nil then
     local raw = read_all(LEGACY_RC_PATH)
     if without_legacy_hop(raw) == raw then return true end
   end
   local ready, why = rc_dir_ready()
   if not ready then return false, why end
-  for _, path in ipairs({ DATA_DIR, FONT_DIR, ICON_DIR }) do
+  for _, path in ipairs({ DATA_DIR, FONT_DIR, ICON_DIR, SSL_DIR }) do
     exec("mkdir -p " .. path)
     local ok, err = directory_writable(path)
     if not ok then return false, "目录不可写 " .. path .. ": " .. tostring(err) end
   end
   if read_all(SUPERVISOR_PATH) ~= ko or read_all(FETCH_PATH) ~= fetch
+    or read_all(CAPATCH_PATH) ~= read_all(CAPATCH_RESOURCE)
+    or read_all(PEM_PATH) ~= read_all(PEM_RESOURCE)
     or read_all(ICON_PATH) ~= icon or read_all(SETTINGS_ICON_PATH) ~= settings_icon
     or read_all(BOOT_FRAME) ~= build_boot_frame() then
     local ok, err = remove_file(RC_SH)
+    if not ok then return false, err end
+    ok, err = remove_file(RC_FETCH_SH)
     if not ok then return false, err end
   end
   local ok, err = write_file(SUPERVISOR_PATH, ko)
   if not ok then return false, err end
   ok, err = write_file(FETCH_PATH, fetch)
+  if not ok then return false, err end
+  ok, err = deploy_https()
   if not ok then return false, err end
   ok, err = write_file(ICON_PATH, icon)
   if not ok then return false, err end
@@ -413,17 +462,26 @@ local function autostart_install()
   if not ok then return false, err end
   ok, err = write_file(RC_SH, build_chaos_sh())
   if not ok then return false, err end
+  if fetch_enabled then
+    ok, err = write_file(RC_FETCH_SH, build_fetch_sh())
+  else
+    ok, err = remove_file(RC_FETCH_SH)
+  end
+  if not ok then return false, err end
   return true
 end
 local function autostart_remove()
   local ok, err = remove_file(RC_SH)
+  if not ok then return false, err end
+  ok, err = remove_file(RC_FETCH_SH)
   if not ok then return false, err end
   ok, err = remove_file(BOOT_FRAME)
   if not ok then return false, err end
   return legacy_cleanup()
 end
 local function autostart_registered()
-  return read_all(RC_SH) == build_chaos_sh() and read_all(BOOT_FRAME) == build_boot_frame()
+  return read_all(RC_SH) == build_chaos_sh() and fetch_autostart_matches()
+    and read_all(BOOT_FRAME) == build_boot_frame()
 end
 local function autostart_state_text()
   if autostart_registered() then
@@ -512,11 +570,15 @@ local function verify_early_fetch()
   local status = read_all("/dev/tunentry", "r")
   local running = type(status) == "string" and status:match("mt_build=([^%s]+)") or nil
   local armed = type(status) == "string" and status:find("mt_armed=1", 1, true) ~= nil
+  local cap_status = read_all("/dev/capatch", "r")
+  local https_ok = type(cap_status) == "string" and cap_status:find("pret=0", 1, true) ~= nil
   fetch_log("early_mt_build=" .. tostring(running))
   fetch_log("early_mt_armed=" .. tostring(armed and 1 or 0))
+  fetch_log("early_https=" .. tostring(https_ok and 1 or 0))
   if not running then return false, "请安装自启动并重启" end
   if running ~= FETCH_BUILD then return false, "fetch版本不符, 请重启" end
   if not armed then return false, "fetch早期布防未完成" end
+  if not https_ok then return false, "HTTPS证书注入未完成" end
   return true
 end
 
@@ -526,6 +588,7 @@ local notify_retry = 0
 local pipeline = {
   { name = "1 部署模块",     body = function() return stage_resource(SUPERVISOR_RESOURCE, SUPERVISOR_PATH) end },
   { name = "1.5 部署fetch", body = function() return stage_resource(FETCH_RESOURCE, FETCH_PATH) end },
+  { name = "1.6 部署HTTPS", body = deploy_https },
   { name = "2 部署应用图标", body = stage_icons },
   { name = "2.5 部署字体",   body = stage_fonts },
   { name = "3 检查旧模块", body = function()
@@ -761,8 +824,6 @@ end
 -- 这里切换时先落盘, 下次进页面能看到上次的选择。
 local saved_settings = read_all(DATA_DIR .. "/settings.cfg", "rb")
 settings_enabled = (saved_settings == nil) or saved_settings == string.char(1)
-local saved_fetch = read_all(FETCH_CONFIG, "rb")
-fetch_enabled = (saved_fetch == nil) or saved_fetch ~= string.char(0)
 local autostart_btn_label, settings_btn_label
 local function settings_refresh()
   if autostart_btn_label then

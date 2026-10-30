@@ -136,7 +136,7 @@ pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
 /// 页18: 设置 -> 关于。版本、编译时间、固件、开发者分列。
 pub static PAGE_ABOUT2: [u8; 7] = *b"about2\0";
 
-/// 页19: 设置 -> 恢复 fetch 支持。配置持久化，重新注入时加载并布防。
+/// 页19: 设置 -> 恢复 fetch 支持。展示自启动安装与使用说明。
 pub static PAGE_FETCH: [u8; 6] = *b"fetch\0";
 
 /// 页20: 关于 -> 开放源代码许可列表。

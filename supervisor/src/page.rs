@@ -2385,7 +2385,7 @@ impl Page for MplLicensePage {
 // ===== 页19: 设置 -> 恢复 fetch 支持 =====
 pub(crate) struct FetchPage;
 static PAGE_FETCHP: FetchPage = FetchPage;
-static FETCH_HELP: &[u8] = "开启后，设备上的fetch可以得到恢复。\n请注意：\n1.此功能开启后，需要使用“小米运动健康”app连接后才可以正常联网\n2.开启后，需要重启并重新注入Chaos，并且在注入之前需要保持手环和手机的连接是断开的，注入后连接手机才可以正常使用。\0".as_bytes();
+static FETCH_HELP: &[u8] = "使用：\n1.前提条件：安装了autorun（如果没安装请在AstroBox上搜索或者加群1018886448获取autorun最新版本）\n2.开启方式：在Chaos的注入器表盘中点击注入设置->注册自启动，然后在autorun表盘中按照流程开启自启动，重启即可。\n3.注意事项：此功能只保证在小米运动健康中正常使用。\0".as_bytes();
 
 impl Page for FetchPage {
     fn fill_title(&self, buf: *mut u8) {
@@ -2394,38 +2394,19 @@ impl Page for FetchPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            crate::fetch::ensure_loaded();
-            let row = build_rows(ctx, ctx.title, &[
-                (0, RowSpec::switch("恢复fetch\0".as_bytes())),
-            ])?;
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::fetch::on() as u8);
             let label = fw_api::label_create(ctx.content);
             if label != 0 {
                 fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
                 fw_api::label_set_text(label, FETCH_HELP.as_ptr());
-                // 固定 340px 会裁掉说明末尾；给完整换行文本留足高度，超出首屏后由
-                // 页面 content 原生滚动，保证两条注意事项都能读到。
-                fw_api::obj_set_size_wh(label, 320, 560);
-                fw_api::obj_align_to(label, row, fw_api::align::OUT_BOTTOM_MID, 0, 12);
+                // 说明页没有开关；完整文本超出首屏后由 content 原生滚动。
+                fw_api::obj_set_size_wh(label, 320, 640);
+                fw_api::obj_align(label, fw_api::align::TOP_MID, 0, 12);
             }
             Ok(())
         }
     }
 
     fn on_click(&self, _idx: usize) {}
-
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 0 }
-
-    fn on_switch(&self, idx: usize) {
-        unsafe {
-            if idx != 0 { return; }
-            let _ = crate::fetch::set(!crate::fetch::on());
-            // 无论保存成功与否都按持久化结果重绘，避免开关显示与文件不一致。
-            render_req(19);
-        }
-    }
 }
 
 pub(crate) static PAGE_TABLE: [&dyn Page; 22] = [
