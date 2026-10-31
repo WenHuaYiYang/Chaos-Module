@@ -432,6 +432,9 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     //    没有任何我们能挂的渲染钩子(生命周期槽位只属于我们注册的页, eventbus 也
     //    没有"页面切换"主题)。
     crate::settings_entry::tick();
+    crate::system_update_entry::tick();
+    crate::launcher_entry::tick();
+    crate::system_version::tick();
     crate::beautify_restore::tick();
     font_apply::tick();
     // wrapper 原地热替换(融合 Corona 的核心一招): 20 拍一轮 + quiet 门,

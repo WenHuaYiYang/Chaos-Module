@@ -35,6 +35,8 @@ const FONT_INDEX: &[u8] = b"/data/chaos/font/index.txt\0";
 const FL_LINE: usize = 16;
 /// 清单最多几个字体 = 池位上限(font_apply::FONT_SLOT_MAX), 两边必须一致
 const FL_MAX: usize = 8;
+/// FL_SEL 的特殊值：已选择官方字体，等退出应用后恢复。
+const FL_OFFICIAL_PENDING: u32 = u32::MAX;
 /// 清单文件恒长(128 字节)
 const FL_INDEX_SIZE: usize = FL_LINE * FL_MAX;
 /// 短名缓冲字节数: 12 字节可用 + NUL 余量(16 是 .bss 里的对齐形状, 与图标那边同款)
@@ -254,30 +256,34 @@ unsafe fn slot_file_ok(slot: u32) -> bool {
 //   3. 定时器侧(删除流水线)一概不直接碰对象, 只置 render_req(FONT_PID as usize)。
 // ---------------------------------------------------------------------------
 
-/// 清单里有几个字体(即页面上几条条目)
+/// 清单里有几个自定义字体(不含固定在第一行的官方字体)
 pub(crate) unsafe fn entry_count() -> u32 { st_rd!(FL_N) }
 
-/// 第 e 个条目的槽号(越界返回 0)
+/// 第 e 个界面条目的槽号。第 0 行是官方字体，没有文件槽位。
 pub(crate) unsafe fn entry_slot(e: u32) -> u32 {
-    let i = e as usize;
+    if e == 0 { return 0; }
+    let i = (e - 1) as usize;
     if i >= st_rd!(FL_N) as usize { return 0; }
     st_rd!(FL_ID[i])
 }
 
 /// 第 e 个条目是不是当前勾选的那一个(界面画勾用)。
-/// 判据两处: **live**(真正在用的) + **pending**(刚点下、等下一拍落地的)。
-/// 两者都要看 —— commit 不在点击回调里做, 点完到落地之间有几十毫秒,
-/// 这段时间勾选必须已经跟过去了(否则看起来像没点上)。
+/// 官方字体占第 0 行；自定义字体按 live + pending 判断，切换等待期间立即显示勾选。
 pub(crate) unsafe fn entry_selected(e: u32) -> bool {
+    if e == 0 {
+        return st_rd!(FL_SEL) == FL_OFFICIAL_PENDING
+            || (st_rd!(FL_SEL) != FL_OFFICIAL_PENDING
+                && font_apply::live_get() == 0 && font_apply::pending_get() == 0);
+    }
+    if st_rd!(FL_SEL) == FL_OFFICIAL_PENDING { return false; }
     let s = entry_slot(e);
     if s == 0 { return false; }
     s == font_apply::live_get() || s == font_apply::pending_get()
 }
 
-/// 本页要建几条行(= 清单里的字体数, 最多 FL_MAX)
+/// 页面始终先显示官方字体，其后才是清单里的自定义字体。
 pub(crate) unsafe fn entry_shown() -> u32 {
-    let n = entry_count();
-    if n > FL_MAX as u32 { FL_MAX as u32 } else { n }
+    entry_count().min(FL_MAX as u32) + 1
 }
 
 /// 填条目行的两排文本: 主 = 字体短名(确认态则是"再点一次删除 X"), 副 = 槽位与在用状态。
@@ -345,14 +351,28 @@ pub(crate) unsafe fn lines_fill() {
     }
 }
 
-/// 第 row 行的主标签指针
+/// 第 row 行的主标签指针；第 0 行固定为官方字体。
 pub(crate) unsafe fn line_primary(row: usize) -> *const u8 {
-    core::ptr::addr_of!(FL_LINES[row]) as *const u8
+    if row == 0 {
+        "官方字体\0".as_bytes().as_ptr()
+    } else {
+        core::ptr::addr_of!(FL_LINES[row - 1]) as *const u8
+    }
 }
 
 /// 第 row 行的副标签指针(非 NULL => 行是双排, 与表盘页"名称 + ID"同形)
 pub(crate) unsafe fn line_secondary(row: usize) -> *const u8 {
-    core::ptr::addr_of!(FL_SUBS[row]) as *const u8
+    if row == 0 {
+        if st_rd!(FL_SEL) == FL_OFFICIAL_PENDING {
+            "已选择，退出后生效\0".as_bytes().as_ptr()
+        } else if entry_selected(0) {
+            "使用中\0".as_bytes().as_ptr()
+        } else {
+            "系统默认\0".as_bytes().as_ptr()
+        }
+    } else {
+        core::ptr::addr_of!(FL_SUBS[row - 1]) as *const u8
+    }
 }
 
 /// render 建完行之后把行句柄数组交给本模块(原地刷新要用)。
@@ -380,9 +400,7 @@ unsafe fn apply_checkboxes(rows: *mut u32, base: usize, n: usize) {
         if op != 0 {
             // 本页只有一屏, 第 i 行就是第 i 个条目
             let sel = if entry_selected(i as u32) { 1u8 } else { 0u8 };
-            upd(op, fw_api::NONE_PTR,
-                core::ptr::addr_of!(FL_LINES[i]) as *const u8,
-                core::ptr::addr_of!(FL_SUBS[i]) as *const u8, 0, sel);
+            upd(op, fw_api::NONE_PTR, line_primary(i), line_secondary(i), 0, sel);
         }
         i += 1;
     }
@@ -453,24 +471,27 @@ pub(crate) unsafe fn popup_reset() { confirm_pop::reset(confirm_pop::SLOT_FONT);
 
 /// 点第 row 行 —— 界面槽位在 page.rs 里映射过来
 pub(crate) unsafe fn click_row(row: usize) {
-    if row >= FL_MAX { return; }
+    if row > FL_MAX { return; }
     click_entry(row as u32);
 }
 
-/// 点某一条目。语义(与 icon_apply::click_entry 同一套交互):
-///   未选中的条目 -> 切过去(commit + request, 与 0x30 门同一套);
-///   已选中的条目 -> 第一次点变成"再点一次删除 X", 第二次点走删除流水线;
-///   已在用中的那份(它就是 live) -> 只给提示("先切走")。在用的那份绝不删, 也不进入确认态。
-/// 判"能不能删"一律以 **live**(font_apply 的当前池位)为准, 不以界面勾选为准 ——
-/// 勾选在点完立刻跟上, 而 live 要等 0x30 那一套跑完才跟上, 这段时间里按勾选判
-/// 会把"其实还在用"的那份判成可删。request_delete 里还有第二道同样的门。
-///
-/// 重要: 本函数**在固件的事件派发上下文里**跑,
-/// 所以这里一概**不碰 LVGL 对象** —— 只改静态量, 把"界面要更新"记成 FL_ROWS_REQ,
-/// 由 font_list::tick 在"没有跑批在动"的那一拍排一次**整页重建**(不再原地 row_update)。
-/// (icon_apply 在点击回调里直接 refresh_rows 是因为它那边没有字体脸的回退扫描
-/// 0x0CA666D8; 字体行有, 就是那条崩溃轴, 不能照抄这一条。)
+/// 点某一条目。官方字体只记录恢复请求；自定义字体保留切换与两步删除交互。
+/// 本函数运行在固件事件派发上下文，只改状态并刷新行，实际字体操作由 tick 延后执行。
 unsafe fn click_entry(e: u32) {
+    if e == 0 {
+        st_wr!(FL_DELCONF, 0);
+        st_wr!(FL_MSG, 0);
+        if entry_selected(0) { click_feedback(); return; }
+        if font_apply::busy() || font_apply::revert_busy() != 0 {
+            click_feedback();
+            return;
+        }
+        let pending = font_apply::pending_get();
+        if pending != 0 { font_apply::cancel_pending(pending); }
+        st_wr!(FL_SEL, FL_OFFICIAL_PENDING);
+        click_feedback();
+        return;
+    }
     let slot = entry_slot(e);
     if slot == 0 { return; }
     // 已选中的(在用中的那份永远算已选中): 两步删除的确认态(与图标页同款)。
@@ -611,6 +632,7 @@ pub(crate) unsafe fn mark_page_dirty() {
 /// 有没有我们这一路的活在推进(供节拍自适应用): 待重画请求、删除流水线、挂着的提示行。
 pub(crate) unsafe fn pending() -> bool {
     st_rd!(FL_ROWS_REQ) != 0 || st_rd!(FL_DEL_ST) != 0 || st_rd!(FL_MSG) != 0
+        || st_rd!(FL_SEL) == FL_OFFICIAL_PENDING
 }
 
 /// 50ms UI tick 里调用: 推进删除流水线 + 到点自动清掉那句提示 + 消费"界面要更新"请求。
@@ -618,6 +640,16 @@ pub(crate) unsafe fn pending() -> bool {
 /// 与字体应用(font_apply::tick 分拍建脸)是两条独立的事, 各走各的状态位。
 pub(crate) unsafe fn tick() {
     st_wr!(FL_TICKS, st_rd!(FL_TICKS).wrapping_add(1));
+    // 官方字体与自定义切换一样，等 Chaos 退出前台后再恢复，避免在页面事件链里换脸。
+    if st_rd!(FL_SEL) == FL_OFFICIAL_PENDING && st_rd!(APP_FG) == 0
+        && !font_apply::busy() && font_apply::revert_busy() == 0
+        && fw_api::screen_is_on()
+    {
+        st_wr!(FL_SEL, 0);
+        font_hot::revert_all();
+        font_apply::clear_live();
+        font_apply::request_revert();
+    }
     // 0) 删除确认框: 弹框在点击回调里当场做, 这里只剩**兜底销毁** ——
     //    勾/叉那一下没过关(页已经把框带走/句柄对不上)才转到这里, 安静拍补一刀。
     if page_is_live(FONT_PID as usize) && window_is_quiet()
