@@ -51,6 +51,12 @@ echo "rust-lld: $lld"
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
        -T "$here/merge_sections.ld" -o "$out" "$lib"
 
-python3 "$here/fix_ko_layout.py" "$out"
-python3 "$here/verify_chaos_ko.py" "$out"
+# 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$here/fix_ko_layout.py" "$out"
+  python3 "$here/verify_chaos_ko.py" "$out"
+else
+  node "$here/fix_ko_layout.js" "$out"
+  node "$here/verify_chaos_ko.js" "$out"
+fi
 echo "OK: $out"

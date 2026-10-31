@@ -358,3 +358,97 @@ pub unsafe extern "C" fn app_launcher_add(app_id: u32) {
     let f: unsafe extern "C" fn(u32) = transmute(super::fwaddr::APP_LAUNCHER_ADD as usize);
     f(app_id)
 }
+
+// ===========================================================================
+// 12. 快应用“重同步”：重建丢失的注册表节点
+// ===========================================================================
+//
+// 依据（2026-10-31，vela_ap.bin 3.101.043 反汇编）：
+//
+// proxyquickapp 自己维护一张**已装应用表**（全局 `0x20111B90`，node 在
+// `list[i]`）。手机绑定时固件走 `0xC5499B4(app_type)`：把类型存进
+// `0x20111B84` → 为 0 打 "phone not bound." 返回 → 非 0 遍历应用表，对每一项调
+// `quickapp_register_app(*(u16*)0x200D1CE6, &info)`。这就是“换绑新手机后隐藏应用
+// 全部回来”的固件机制：注册表里没有的 app 会被重新建节点 + `app_launcher_add`
+// 加图标（`registered quickapp: [%s, %s, %s]`），已有的走更新（`update icon url`）。
+//
+// 事件 9 回调 `0xC5498A4` 是同一套逻辑的变体：先比较手机类型，再遍历应用表——
+// 注册表查得到的调注册表 vtable `+0x3C(app_id, 0)`，查不到的才
+// `quickapp_register_app`。本节的 `quickapp_resync_missing()` 就抄这一支的
+// “查不到才注册”，避免动到已经正常的应用（不重建、不加图标，只补节点）。
+
+/// proxyquickapp 已装应用表所在全局（`0x20111B90` 里存表头指针）。
+pub const QUICKAPP_TABLE: u32 = 0x2011_1B90;
+
+/// “下一个 app_id” 的 16 位计数器（`quickapp_register_app` 成功后自增）。
+pub const QUICKAPP_NEXT_ID: u32 = 0x200D_1CE6;
+
+/// `quickapp_app_count()` —— 已装应用数量，`0xC54A560`；表未初始化返回 0。
+pub unsafe fn quickapp_app_count() -> i32 {
+    let f: unsafe extern "C" fn() -> i32 = transmute(0x0C54_A561usize);
+    f()
+}
+
+/// `quickapp_app_item(i, out)` —— 把第 i 项的信息结构写到 `out`（≥0x24 字节）。
+/// `0xC54A818`：成功返回 0，越界/失败返回 -1。结构布局（无符号意义，原样转交）：
+///   +0x00 应用对象（首字段为包名字符串）  +0x04 按名查表结果
+///   +0x08 obj+0x80   +0x0C obj+0xC0（图标路径）  +0x10 obj+0x10C
+///   +0x14 obj+0x100  +0x18/+0x19/+0x1A 三个标志字节
+pub unsafe fn quickapp_app_item(i: u32, out: *mut u8) -> i32 {
+    let f: unsafe extern "C" fn(u32, *mut u8) -> i32 = transmute(0x0C54_A819usize);
+    f(i, out)
+}
+
+/// `quickapp_register_app(app_id, info)` —— 注册（或更新）一个快应用。`0x0C549678`。
+/// 返回 0 表示成功。**会**在注册表里新建节点并 `app_launcher_add` 加桌面图标；
+/// 名字已存在且节点 `+0x14` 非 0 时只走更新（`app_launcher_update`）。
+pub unsafe fn quickapp_register_app(app_id: u16, info: *const u8) -> i32 {
+    let f: unsafe extern "C" fn(u16, *const u8) -> i32 = transmute(0x0C54_9679usize);
+    f(app_id, info)
+}
+
+/// 注册表“按名字查节点”的 vtable 入口：`[[APP_REGISTRY+0x18]+0x0C](key)`。
+/// 与 `0xC5498A4`、`0xC513BE8` 里的用法逐字一致；key 就是信息结构 `+0x00`。
+pub unsafe fn quickapp_registry_find(key: *const u8) -> u32 {
+    let vb = crate::mem::rd32((APP_REGISTRY + 0x18) as *const u32);
+    if vb == 0 || !crate::mem::plausible_ptr(vb) { return 0; }
+    let fp = crate::mem::rd32((vb + 0x0C) as *const u32);
+    if fp == 0 || !crate::mem::plausible_ptr(fp) { return 0; }
+    let f: unsafe extern "C" fn(*const u8) -> u32 = transmute(fp as usize);
+    f(key)
+}
+
+/// 遍历已装应用表，**只给注册表里查不到的 app 补节点**，返回 `(扫描数, 补建数)`。
+///
+/// 用途：深度隐藏把条目搬进 `apps.json_hide` 后重启，固件不会为这些应用建节点，
+/// 于是既没有图标也无法启动。本函数在运行期按固件的“重同步”路径把节点补回来；
+/// 补完 Chaos 再调 `app_launcher_del` 摘图标即可得到“隐藏但有节点、可被启动”的状态。
+///
+/// 安全前提：proxyquickapp 已初始化（`quickapp_app_count() > 0`）；在 UI/tick
+/// 线程调用（与 `app_launcher_add/del` 同上下文）。
+pub unsafe fn quickapp_resync_missing() -> (u32, u32) {
+    let vb = crate::mem::rd32((APP_REGISTRY + 0x18) as *const u32);
+    if vb == 0 || !crate::mem::plausible_ptr(vb) { return (0, 0); }
+    let n = quickapp_app_count();
+    if n <= 0 { return (0, 0); }
+    // 数量异常大说明表还没初始化好, 宁可不做也不能照着一个垃圾值循环。
+    let n = if n > 512 { 512 } else { n };
+    let mut total = 0u32;
+    let mut rebuilt = 0u32;
+    let mut i = 0i32;
+    while i < n {
+        let mut info = [0u8; 0x2c];
+        if quickapp_app_item(i as u32, info.as_mut_ptr()) == 0 {
+            total += 1;
+            let key = crate::mem::rd32(info.as_ptr() as *const u32);
+            if key != 0 && crate::mem::safe_ptr(key) && quickapp_registry_find(key as *const u8) == 0 {
+                let id = crate::mem::rd16(QUICKAPP_NEXT_ID as *const u16);
+                if quickapp_register_app(id, info.as_ptr()) == 0 {
+                    rebuilt += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    (total, rebuilt)
+}

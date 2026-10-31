@@ -77,6 +77,13 @@ static mut REQ_MODE: u32 = 0;
 static mut BOOT_APPLIED: u32 = 0;
 static mut BOOT_TRIES: u32 = 0;
 static mut BOOT_WAIT: u32 = 0;
+// 运行期看门狗: 换绑/重连、手机重发 rpk_info、新装应用都会触发固件重注册,
+// 普通隐藏的隐藏位只在运行期(新节点 bit0 默认 0), 需要有人持续补回来。
+static mut WATCH_WAIT: u32 = 0;
+static mut WATCH_SIG: u32 = 0;
+static mut WATCH_SEEN: u32 = 0;
+static mut WATCH_BUSY: u32 = 0;
+static mut WATCH_CHG: u32 = 0;      // 注册表刚变过, 等安静一拍再统一重放
 
 // ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
 pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
@@ -1576,17 +1583,28 @@ pub(crate) unsafe fn do_mode_apply() {
 }
 
 /// tick: 重放隐藏名单 —— 进页时发现注册表包名集合变化(新装应用)会自动触发,
-/// 也可由应用管理页的"重新应用隐藏"按钮触发。只对普通隐藏模式有意义:
-/// 深度隐藏把条目搬进了 apps.json_hide, 状态由文件本身表达, 重启才生效。
+/// 也可由应用管理页的"重新应用隐藏"按钮触发。
+///
+/// 先补注册表节点再重放隐藏: 深度隐藏把条目搬进 apps.json_hide 后, 重启时固件
+/// 不会为这些应用建注册表节点, 于是既无法启动也无法置隐藏位。这里走固件自己的
+/// "手机重同步"路径(proxyquickapp 应用表 → quickapp_register_app)把缺的节点补回来,
+/// 只补查不到的, 已在册的应用一律不动。普通模式下通常没有缺节点, 这一步是空转。
 pub(crate) unsafe fn do_reapply() {
     if REQ_REAPPLY == 0 { return; }
     REQ_REAPPLY = 0;
-    if APPLY_MODE == 0 {
-        wmsg("深度隐藏模式: 由注册表决定, 无需重放\0");
-        return;
+
+    let (total, rebuilt) = fw_api::quickapp_resync_missing();
+    if rebuilt > 0 {
+        crate::log::kv("补建快应用节点, 应用表合计 ", total);
+        crate::log::kv("补建快应用节点, 本次新建 ", rebuilt);
     }
+
     if KEEP_N == 0 {
-        wmsg("隐藏名单为空, 无需重放\0");
+        if rebuilt > 0 {
+            wmsg_keep("已补建缺失节点, 隐藏名单为空\0");
+        } else {
+            wmsg("隐藏名单为空, 无需重放\0");
+        }
         return;
     }
     let found = keep_apply_all();
@@ -1595,9 +1613,14 @@ pub(crate) unsafe fn do_reapply() {
     n += put_u32(d.add(n), found as u32);
     n += put_lit(d.add(n), "/".as_bytes());
     n += put_u32(d.add(n), KEEP_N as u32);
+    if rebuilt > 0 {
+        n += put_lit(d.add(n), " 补建 ".as_bytes());
+        n += put_u32(d.add(n), rebuilt);
+    }
     write_volatile(d.add(n), 0);
     MSG_KEEP = 1;
     crate::log::kv("重新应用隐藏, 命中 ", found as u32);
+    if rebuilt > 0 { crate::log::kv("重新应用隐藏, 补建节点 ", rebuilt); }
 }
 
 /// 开机补偿: 模块加载后由维护定时器(UI 线程)调用。只对保留条目模式生效,
@@ -1622,6 +1645,98 @@ pub(crate) unsafe fn boot_apply() {
         BOOT_APPLIED = 1;
         crate::log::line("开机补偿: 超时, 部分应用未找到节点");
     }
+}
+
+/// 固件运行期注册表的指纹(包名集合 + 节点数 / app_id)。
+///
+/// 与 reg_sig() 读文件不同, 这里读的是**内存 APP_REGISTRY 链**: 应用注册/退出会改它,
+/// Chaos 自己改隐藏位不会。换绑重连、手机重发 rpk_info 后固件重注册应用, 这个指纹必变。
+unsafe fn reg_sig_rt() -> u32 {
+    let head = crate::mem::rd32(fw_api::APP_REGISTRY as *const u32);
+    if head == 0 || crate::mem::safe_ptr(head) == false { return 0; }
+    let mut node = crate::mem::rd32((head + 4) as *const u32);
+    let mut h = 0u32;
+    let mut n = 0u32;
+    let mut guard = 0u32;
+    while crate::mem::safe_ptr(node) && node != head && guard < 512 {
+        guard += 1;
+        let np = crate::mem::rd32((node + 0x08) as *const u32) as *const u8;
+        if crate::mem::safe_ptr(np as u32) {
+            let mut k = 0usize;
+            while k < 44 {
+                let c = read_volatile(np.add(k));
+                if c == 0 { break; }
+                h = h.wrapping_mul(131).wrapping_add(c as u32);
+                k += 1;
+            }
+        }
+        n = n.wrapping_add(1);
+        node = crate::mem::rd32((node + 4) as *const u32);
+    }
+    h.wrapping_mul(31).wrapping_add(n)
+}
+
+/// 运行期隐藏看门狗(维护定时器里调)。
+///
+/// 为什么需要: 普通隐藏(APPLY_MODE=1)的隐藏状态是**运行期**的 —— 隐藏名单在
+/// /data/chaos/appmgr_keep.bin, 生效靠 node+0x3C bit0 + 摘图标。任何一次固件重注册
+/// (换绑新手机后手机重下发 rpk_info、重装、升级)都会建出新节点, bit0 默认 0,
+/// 图标就被 add 回来了; 开机补偿只在开机跑一次, 页1 的自动重放又要求页面打开。
+/// 所以换绑后所有隐藏应用会一起冒出来。
+///
+/// 这里低频巡检两条: ①注册表包名集合变了 -> 整名单重放(补 bit + 摘图标);
+/// ②兜底逐项查 bit0, 防止集合没变但节点被重建的情况。
+pub(crate) unsafe fn watch_keep() {
+    apply_mode_ensure();
+    if APPLY_MODE == 0 || KEEP_N == 0 { return; }
+    excl_ensure();
+    WATCH_WAIT = WATCH_WAIT.wrapping_add(1);
+    // 维护定时器快拍 50ms / 慢拍 1s: 4 拍 = 快时 0.2s、慢时 4s, 足够挡住重注册。
+    if WATCH_WAIT % 4 != 0 { return; }
+    if WATCH_BUSY != 0 { return; }
+    WATCH_BUSY = 1;
+
+    let sig = reg_sig_rt();
+    if WATCH_SEEN == 0 {
+        WATCH_SEEN = 1;
+        WATCH_SIG = sig;
+    } else if sig != WATCH_SIG {
+        // 重装/换绑时固件是一条条重注册的, 注册期间指纹每拍都在变。
+        // 先记下来等这一批注册完(指纹安静一拍)再统一重放, 避免逐条重放打满 UI 线程。
+        WATCH_SIG = sig;
+        WATCH_CHG = 1;
+    } else if WATCH_CHG != 0 {
+        WATCH_CHG = 0;
+        let found = keep_apply_all();
+        if found != 0 {
+            crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
+        }
+    }
+
+    // 兜底: 名单内节点 bit0 被清掉(例如节点被复用而不是重建)也补回来。
+    let mut fixed = 0usize;
+    let mut i = 0usize;
+    while i < KEEP_N {
+        let p = KEEP_BUF.as_ptr().add(4 + i * PKG_CAP);
+        if excl_index(p) == usize::MAX {
+            let node = find_node(p);
+            if node != 0
+                && crate::mem::rd8((node + fw_api::APPN_FLAGS) as *const u8) & fw_api::APPN_HIDDEN == 0
+            {
+                let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+                if id != 0 {
+                    set_node_hidden(node, true);
+                    fw_api::app_launcher_del(id);
+                    fixed += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    if fixed != 0 {
+        crate::log::kv("看门狗: 补隐藏 ", fixed as u32);
+    }
+    WATCH_BUSY = 0;
 }
 
 // ===== 改写 =====

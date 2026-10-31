@@ -386,6 +386,9 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     // 开机补偿: 免重启模式下, 把 Chaos 隐藏名单里的应用重新置位/摘图标。
     // 必须在 UI 线程(timer)里做: app_launcher_del 会碰 LVGL 对象, 不能在 insmod 线程调。
     crate::appmgr::boot_apply();
+    // 运行期看门狗: 换绑新手机/手机重发应用清单会触发固件重注册应用,
+    // 普通隐藏的隐藏位会被新节点重置, 这里持续补回(见 appmgr::watch_keep 注释)。
+    crate::appmgr::watch_keep();
     // 延时窗口结束后才订阅手势；此前不触碰事件总线。
     if st_rd!(SHAKE_SUB) == 0 {
         shake_arm();
