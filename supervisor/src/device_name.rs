@@ -10,15 +10,28 @@ pub(crate) const PAGE_PID: u32 = 26;
 const SELECT_CONFIG: &[u8] = b"/data/chaos/device-name.cfg\0";
 const CUSTOM_CONFIG: &[u8] = b"/data/chaos/device-name.txt\0";
 const CUSTOM_CAPACITY: usize = 31;
-const CUSTOM_INDEX: u8 = 5;
+const CUSTOM_INDEX: u8 = PRESETS.len() as u8;
 
-static PRESETS: [&[u8]; 5] = [
+// 页面按这个列表动态建行；替换或新增条目时无须再修改 page.rs。
+// 每行都必须以 \0 结尾，最多容纳 11 个预设（另留一行给“自定义”）。
+static PRESETS: &[&[u8]] = &[
     "小米手环10 Pro\0".as_bytes(),
     "小米手环10 Pro 陶瓷版\0".as_bytes(),
     "小米手环11 Pro\0".as_bytes(),
     "小米手环11 Pro 陶瓷版\0".as_bytes(),
     "三星note7\0".as_bytes(),
+    "1\0".as_bytes(),
+    "2\0".as_bytes(),
+    "3\0".as_bytes(),
 ];
+
+pub(crate) fn preset_count() -> usize {
+    PRESETS.len()
+}
+
+pub(crate) fn preset_text(index: usize) -> &'static [u8] {
+    PRESETS[index]
+}
 
 static mut SELECTED: u8 = 0;
 static mut CUSTOM: [u8; CUSTOM_CAPACITY + 1] = [0; CUSTOM_CAPACITY + 1];

@@ -2556,7 +2556,7 @@ static PAGE_DEVNAMEP: DeviceNamePage = DeviceNamePage;
 
 unsafe fn device_name_checks(rows: *mut u32) {
     let selected = crate::device_name::selected();
-    for i in 0..6 {
+    for i in 0..=crate::device_name::preset_count() {
         let row = read_volatile(rows.add(i));
         if row != 0 {
             fw_api::row_update(
@@ -2578,14 +2578,18 @@ impl Page for DeviceNamePage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::check("小米手环10 Pro\0".as_bytes(), core::ptr::null())),
-                (1, RowSpec::check("小米手环10 Pro 陶瓷版\0".as_bytes(), core::ptr::null())),
-                (2, RowSpec::check("小米手环11 Pro\0".as_bytes(), core::ptr::null())),
-                (3, RowSpec::check("小米手环11 Pro 陶瓷版\0".as_bytes(), core::ptr::null())),
-                (4, RowSpec::check("三星note7\0".as_bytes(), core::ptr::null())),
-                (5, RowSpec::check("自定义\0".as_bytes(), crate::device_name::custom_display())),
-            ])?;
+            // 文本和数量都以 device_name::PRESETS 为准，新增预设后这里自动建行。
+            let mut previous = ctx.title;
+            for i in 0..crate::device_name::preset_count() {
+                let row = build_row(ctx, previous, i, &RowSpec::check(
+                    crate::device_name::preset_text(i), core::ptr::null()));
+                if row == 0 { return Err(PageError::RowFailed(i)); }
+                previous = row;
+            }
+            let custom = crate::device_name::preset_count();
+            let row = build_row(ctx, previous, custom, &RowSpec::check(
+                "自定义\0".as_bytes(), crate::device_name::custom_display()));
+            if row == 0 { return Err(PageError::RowFailed(custom)); }
             device_name_checks(ctx.rows);
             Ok(())
         }
@@ -2593,12 +2597,13 @@ impl Page for DeviceNamePage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            if idx < 5 {
+            let custom = crate::device_name::preset_count();
+            if idx < custom {
                 crate::device_name::choose(idx);
                 if page_is_live(crate::device_name::PAGE_PID as usize) {
                     device_name_checks(page_rows_ptr(crate::device_name::PAGE_PID as usize));
                 }
-            } else if idx == 5 {
+            } else if idx == custom {
                 crate::device_name::edit_custom();
             }
         }
