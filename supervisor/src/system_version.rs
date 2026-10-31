@@ -177,13 +177,74 @@ unsafe fn current_text() -> *const u8 {
     }
 }
 
+/// 设备名称按实际内容收缩；长文本主动换行，避免固定 304px 宽标签留出大片空白。
+/// 原有 align_to(设备名称标题, OUT_BOTTOM_MID) 会在宽度变化后自动重新居中，
+/// 下方“手环型号”仍跟随设备名称值标签，不需要改动其他字段的位置。
+unsafe fn set_device_name(label: u32) {
+    const MAX_LINE_WIDTH: u32 = 280;
+    const DISPLAY_CAPACITY: usize = 511;
+    const LV_SIZE_CONTENT: i32 = 0x7FFF_FFFF;
+    static mut DISPLAY: [u8; DISPLAY_CAPACITY + 1] = [0; DISPLAY_CAPACITY + 1];
+
+    let src = crate::device_name::current_text();
+    let out = core::ptr::addr_of_mut!(DISPLAY) as *mut u8;
+    let mut input = 0usize;
+    let mut written = 0usize;
+    let mut line_width = 0u32;
+    loop {
+        let c = read_volatile(src.add(input));
+        if c == 0 || written >= DISPLAY_CAPACITY {
+            break;
+        }
+        // 只用于选择安全换行点；短文本最终宽度由 LVGL 按真实字体精确计算。
+        let (char_len, char_width) = if c < 0x80 {
+            let width = match c {
+                b' ' | b'i' | b'j' | b'l' | b'I' | b'.' | b',' | b':' | b';' | b'!' => 6,
+                b'a'..=b'h' | b'k'..=b'z' => 14,
+                b'0'..=b'9' => 16,
+                b'A'..=b'Z' => 20,
+                _ => 24,
+            };
+            (1usize, width)
+        } else if c & 0xE0 == 0xC0 {
+            (2, 24)
+        } else if c & 0xF0 == 0xE0 {
+            (3, 24)
+        } else if c & 0xF8 == 0xF0 {
+            (4, 24)
+        } else {
+            (1, 24)
+        };
+        if line_width != 0 && line_width + char_width > MAX_LINE_WIDTH {
+            write_volatile(out.add(written), b'\n');
+            written += 1;
+            line_width = 0;
+        }
+        let mut copied = 0usize;
+        while copied < char_len && written < DISPLAY_CAPACITY {
+            write_volatile(out.add(written), read_volatile(src.add(input + copied)));
+            written += 1;
+            copied += 1;
+        }
+        if copied != char_len {
+            break;
+        }
+        input += char_len;
+        line_width += char_width;
+    }
+    write_volatile(out.add(written), 0);
+    fw_api::label_set_text(label, out);
+    // LVGL 9 的 LV_SIZE_CONTENT；043 固件也以 0x7FFFFFFF 作为坐标上限。
+    fw_api::obj_set_width(label, LV_SIZE_CONTENT);
+}
+
 unsafe extern "C" fn create(page: u32, root: u32, start: u32) -> i32 {
     let original: unsafe extern "C" fn(u32, u32, u32) -> i32 =
         core::mem::transmute(ORIGINAL_CREATE as usize);
     let result = original(page, root, start);
     let device_name_label = read_volatile(DEVICE_NAME_LABEL_SLOT as *const u32);
     if safe_ptr(device_name_label) {
-        fw_api::label_set_text(device_name_label, crate::device_name::current_text());
+        set_device_name(device_name_label);
     }
     let device_model_label = read_volatile(DEVICE_MODEL_LABEL_SLOT as *const u32);
     if safe_ptr(device_model_label) {
