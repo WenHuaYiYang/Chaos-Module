@@ -25,7 +25,7 @@ static mut LOADED: bool = false;
 
 #[inline]
 fn valid_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'.'
+    c.is_ascii_alphanumeric() || c == b'.' || c == b' '
 }
 
 pub(crate) unsafe fn ensure_loaded() {
@@ -131,7 +131,7 @@ pub(crate) unsafe fn edit_custom() {
     crate::keyboard::open(initial, crate::keyboard::Completion::DeviceModel);
 }
 
-/// 键盘完成动作调用。只有非空且全部为英文、数字或小数点的值才会保存。
+/// 键盘完成动作调用。只有非空且全部为英文、数字、小数点或空格的值才会保存。
 pub(crate) unsafe fn save_custom(text: *const u8) -> bool {
     ensure_loaded();
     if text.is_null() {

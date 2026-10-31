@@ -107,7 +107,9 @@ unsafe fn create_key(
         return false;
     }
     fw_api::style_apply(label, FW_STYLE_HR_NAME, 255, 0);
-    if code <= 0xFF {
+    if code == b' ' as u32 {
+        fw_api::label_set_text(label, b"SPACE\0".as_ptr());
+    } else if code <= 0xFF {
         let mut c = code as u8;
         if UPPERCASE && c.is_ascii_lowercase() {
             c -= b'a' - b'A';
@@ -183,6 +185,7 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     if !create_key(parent, b'.' as u32, 20, 604, 56, 52, 0x26_26_26) { ok = false; }
     if !create_key(parent, KEY_CLEAR, 84, 604, 88, 52, 0x40_40_40) { ok = false; }
     if !create_key(parent, KEY_DONE, 180, 604, 136, 52, 0x53_81_FE) { ok = false; }
+    if !create_key(parent, b' ' as u32, 20, 664, 296, 52, 0x26_26_26) { ok = false; }
     ok
 }
 

@@ -1614,7 +1614,7 @@ impl Page for FontListPage {
                 if r != 0 { last = r; }
             }
             build_rows(ctx, last, &[
-                (8, RowSpec::clickable("返回\0".as_bytes()))])?;
+                (9, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 建完行立刻原地补写勾选态, 并把行句柄交给 font_list: 切换与两步删除
             // 的反馈都走原地刷新(不重建整页 —— 重建会把整页字体样式重抄一遍)。
             font_list::bind_rows(ctx.rows, FONT_ROW0, ent as usize);
@@ -1626,11 +1626,9 @@ impl Page for FontListPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             match idx {
-                // 0..7 = 字体条目。语义在 font_list::click_row(与"桌面图标"页同一套):
-                // 点未选中的 = 切过去; 点已选中的 = 第一次变"再点一次删除", 再点才删;
-                // 点当前在用的 = 提示"先切走"(在用的那份绝不删)。
-                0..=7 => font_list::click_row(idx),
-                8 => nav_back(),
+                // 行0固定为官方字体，行1..8对应八个自定义字体槽位。
+                0..=8 => font_list::click_row(idx),
+                9 => nav_back(),
                 _ => {}
             }
         }
@@ -2071,7 +2069,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.5\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.6\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
