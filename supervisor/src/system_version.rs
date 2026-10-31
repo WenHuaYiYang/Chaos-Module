@@ -177,9 +177,8 @@ unsafe fn current_text() -> *const u8 {
     }
 }
 
-/// 设备名称按实际内容收缩；长文本主动换行，避免固定 304px 宽标签留出大片空白。
-/// 原有 align_to(设备名称标题, OUT_BOTTOM_MID) 会在宽度变化后自动重新居中，
-/// 下方“手环型号”仍跟随设备名称值标签，不需要改动其他字段的位置。
+/// 设备名称保持固定可用宽度，仅让高度随换行后的内容变化。
+/// 禁止标签自身滚动，避免长文本被 LVGL 当作可横向拖动的内容。
 unsafe fn set_device_name(label: u32) {
     const MAX_LINE_WIDTH: u32 = 280;
     const DISPLAY_CAPACITY: usize = 511;
@@ -196,7 +195,6 @@ unsafe fn set_device_name(label: u32) {
         if c == 0 || written >= DISPLAY_CAPACITY {
             break;
         }
-        // 只用于选择安全换行点；短文本最终宽度由 LVGL 按真实字体精确计算。
         let (char_len, char_width) = if c < 0x80 {
             let width = match c {
                 b' ' | b'i' | b'j' | b'l' | b'I' | b'.' | b',' | b':' | b';' | b'!' => 6,
@@ -235,7 +233,34 @@ unsafe fn set_device_name(label: u32) {
     write_volatile(out.add(written), 0);
     fw_api::label_set_text(label, out);
     // LVGL 9 的 LV_SIZE_CONTENT；043 固件也以 0x7FFFFFFF 作为坐标上限。
-    fw_api::obj_set_width(label, LV_SIZE_CONTENT);
+    fw_api::obj_set_size(label, 304, LV_SIZE_CONTENT);
+    fw_api::obj_clear_scrollable(label);
+}
+
+/// 原固件只在页面创建时对齐一次。自定义文本改变标签高度后，必须按原来的
+/// 相对位置关系重排整链，才能同时消除短文本留白和长文本与后续字段重叠。
+unsafe fn realign_about_fields() {
+    const OUT_BOTTOM_MID: u32 = 14;
+    const PAIRS: &[(u32, u32, i32)] = &[
+        (DEVICE_NAME_LABEL_SLOT, 0x2011_1C2C, 0),
+        (0x2011_1C34, DEVICE_NAME_LABEL_SLOT, 20),
+        (DEVICE_MODEL_LABEL_SLOT, 0x2011_1C34, 0),
+        (0x2011_1C4C, DEVICE_MODEL_LABEL_SLOT, 20),
+        (SYSTEM_TEXT_LABEL_SLOT, 0x2011_1C4C, 0),
+        (0x2011_1C44, SYSTEM_TEXT_LABEL_SLOT, 20),
+        (LABEL_SLOT, 0x2011_1C44, 0),
+        (0x2011_1C3C, LABEL_SLOT, 20),
+        (0x2011_1C40, 0x2011_1C3C, 0),
+        (0x2011_1C64, 0x2011_1C40, 20),
+        (0x2011_1C68, 0x2011_1C64, 0),
+    ];
+    for &(object_slot, base_slot, offset_y) in PAIRS {
+        let object = read_volatile(object_slot as *const u32);
+        let base = read_volatile(base_slot as *const u32);
+        if safe_ptr(object) && safe_ptr(base) {
+            fw_api::obj_align_to(object, base, OUT_BOTTOM_MID, 0, offset_y);
+        }
+    }
 }
 
 unsafe extern "C" fn create(page: u32, root: u32, start: u32) -> i32 {
@@ -258,6 +283,7 @@ unsafe extern "C" fn create(page: u32, root: u32, start: u32) -> i32 {
     if safe_ptr(system_text_label) {
         fw_api::label_set_text(system_text_label, crate::system_text::current_text());
     }
+    realign_about_fields();
     result
 }
 
