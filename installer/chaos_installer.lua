@@ -76,6 +76,7 @@ local status_label
 local runner
 local step_index = 1
 local settings_enabled = true
+local system_update_enabled = false
 -- fetch 已固定启用，不再读取可能残留的 fetch.cfg。
 local fetch_enabled = true
 local started_once = false
@@ -290,6 +291,7 @@ end
 
 -- 已加载的模块保持原样，仅部署下次启动的模块文件。
 local send_settings_command
+local send_command
 local function update_supervisor()
   local ko = read_all(SUPERVISOR_RESOURCE)
   local fetch = read_all(FETCH_RESOURCE)
@@ -308,12 +310,20 @@ local function update_supervisor()
   if not ok then return false, err end
   local sf, serr = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
   if not sf then return false, serr end
-  if settings_enabled and module_loaded() then
-    local sent, send_err = send_settings_command()
-    if not sent then return false, send_err end
+  sf, serr = write_file(DATA_DIR .. "/system_update.cfg", string.char(system_update_enabled and 1 or 0))
+  if not sf then return false, serr end
+  if module_loaded() then
+    if settings_enabled then
+      local sent, send_err = send_settings_command()
+      if not sent then return false, send_err end
+    end
+    if system_update_enabled then
+      local sent, send_err = send_command(0x45)
+      if not sent then return false, send_err end
+    end
   end
   -- 状态行是单行居中、卡片只有 304 宽(22px), 太长会被屏幕裁掉; 成功提示收在 220px 内。
-  return true, settings_enabled and "已更新，重启后设置生效" or "模块已更新，请重启"
+  return true, (settings_enabled or system_update_enabled) and "已更新，重启后设置生效" or "模块已更新，请重启"
 end
 
 local function build_fetch_sh()
@@ -534,7 +544,7 @@ send_settings_command = function()
   if not ok or result == false or not closed or close_result == false then return false, "settings 命令写入失败" end
   return true
 end
-local function send_command(arg0)
+send_command = function(arg0)
   local frame = u32le(CMD_MAGIC) .. u32le(CMD_INSTALL) .. u32le(arg0) .. u32le(0)
   local fh = io.open(DEVICE_PATH, "wb")
   if not fh then return false, "设备打不开" end
@@ -636,6 +646,13 @@ local pipeline = {
       if not fh then return false, "无法保存 settings 选项" end
       fh:write(string.char(settings_enabled and 1 or 0)); fh:close()
       if settings_enabled then return send_settings_command() end
+      return true
+  end },
+  { name = "6.45 注入系统更新入口", body = function()
+      local ok, err = write_file(DATA_DIR .. "/system_update.cfg",
+          string.char(system_update_enabled and 1 or 0))
+      if not ok then return false, "无法保存系统更新选项: " .. tostring(err) end
+      if system_update_enabled then return send_command(0x45) end
       return true
   end },
   { name = "6.5 通知系统", body = function()
@@ -828,18 +845,22 @@ local function make_button(parent, text, y_ofs, kind, on_clicked)
   return b, button_label
 end
 
--- 注入设置页的两个开关: 自启动(装/删)与是否注入 settings。
--- settings 的选择在运行/更新模块时生效(update_supervisor 写 settings.cfg 并触发命令),
--- 这里切换时先落盘, 下次进页面能看到上次的选择。
+-- 注入设置页: 自启动(装/删)、settings 入口与系统更新页入口。
+-- 两个入口的选择在运行/更新模块时生效，切换时先落盘，下次进页面保留选择。
 local saved_settings = read_all(DATA_DIR .. "/settings.cfg", "rb")
 settings_enabled = (saved_settings == nil) or saved_settings == string.char(1)
-local autostart_btn_label, settings_btn_label
+local saved_system_update = read_all(DATA_DIR .. "/system_update.cfg", "rb")
+system_update_enabled = saved_system_update == string.char(1)
+local autostart_btn_label, settings_btn_label, system_update_btn_label
 local function settings_refresh()
   if autostart_btn_label then
     autostart_btn_label:set { text = autostart_registered() and "自启动：删除" or "自启动：安装" }
   end
   if settings_btn_label then
     settings_btn_label:set { text = settings_enabled and "注入 settings：开启" or "注入 settings：关闭" }
+  end
+  if system_update_btn_label then
+    system_update_btn_label:set { text = system_update_enabled and "系统更新入口：开启" or "系统更新入口：关闭" }
   end
 end
 local run_button
@@ -952,9 +973,20 @@ local settings_button, settings_lbl = make_button(as_view, "注入 settings：�
 end)
 settings_btn_label = settings_lbl
 
+-- 行3: 是否在“设置 → 我的设备 → 系统更新”中追加 Chaos 入口。
+local system_update_button, system_update_lbl = make_button(as_view, "系统更新入口：关闭", 78, "ghost", function()
+  if runner or started_once then as_set("请在运行前选择", V_WARN); return end
+  system_update_enabled = not system_update_enabled
+  local ok, err = write_file(DATA_DIR .. "/system_update.cfg", string.char(system_update_enabled and 1 or 0))
+  if not ok then as_set("保存失败: " .. tostring(err), V_ERR); return end
+  settings_refresh()
+  as_set(system_update_enabled and "运行时注入系统更新入口" or "运行时跳过系统更新入口", V_TXT2)
+end)
+system_update_btn_label = system_update_lbl
+
 settings_refresh()
 
-make_button(as_view, "< 返回", 78, "ghost", function()
+make_button(as_view, "< 返回", 152, "ghost", function()
   as_set(autostart_state_text(), V_TXT2)
   view_show("main")
 end)

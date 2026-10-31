@@ -60,6 +60,8 @@ pub mod align {
     pub const TOP_LEFT: u32 = 1;
     pub const TOP_MID: u32 = 2;
     pub const TOP_RIGHT: u32 = 3;
+    /// 在父对象内水平、垂直居中；键盘按键文字使用。
+    pub const CENTER: u32 = 8;
     pub const OUT_BOTTOM_LEFT: u32 = 13;
     /// 放在基准下方并水平居中 行/文本纵向串链用的就是这个
     pub const OUT_BOTTOM_MID: u32 = 14;

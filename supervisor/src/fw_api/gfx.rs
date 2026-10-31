@@ -9,6 +9,14 @@ use super::*;
 // 2. LVGL 对象（thunk → 段B）
 // ===========================================================================
 
+/// `lv_obj_create(parent, options)` 创建通用基础对象。静态核对
+///
+/// 原生入口与 16 字节签名见研究资料 `ui.object.create`；options 传 0 使用默认类。
+pub unsafe extern "C" fn obj_create(parent: Obj, options: u32) -> Obj {
+    let f: unsafe extern "C" fn(Obj, u32) -> Obj = transmute(0x1C02_8BB5usize);
+    f(parent, options)
+}
+
 /// `lv_obj_set_size(obj, w, h)` 已验证
 /// fw_addr: 0x004C8628  (文件偏移; VA = +0x0C0C0000, 指针 |=1)
 pub unsafe extern "C" fn obj_set_size(obj: Obj, w: i32, h: i32) -> Obj {

@@ -155,6 +155,8 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_FETCH) as u32,
     core::ptr::addr_of!(PAGE_LICENSES) as u32,
     core::ptr::addr_of!(PAGE_LICENSE_MPL) as u32,
+    core::ptr::addr_of!(PAGE_SYSVER) as u32,
+    core::ptr::addr_of!(PAGE_KEYBOARD) as u32,
 ];
 let mut pg = 0usize;
 while pg < PAGE_COUNT {
@@ -272,7 +274,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
         desc_addr + 0x3A0, desc_addr + 0x414, desc_addr + 0x488, desc_addr + 0x4FC,
         desc_addr + 0x570, desc_addr + 0x5E4, desc_addr + 0x658, desc_addr + 0x6CC,
         desc_addr + 0x740, desc_addr + 0x7B4, desc_addr + 0x828, desc_addr + 0x89C,
-        desc_addr + 0x910, desc_addr + 0x984,
+        desc_addr + 0x910, desc_addr + 0x984, desc_addr + 0x9F8, desc_addr + 0xA6C,
     ];
     trace_step(12); // register_app 前
     let install_result = install(meta, items.as_ptr(), PAGE_COUNT as u32);
@@ -344,13 +346,15 @@ static mut DQ_FIRED: u32 = 0;
 
 unsafe fn run_install_cmd(arg0: u32, arg1: u32) {
     // 安装流程用到的命令: 0/1/2 注册发布, 0x13 注册链, 0x43 固件 notify,
-    // 0x18/0x19 语言, 0x22 回读槽统计, 0x30 字体投递与切换(投递包)
+    // 0x44/0x45 设置页与系统更新页入口, 0x18/0x19 语言, 0x22 回读槽统计,
+    // 0x30 字体投递与切换(投递包)
     match arg0 {
         0    => { fops_wr(FOPS_STEP, 0); cmd_install(0x12); }   // 注册链(止于 init_buffer)
         1 | 2 => { /* no-op publish: 不调固件，仅置 ACTIVE */ }
         0x13 => { fops_wr(FOPS_STEP, 0); cmd_install(0x13); }   // 完整注册链
         0x43 => { fops_wr(FOPS_STEP, 0); notify_firmware_full(); } // 固件完整 notify 链
         0x44 => { crate::settings_entry::request(); }
+        0x45 => { crate::system_update_entry::request(); }
         0x18 => { st_wr!(LANG, 1); } // 设中文
         0x19 => { st_wr!(LANG, 0); } // 设英文
         0x22 => {
