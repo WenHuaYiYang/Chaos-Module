@@ -1,6 +1,6 @@
-//! 设置 → 关于本机：系统版本显示值（3.101.043）。
+//! 设置 → 我的设备 → 关于本机：“OS版本”下方的显示值（3.101.043）。
 //!
-//! 只包装关于本机页面的 on_create，在原页面创建完成后改写系统版本标签。
+//! 只包装关于本机页面的 on_create，在原页面创建完成后改写 OS 版本值标签。
 //! 不全局拦截 lvx_label_set_text，因此其他页面和资源文本不受影响。
 
 use crate::*;
@@ -11,7 +11,7 @@ const DESCRIPTOR: u32 = 0x200D_2030;
 const PAGE_KEY: u32 = 0x0016_0018;
 const CREATE_SLOT: u32 = DESCRIPTOR + 0x4C;
 const ORIGINAL_CREATE: u32 = 0x0C54_D635;
-const LABEL_SLOT: u32 = 0x2011_1C50;
+const LABEL_SLOT: u32 = 0x2011_1C48; // “OS版本”标题下方的值标签
 const SELECT_CONFIG: &[u8] = b"/data/chaos/system-version.cfg\0";
 const CUSTOM_CONFIG: &[u8] = b"/data/chaos/system-version.txt\0";
 const CUSTOM_CAPACITY: usize = 31;
