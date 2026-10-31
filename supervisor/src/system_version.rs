@@ -180,9 +180,10 @@ unsafe fn current_text() -> *const u8 {
 /// 设备名称使用固定宽度和显式行高。此固件的标签不会响应 LV_SIZE_CONTENT，
 /// 必须把最终行数换算成数值高度，否则短文本保留原高度、长文本会被裁切。
 unsafe fn set_device_name(label: u32) {
-    // 预留自动换行余量，避免手动换行后 LVGL 再把一行拆成两行。
-    const MAX_LINE_WIDTH: u32 = 256;
+    // 全角字符按每行 10 个排版；中文估值 32px，因此一行的预算为 320px。
+    const MAX_LINE_WIDTH: u32 = 320;
     const LINE_HEIGHT: i32 = 36;
+    const BOTTOM_PADDING: i32 = 8;
     const DISPLAY_CAPACITY: usize = 511;
     static mut DISPLAY: [u8; DISPLAY_CAPACITY + 1] = [0; DISPLAY_CAPACITY + 1];
 
@@ -236,7 +237,7 @@ unsafe fn set_device_name(label: u32) {
     }
     write_volatile(out.add(written), 0);
     fw_api::label_set_text(label, out);
-    fw_api::obj_set_size(label, 304, line_count * LINE_HEIGHT);
+    fw_api::obj_set_size(label, 304, line_count * LINE_HEIGHT + BOTTOM_PADDING);
     fw_api::obj_clear_scrollable(label);
 }
 
