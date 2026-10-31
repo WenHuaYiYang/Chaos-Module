@@ -33,6 +33,7 @@ const BOTTOM_KEYS: [u32; 7] = [
 #[derive(Clone, Copy)]
 pub(crate) enum Completion {
     SystemVersion,
+    SystemText,
 }
 
 static mut TEXT: [u8; CAPACITY + 1] = [0; CAPACITY + 1];
@@ -59,6 +60,14 @@ pub(crate) unsafe fn open(initial: *const u8, completion: Completion) {
     COMPLETION = completion as u32;
     INPUT_LABEL = 0;
     nav_goto(PAGE_PID, 0);
+}
+
+pub(crate) unsafe fn title() -> &'static [u8] {
+    if COMPLETION == Completion::SystemText as u32 {
+        "自定义手环系统文本\0".as_bytes()
+    } else {
+        "自定义系统版本\0".as_bytes()
+    }
 }
 
 unsafe fn refresh_input() {
@@ -201,6 +210,9 @@ unsafe extern "C" fn key_event(event: u32) {
             }
             let saved = match COMPLETION {
                 x if x == Completion::SystemVersion as u32 => crate::system_version::save_custom(
+                    core::ptr::addr_of!(TEXT) as *const u8,
+                ),
+                x if x == Completion::SystemText as u32 => crate::system_text::save_custom(
                     core::ptr::addr_of!(TEXT) as *const u8,
                 ),
                 _ => false,

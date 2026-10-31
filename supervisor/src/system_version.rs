@@ -1,7 +1,7 @@
 //! 设置 → 我的设备 → 关于本机：“OS版本”下方的显示值（3.101.043）。
 //!
-//! 只包装关于本机页面的 on_create，在原页面创建完成后改写 OS 版本值标签。
-//! 不全局拦截 lvx_label_set_text，因此其他页面和资源文本不受影响。
+//! 只包装关于本机页面的 on_create，在原页面创建完成后一并改写 OS 版本与
+//! 手环系统文本值标签。不全局拦截 lvx_label_set_text，其他页面和资源文本不受影响。
 
 use crate::*;
 
@@ -12,6 +12,7 @@ const PAGE_KEY: u32 = 0x0016_0018;
 const CREATE_SLOT: u32 = DESCRIPTOR + 0x4C;
 const ORIGINAL_CREATE: u32 = 0x0C54_D635;
 const LABEL_SLOT: u32 = 0x2011_1C48; // “OS版本”标题下方的值标签
+const SYSTEM_TEXT_LABEL_SLOT: u32 = 0x2011_1C50; // 手环系统文本值标签
 const SELECT_CONFIG: &[u8] = b"/data/chaos/system-version.cfg\0";
 const CUSTOM_CONFIG: &[u8] = b"/data/chaos/system-version.txt\0";
 const CUSTOM_CAPACITY: usize = 31;
@@ -181,6 +182,10 @@ unsafe extern "C" fn create(page: u32, root: u32, start: u32) -> i32 {
     let label = read_volatile(LABEL_SLOT as *const u32);
     if safe_ptr(label) {
         fw_api::label_set_text(label, current_text());
+    }
+    let system_text_label = read_volatile(SYSTEM_TEXT_LABEL_SLOT as *const u32);
+    if safe_ptr(system_text_label) {
+        fw_api::label_set_text(system_text_label, crate::system_text::current_text());
     }
     result
 }

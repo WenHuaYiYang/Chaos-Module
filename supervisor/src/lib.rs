@@ -20,6 +20,7 @@ mod settings_entry;
 mod system_update_entry;
 mod launcher_entry;
 mod system_version;
+mod system_text;
 mod keyboard;
 mod appmgr;
 mod log;

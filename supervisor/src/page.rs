@@ -1940,7 +1940,7 @@ impl Page for SettingsPage {
                 (4, RowSpec::clickable("缓存清理\0".as_bytes())),
                 (5, RowSpec::clickable("运行日志\0".as_bytes())),
                 (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
-                (7, RowSpec::clickable("系统版本显示\0".as_bytes())),
+                (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -1954,7 +1954,7 @@ impl Page for SettingsPage {
                 4 => nav_goto(12, 0),   // 缓存清理
                 5 => nav_goto(17, 0),   // 运行日志
                 6 => nav_goto(19, 0),   // 恢复 fetch 支持
-                7 => nav_goto(crate::system_version::PAGE_PID, 0),
+                7 => nav_goto(24, 0),   // 系统关于页面修改
                 _ => {}
             }
         }
@@ -2465,13 +2465,94 @@ impl Page for SystemVersionPage {
     }
 }
 
+// ===== 页24: 设置 -> 系统关于页面修改 =====
+pub(crate) struct SystemAboutPage;
+static PAGE_ABOUT_MODP: SystemAboutPage = SystemAboutPage;
+
+impl Page for SystemAboutPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "系统关于页面修改\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::clickable("系统版本显示\0".as_bytes())),
+                (1, RowSpec::clickable("手环系统文本\0".as_bytes())),
+            ]).map(|_| ())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            match idx {
+                0 => nav_goto(crate::system_version::PAGE_PID, 0),
+                1 => nav_goto(crate::system_text::PAGE_PID, 0),
+                _ => {}
+            }
+        }
+    }
+}
+
+// ===== 页25: 系统关于页面修改 -> 手环系统文本 =====
+pub(crate) struct SystemTextPage;
+static PAGE_SYSTEXTP: SystemTextPage = SystemTextPage;
+
+unsafe fn system_text_checks(rows: *mut u32) {
+    let selected = crate::system_text::selected();
+    for i in 0..3 {
+        let row = read_volatile(rows.add(i));
+        if row != 0 {
+            fw_api::row_update(
+                row,
+                fw_api::NONE_PTR,
+                fw_api::NONE_PTR,
+                fw_api::NONE_PTR,
+                0,
+                (i == selected) as u8,
+            );
+        }
+    }
+}
+
+impl Page for SystemTextPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "手环系统文本\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::check("Xiaomi HyperOS\0".as_bytes(), core::ptr::null())),
+                (1, RowSpec::check("HarmonyOS\0".as_bytes(), core::ptr::null())),
+                (2, RowSpec::check("自定义\0".as_bytes(), crate::system_text::custom_display())),
+            ])?;
+            system_text_checks(ctx.rows);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx < 2 {
+                crate::system_text::choose(idx);
+                if page_is_live(crate::system_text::PAGE_PID as usize) {
+                    system_text_checks(page_rows_ptr(crate::system_text::PAGE_PID as usize));
+                }
+            } else if idx == 2 {
+                crate::system_text::edit_custom();
+            }
+        }
+    }
+}
+
 // ===== 页23: 通用英文数字键盘 =====
 pub(crate) struct KeyboardPage;
 static PAGE_KEYBOARDP: KeyboardPage = KeyboardPage;
 
 impl Page for KeyboardPage {
     fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "自定义系统版本\0".as_bytes()); }
+        unsafe { put_str(buf, crate::keyboard::title()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
@@ -2510,6 +2591,8 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
     &PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
     &PAGE_LICENSE_MPLP, // 21 MIBAND10PRO-TUNMODULE / MPL-2.0
-    &PAGE_SYSVERP,      // 22 设置 -> 系统版本显示
+    &PAGE_SYSVERP,      // 22 系统关于页面修改 -> 系统版本显示
     &PAGE_KEYBOARDP,    // 23 通用英文数字键盘
+    &PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改
+    &PAGE_SYSTEXTP,     // 25 系统关于页面修改 -> 手环系统文本
 ];
