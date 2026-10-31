@@ -2479,6 +2479,8 @@ impl Page for SystemAboutPage {
             build_rows(ctx, ctx.title, &[
                 (0, RowSpec::clickable("系统版本显示\0".as_bytes())),
                 (1, RowSpec::clickable("手环系统文本\0".as_bytes())),
+                (2, RowSpec::clickable("设备名称\0".as_bytes())),
+                (3, RowSpec::clickable("手环型号\0".as_bytes())),
             ]).map(|_| ())
         }
     }
@@ -2488,6 +2490,8 @@ impl Page for SystemAboutPage {
             match idx {
                 0 => nav_goto(crate::system_version::PAGE_PID, 0),
                 1 => nav_goto(crate::system_text::PAGE_PID, 0),
+                2 => nav_goto(crate::device_name::PAGE_PID, 0),
+                3 => nav_goto(crate::device_model::PAGE_PID, 0),
                 _ => {}
             }
         }
@@ -2546,6 +2550,114 @@ impl Page for SystemTextPage {
     }
 }
 
+// ===== 页26: 系统关于页面修改 -> 设备名称 =====
+pub(crate) struct DeviceNamePage;
+static PAGE_DEVNAMEP: DeviceNamePage = DeviceNamePage;
+
+unsafe fn device_name_checks(rows: *mut u32) {
+    let selected = crate::device_name::selected();
+    for i in 0..6 {
+        let row = read_volatile(rows.add(i));
+        if row != 0 {
+            fw_api::row_update(
+                row,
+                fw_api::NONE_PTR,
+                fw_api::NONE_PTR,
+                fw_api::NONE_PTR,
+                0,
+                (i == selected) as u8,
+            );
+        }
+    }
+}
+
+impl Page for DeviceNamePage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "设备名称\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::check("小米手环10 Pro\0".as_bytes(), core::ptr::null())),
+                (1, RowSpec::check("小米手环10 Pro 陶瓷版\0".as_bytes(), core::ptr::null())),
+                (2, RowSpec::check("小米手环11 Pro\0".as_bytes(), core::ptr::null())),
+                (3, RowSpec::check("小米手环11 Pro 陶瓷版\0".as_bytes(), core::ptr::null())),
+                (4, RowSpec::check("三星note7\0".as_bytes(), core::ptr::null())),
+                (5, RowSpec::check("自定义\0".as_bytes(), crate::device_name::custom_display())),
+            ])?;
+            device_name_checks(ctx.rows);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx < 5 {
+                crate::device_name::choose(idx);
+                if page_is_live(crate::device_name::PAGE_PID as usize) {
+                    device_name_checks(page_rows_ptr(crate::device_name::PAGE_PID as usize));
+                }
+            } else if idx == 5 {
+                crate::device_name::edit_custom();
+            }
+        }
+    }
+}
+
+// ===== 页27: 系统关于页面修改 -> 手环型号 =====
+pub(crate) struct DeviceModelPage;
+static PAGE_DEVMODELP: DeviceModelPage = DeviceModelPage;
+
+unsafe fn device_model_checks(rows: *mut u32) {
+    let selected = crate::device_model::selected();
+    for i in 0..4 {
+        let row = read_volatile(rows.add(i));
+        if row != 0 {
+            fw_api::row_update(
+                row,
+                fw_api::NONE_PTR,
+                fw_api::NONE_PTR,
+                fw_api::NONE_PTR,
+                0,
+                (i == selected) as u8,
+            );
+        }
+    }
+}
+
+impl Page for DeviceModelPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "手环型号\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::check("M2551B1\0".as_bytes(), core::ptr::null())),
+                (1, RowSpec::check("M2553B1\0".as_bytes(), core::ptr::null())),
+                (2, RowSpec::check("M9178B13\0".as_bytes(), core::ptr::null())),
+                (3, RowSpec::check("自定义\0".as_bytes(), crate::device_model::custom_display())),
+            ])?;
+            device_model_checks(ctx.rows);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx < 3 {
+                crate::device_model::choose(idx);
+                if page_is_live(crate::device_model::PAGE_PID as usize) {
+                    device_model_checks(page_rows_ptr(crate::device_model::PAGE_PID as usize));
+                }
+            } else if idx == 3 {
+                crate::device_model::edit_custom();
+            }
+        }
+    }
+}
+
 // ===== 页23: 通用英文数字键盘 =====
 pub(crate) struct KeyboardPage;
 static PAGE_KEYBOARDP: KeyboardPage = KeyboardPage;
@@ -2595,4 +2707,6 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_KEYBOARDP,    // 23 通用英文数字键盘
     &PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改
     &PAGE_SYSTEXTP,     // 25 系统关于页面修改 -> 手环系统文本
+    &PAGE_DEVNAMEP,     // 26 系统关于页面修改 -> 设备名称
+    &PAGE_DEVMODELP,    // 27 系统关于页面修改 -> 手环型号
 ];

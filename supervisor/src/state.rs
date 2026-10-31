@@ -157,11 +157,17 @@ pub static PAGE_ABOUT_MOD: [u8; 9] = *b"aboutmod\0";
 /// 页25: 系统关于页面修改 -> 手环系统文本。两个预设与自定义入口。
 pub static PAGE_SYSTEXT: [u8; 8] = *b"systext\0";
 
+/// 页26: 系统关于页面修改 -> 设备名称。五个预设与自定义入口。
+pub static PAGE_DEVNAME: [u8; 8] = *b"devname\0";
+
+/// 页27: 系统关于页面修改 -> 手环型号。三个预设与自定义入口。
+pub static PAGE_DEVMODEL: [u8; 9] = *b"devmodel\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 26;                   // 注册页数(页0..页25)
+pub const PAGE_COUNT: usize = 28;                   // 注册页数(页0..页27)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 754] = [0; 754];         // 26 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 812] = [0; 812];         // 28 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

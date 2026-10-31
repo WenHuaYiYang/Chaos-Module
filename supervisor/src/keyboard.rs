@@ -34,6 +34,8 @@ const BOTTOM_KEYS: [u32; 7] = [
 pub(crate) enum Completion {
     SystemVersion,
     SystemText,
+    DeviceName,
+    DeviceModel,
 }
 
 static mut TEXT: [u8; CAPACITY + 1] = [0; CAPACITY + 1];
@@ -63,10 +65,11 @@ pub(crate) unsafe fn open(initial: *const u8, completion: Completion) {
 }
 
 pub(crate) unsafe fn title() -> &'static [u8] {
-    if COMPLETION == Completion::SystemText as u32 {
-        "自定义手环系统文本\0".as_bytes()
-    } else {
-        "自定义系统版本\0".as_bytes()
+    match COMPLETION {
+        x if x == Completion::SystemText as u32 => "自定义手环系统文本\0".as_bytes(),
+        x if x == Completion::DeviceName as u32 => "自定义设备名称\0".as_bytes(),
+        x if x == Completion::DeviceModel as u32 => "自定义手环型号\0".as_bytes(),
+        _ => "自定义系统版本\0".as_bytes(),
     }
 }
 
@@ -213,6 +216,12 @@ unsafe extern "C" fn key_event(event: u32) {
                     core::ptr::addr_of!(TEXT) as *const u8,
                 ),
                 x if x == Completion::SystemText as u32 => crate::system_text::save_custom(
+                    core::ptr::addr_of!(TEXT) as *const u8,
+                ),
+                x if x == Completion::DeviceName as u32 => crate::device_name::save_custom(
+                    core::ptr::addr_of!(TEXT) as *const u8,
+                ),
+                x if x == Completion::DeviceModel as u32 => crate::device_model::save_custom(
                     core::ptr::addr_of!(TEXT) as *const u8,
                 ),
                 _ => false,

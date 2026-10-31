@@ -21,6 +21,8 @@ mod system_update_entry;
 mod launcher_entry;
 mod system_version;
 mod system_text;
+mod device_name;
+mod device_model;
 mod keyboard;
 mod appmgr;
 mod log;
