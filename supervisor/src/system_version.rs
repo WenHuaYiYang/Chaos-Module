@@ -177,12 +177,13 @@ unsafe fn current_text() -> *const u8 {
     }
 }
 
-/// 设备名称保持固定可用宽度，仅让高度随换行后的内容变化。
-/// 禁止标签自身滚动，避免长文本被 LVGL 当作可横向拖动的内容。
+/// 设备名称使用固定宽度和显式行高。此固件的标签不会响应 LV_SIZE_CONTENT，
+/// 必须把最终行数换算成数值高度，否则短文本保留原高度、长文本会被裁切。
 unsafe fn set_device_name(label: u32) {
-    const MAX_LINE_WIDTH: u32 = 280;
+    // 预留自动换行余量，避免手动换行后 LVGL 再把一行拆成两行。
+    const MAX_LINE_WIDTH: u32 = 256;
+    const LINE_HEIGHT: i32 = 36;
     const DISPLAY_CAPACITY: usize = 511;
-    const LV_SIZE_CONTENT: i32 = 0x7FFF_FFFF;
     static mut DISPLAY: [u8; DISPLAY_CAPACITY + 1] = [0; DISPLAY_CAPACITY + 1];
 
     let src = crate::device_name::current_text();
@@ -190,33 +191,36 @@ unsafe fn set_device_name(label: u32) {
     let mut input = 0usize;
     let mut written = 0usize;
     let mut line_width = 0u32;
+    let mut line_count = 1i32;
     loop {
         let c = read_volatile(src.add(input));
         if c == 0 || written >= DISPLAY_CAPACITY {
             break;
         }
+        // 采用略大于实际字宽的估值，保证手动确定的每一行都能完整放下。
         let (char_len, char_width) = if c < 0x80 {
             let width = match c {
-                b' ' | b'i' | b'j' | b'l' | b'I' | b'.' | b',' | b':' | b';' | b'!' => 6,
-                b'a'..=b'h' | b'k'..=b'z' => 14,
-                b'0'..=b'9' => 16,
-                b'A'..=b'Z' => 20,
-                _ => 24,
+                b' ' | b'i' | b'j' | b'l' | b'I' | b'.' | b',' | b':' | b';' | b'!' => 8,
+                b'a'..=b'h' | b'k'..=b'z' => 16,
+                b'0'..=b'9' => 18,
+                b'A'..=b'Z' => 22,
+                _ => 26,
             };
             (1usize, width)
         } else if c & 0xE0 == 0xC0 {
-            (2, 24)
+            (2, 32)
         } else if c & 0xF0 == 0xE0 {
-            (3, 24)
+            (3, 32)
         } else if c & 0xF8 == 0xF0 {
-            (4, 24)
+            (4, 32)
         } else {
-            (1, 24)
+            (1, 32)
         };
         if line_width != 0 && line_width + char_width > MAX_LINE_WIDTH {
             write_volatile(out.add(written), b'\n');
             written += 1;
             line_width = 0;
+            line_count += 1;
         }
         let mut copied = 0usize;
         while copied < char_len && written < DISPLAY_CAPACITY {
@@ -232,8 +236,7 @@ unsafe fn set_device_name(label: u32) {
     }
     write_volatile(out.add(written), 0);
     fw_api::label_set_text(label, out);
-    // LVGL 9 的 LV_SIZE_CONTENT；043 固件也以 0x7FFFFFFF 作为坐标上限。
-    fw_api::obj_set_size(label, 304, LV_SIZE_CONTENT);
+    fw_api::obj_set_size(label, 304, line_count * LINE_HEIGHT);
     fw_api::obj_clear_scrollable(label);
 }
 
