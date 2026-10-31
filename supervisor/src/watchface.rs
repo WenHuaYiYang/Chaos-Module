@@ -430,6 +430,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     //    没有"页面切换"主题)。
     crate::settings_entry::tick();
     crate::system_update_entry::tick();
+    crate::launcher_entry::tick();
     crate::system_version::tick();
     crate::beautify_restore::tick();
     font_apply::tick();

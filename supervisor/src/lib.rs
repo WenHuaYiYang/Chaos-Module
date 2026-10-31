@@ -18,6 +18,7 @@ mod res_hook;
 mod time_set;
 mod settings_entry;
 mod system_update_entry;
+mod launcher_entry;
 mod system_version;
 mod keyboard;
 mod appmgr;

@@ -300,7 +300,11 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
     } else {
         trace_step(16); // init_buffer 前
         let app_id = st_rd!(APP_ID);
-        let _buf = init_buffer(app_id); // init_buffer(自己的app_id)，同拍同id —— 与固件自带模块的调用方式一致
+        if crate::launcher_entry::enabled() {
+            let _buf = init_buffer(app_id); // 开启“应用列表显示”时加入 Launcher
+        } else {
+            trace_step(18); // 用户关闭应用列表入口，保留注册但跳过图标注入
+        }
         trace_step(17); // init_buffer 后
         if phase < 0x13 { return; }
     }
@@ -346,8 +350,8 @@ static mut DQ_FIRED: u32 = 0;
 
 unsafe fn run_install_cmd(arg0: u32, arg1: u32) {
     // 安装流程用到的命令: 0/1/2 注册发布, 0x13 注册链, 0x43 固件 notify,
-    // 0x44/0x45 设置页与系统更新页入口, 0x18/0x19 语言, 0x22 回读槽统计,
-    // 0x30 字体投递与切换(投递包)
+    // 0x44/0x45 设置页与系统更新页入口, 0x46 Launcher 图标, 0x18/0x19 语言,
+    // 0x22 回读槽统计, 0x30 字体投递与切换(投递包)
     match arg0 {
         0    => { fops_wr(FOPS_STEP, 0); cmd_install(0x12); }   // 注册链(止于 init_buffer)
         1 | 2 => { /* no-op publish: 不调固件，仅置 ACTIVE */ }
@@ -355,6 +359,7 @@ unsafe fn run_install_cmd(arg0: u32, arg1: u32) {
         0x43 => { fops_wr(FOPS_STEP, 0); notify_firmware_full(); } // 固件完整 notify 链
         0x44 => { crate::settings_entry::request(); }
         0x45 => { crate::system_update_entry::request(); }
+        0x46 => { crate::launcher_entry::set_enabled(arg1 != 0); }
         0x18 => { st_wr!(LANG, 1); } // 设中文
         0x19 => { st_wr!(LANG, 0); } // 设英文
         0x22 => {
@@ -404,6 +409,8 @@ unsafe extern "C" fn dq_timer_cb(_t: u32) {
     let i = (step - 1) as usize;
     if i >= DQ_SEQ.len() { return; }
     st_wr!(WRITE_BUSY, 1);
+    // 自启动注册前读取 Launcher 图标开关；这里已在 UI 定时器上下文，可安全读文件。
+    crate::launcher_entry::load();
     run_install_cmd(DQ_SEQ[i], 0);
     st_wr!(WRITE_BUSY, 0);
     st_wr!(DQ_STEP, if i + 1 >= DQ_SEQ.len() { 0 } else { step + 1 });
