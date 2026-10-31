@@ -12,17 +12,17 @@ const CUSTOM_CONFIG: &[u8] = b"/data/chaos/device-name.txt\0";
 const CUSTOM_CAPACITY: usize = 31;
 const CUSTOM_INDEX: u8 = PRESETS.len() as u8;
 
-// 页面按这个列表动态建行；替换或新增条目时无须再修改 page.rs。
-// 每行都必须以 \0 结尾，最多容纳 11 个预设（另留一行给“自定义”）。
+// 只修改这个列表即可；页面会按实际条目数量自动建行。
+// 每项都必须以 \0 结尾，最多容纳 11 个预设（另留一行给“自定义”）。
 static PRESETS: &[&[u8]] = &[
     "小米手环10 Pro\0".as_bytes(),
     "小米手环10 Pro 陶瓷版\0".as_bytes(),
     "小米手环11 Pro\0".as_bytes(),
     "小米手环11 Pro 陶瓷版\0".as_bytes(),
     "三星note7\0".as_bytes(),
-    "1\0".as_bytes(),
-    "2\0".as_bytes(),
-    "3\0".as_bytes(),
+    "跳蛋女性插入式自慰器遥控成人夫妻情趣用品秒潮神器强震高潮玩具\0".as_bytes(),
+    "迷你跳蛋超细小号跳弹情趣男女自慰按摩用品新手处男女夫妻性用品\0".as_bytes(),
+    "金属肛塞女用肛门扩肛器后庭成人调情趣用品拉珠狐狸尾巴女性玩具\0".as_bytes(),
 ];
 
 pub(crate) fn preset_count() -> usize {
