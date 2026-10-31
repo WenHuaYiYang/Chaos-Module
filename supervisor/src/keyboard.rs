@@ -117,13 +117,16 @@ unsafe fn create_key(
 }
 
 unsafe fn create_char_row(parent: u32, keys: &[u32], y: i32) -> bool {
-    const WIDTH: i32 = 28;
-    const GAP: i32 = 4;
+    // 旧布局每行 10 个 28px 按键，主题内边距占掉大部分宽度，字母被裁成竖线。
+    // 每行最多 5 个 56px 大按键，保证字符及 CLR 等操作文字都有完整显示空间。
+    const WIDTH: i32 = 56;
+    const HEIGHT: u32 = 52;
+    const GAP: i32 = 8;
     let total = keys.len() as i32 * WIDTH + (keys.len() as i32 - 1) * GAP;
     let mut x = (336 - total) / 2;
     let mut ok = true;
     for &code in keys {
-        if !create_key(parent, code, x, y, WIDTH as u32, 36, 0x26_26_26) {
+        if !create_key(parent, code, x, y, WIDTH as u32, HEIGHT, 0x26_26_26) {
             ok = false;
         }
         x += WIDTH + GAP;
@@ -131,7 +134,23 @@ unsafe fn create_char_row(parent: u32, keys: &[u32], y: i32) -> bool {
     ok
 }
 
+unsafe fn create_char_rows(parent: u32, keys: &[u32], y: i32) -> bool {
+    const ROW_STEP: i32 = 60;
+    let mut ok = true;
+    for (row, chunk) in keys.chunks(5).enumerate() {
+        if !create_char_row(parent, chunk, y + row as i32 * ROW_STEP) {
+            ok = false;
+        }
+    }
+    ok
+}
+
 pub(crate) unsafe fn render(parent: u32) -> bool {
+    // content 默认带原生纵向滚动；按键自身不可滚动，把拖动手势交给父容器。
+    // 所有按键使用绝对坐标，最底行会自然撑出可滚动区域。
+    fw_api::obj_add_flag(parent, 0x10); // LV_OBJ_FLAG_SCROLLABLE
+    fw_api::content_pad_bottom(parent, 16, 0);
+
     INPUT_LABEL = fw_api::label_create(parent);
     if INPUT_LABEL == 0 {
         return false;
@@ -141,17 +160,17 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     fw_api::obj_set_size_wh(INPUT_LABEL, 320, 48);
     fw_api::obj_align(INPUT_LABEL, fw_api::align::TOP_LEFT, 8, 4);
 
-    let mut ok = create_char_row(parent, &NUMBER_KEYS, 64);
-    if !create_char_row(parent, &QWERTY_KEYS, 106) { ok = false; }
-    if !create_char_row(parent, &HOME_KEYS, 148) { ok = false; }
+    let mut ok = create_char_rows(parent, &NUMBER_KEYS, 64);
+    if !create_char_rows(parent, &QWERTY_KEYS, 184) { ok = false; }
+    if !create_char_rows(parent, &HOME_KEYS, 304) { ok = false; }
+    if !create_char_rows(parent, &BOTTOM_KEYS, 424) { ok = false; }
 
-    if !create_key(parent, KEY_SHIFT, 10, 190, 40, 36, 0x40_40_40) { ok = false; }
-    if !create_char_row(parent, &BOTTOM_KEYS, 190) { ok = false; }
-    if !create_key(parent, KEY_BACKSPACE, 286, 190, 40, 36, 0x40_40_40) { ok = false; }
+    if !create_key(parent, KEY_SHIFT, 20, 544, 88, 52, 0x40_40_40) { ok = false; }
+    if !create_key(parent, KEY_BACKSPACE, 228, 544, 88, 52, 0x40_40_40) { ok = false; }
 
-    if !create_key(parent, b'.' as u32, 20, 236, 56, 44, 0x26_26_26) { ok = false; }
-    if !create_key(parent, KEY_CLEAR, 84, 236, 88, 44, 0x40_40_40) { ok = false; }
-    if !create_key(parent, KEY_DONE, 180, 236, 136, 44, 0x53_81_FE) { ok = false; }
+    if !create_key(parent, b'.' as u32, 20, 604, 56, 52, 0x26_26_26) { ok = false; }
+    if !create_key(parent, KEY_CLEAR, 84, 604, 88, 52, 0x40_40_40) { ok = false; }
+    if !create_key(parent, KEY_DONE, 180, 604, 136, 52, 0x53_81_FE) { ok = false; }
     ok
 }
 
