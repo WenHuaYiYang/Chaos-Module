@@ -132,6 +132,7 @@ unsafe fn tile_base(ctx: &PageCtx, slot: usize, text: &[u8], w: u32, h: u32) -> 
     if r == 0 { return 0; }
     write_volatile(ctx.rows.add(slot), r);
     fw_api::obj_set_size_wh(r, w, h);
+    cardify(r);
     fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
     r
 }
@@ -170,6 +171,19 @@ pub(crate) unsafe fn build_row_under_left(
 /// 行建立后压高度(用于状态/信息行, 默认双排高度太占屏)
 pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
     if row != 0 { fw_api::obj_set_size_wh(row, TILE_ROW_W, h); }
+}
+
+/// 卡片样式：圆角 + 深灰底色 + 左右内边距。只改外观，不动滚动与点击。
+pub(crate) unsafe fn cardify(row: u32) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if row == 0 { return; }
+    fw_api::obj_set_local_style_prop(row, ps::RADIUS, 18, 0);
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x242426, 0);
+    fw_api::obj_set_local_style_prop(row, ps::BG_OPA, 255, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_0, 8, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_1, 8, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_2, 14, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_3, 14, 0);
 }
 
 // ===== Page trait =====
@@ -847,9 +861,21 @@ unsafe fn refresh_excl_rows() {
         if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
         let r = read_volatile(rows.add(i));
         if r != 0 {
-            let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
+            let (sub, col) = if mode == 0 {
+                if crate::appmgr::excl_on(i) {
+                    ("已排除\0".as_bytes().as_ptr(), C_WARNING)
+                } else {
+                    ("未排除\0".as_bytes().as_ptr(), C_SECONDARY)
+                }
+            } else if crate::appmgr::visible(i) {
+                ("显示中\0".as_bytes().as_ptr(), C_VISIBLE)
+            } else {
+                ("已隐藏\0".as_bytes().as_ptr(), C_HIDDEN)
+            };
             let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
             fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+            let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
+            if lab != 0 { fw_api::obj_style_color_a70(lab, col, 0); }
         }
         i += 1;
     }
@@ -880,15 +906,15 @@ impl Page for ExclPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::clickable("返回\0".as_bytes())),
-                (1, RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null())),
-                (2, RowSpec::clickable(crate::appmgr::mode_label())),
-                (3, RowSpec::display(if crate::appmgr::excl_mode() == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() }, core::ptr::null())),
-            ])?;
+            let t0 = build_tile_below(ctx, ctx.title, 0,
+                crate::appmgr::mode_label(), 328, 56);
+            if t0 == 0 { return Err(PageError::RowFailed(0)); }
+            let s1 = build_row_under_left(ctx, t0, 1,
+                &RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null()));
+            row_shrink(s1, 56);
             EX_HINT_ROW = read_volatile(ctx.rows.add(1));
-            EX_MSG_ROW = read_volatile(ctx.rows.add(3));
-            let mut prev = read_volatile(ctx.rows.add(3));
+            EX_MSG_ROW = 0;
+            let mut prev = s1;
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
             let mode = crate::appmgr::excl_mode();
@@ -902,7 +928,13 @@ impl Page for ExclPage {
                 if i == usize::MAX { break; }
                 // 管理显隐模式下只列排除项; 非排除项在页1 管理
                 if mode != 0 && !crate::appmgr::excl_on(i) { continue; }
-                let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
+                let sub = if mode == 0 {
+                    if crate::appmgr::excl_on(i) { "已排除\0".as_bytes().as_ptr() } else { "未排除\0".as_bytes().as_ptr() }
+                } else if crate::appmgr::visible(i) {
+                    "显示中\0".as_bytes().as_ptr()
+                } else {
+                    "已隐藏\0".as_bytes().as_ptr()
+                };
                 let r = fw_api::row_create(ctx.content,
                     crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
                 if r == 0 { return Err(PageError::RowFailed(i)); }
@@ -910,11 +942,19 @@ impl Page for ExclPage {
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
                 let tobj = fw_api::row_trailing(r);
                 if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
-                fw_api::obj_align_to(r, prev, 14, 0, 8);
+                let dx = if v == 1 { TILE_CENTER_DX } else { 0 };
+                fw_api::obj_align_to(r, prev, 14, dx, 8);
                 prev = r;
+                row_shrink(r, 88);
+                cardify(r);
                 // 复选框: 排除模式 = 是否排除; 显隐模式 = 是否可见(勾=显示中)
                 let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+                let col = if mode == 0 {
+                    if crate::appmgr::excl_on(i) { C_WARNING } else { C_SECONDARY }
+                } else if crate::appmgr::visible(i) { C_VISIBLE } else { C_HIDDEN };
+                let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
+                if lab != 0 { fw_api::obj_style_color_a70(lab, col, 0); }
             }
             Ok(())
         }
@@ -923,17 +963,12 @@ impl Page for ExclPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             if idx == 0 {
-                nav_back();
-            } else if idx == 2 {
                 crate::appmgr::toggle_excl_mode();
                 render_req(7);
             } else if idx >= 12 {
                 let i = idx - 12;
-                if crate::appmgr::excl_mode() == 0 {
-                    crate::appmgr::request_excl(i);
-                } else {
-                    crate::appmgr::click(i);
-                }
+                crate::appmgr::detail_open_ctx(i, 1);
+                nav_goto(29, 0);
             }
         }
     }
@@ -1920,6 +1955,7 @@ unsafe fn list_build_chunk(limit: u32) {
             fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
         }
         row_shrink(r, 88);
+        cardify(r);
         let dx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
         fw_api::obj_align_to(r, LB_PREV, 14, dx, 8);
         LB_FIRST = 0;
@@ -2294,7 +2330,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.4\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.5\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2944,11 +2980,7 @@ impl Page for AppDetailPage {
             put_str(core::ptr::addr_of_mut!(DT_LBL_UN) as *mut u8, "卸载应用\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(DT_LBL_UN2) as *mut u8, "确认卸载?\0".as_bytes());
 
-            let toggle: &[u8] = if crate::appmgr::detail_hidden() {
-                cstr_static(core::ptr::addr_of!(DT_LBL_SHOW) as *const u8)
-            } else {
-                cstr_static(core::ptr::addr_of!(DT_LBL_HIDE) as *const u8)
-            };
+            let toggle: &[u8] = crate::appmgr::detail_action_label();
             let un: &[u8] = if crate::appmgr::detail_confirm() {
                 cstr_static(core::ptr::addr_of!(DT_LBL_UN2) as *const u8)
             } else {
@@ -2959,11 +2991,13 @@ impl Page for AppDetailPage {
                     crate::appmgr::detail_pkg().as_ptr()));
             if r0 == 0 { return Err(PageError::RowFailed(0)); }
             row_shrink(r0, 88);
+            cardify(r0);
             let r1 = build_row(ctx, r0, 1,
                 &RowSpec::display(cstr_static(crate::appmgr::detail_fmt()),
                     core::ptr::null()));
             if r1 == 0 { return Err(PageError::RowFailed(1)); }
             row_shrink(r1, 56);
+            cardify(r1);
             // 隐藏/显示 与 卸载 并排一行, 返回交给标题栏的返回键
             let t2 = build_tile_below(ctx, r1, 2, toggle, TILE_W, TILE_H);
             if t2 == 0 { return Err(PageError::RowFailed(2)); }
@@ -2983,9 +3017,10 @@ impl Page for AppDetailPage {
                 render_req(29);
             } else if idx == 3 {
                 if crate::appmgr::detail_uninstall_click() {
-                    // 已卸载: 回到列表
+                    // 已卸载: 回到进入详情前的列表
+                    let back = if crate::appmgr::detail_excl_ctx() { 7 } else { 1 };
                     nav_back();
-                    render_req(1);
+                    render_req(back);
                 } else {
                     render_req(29);
                 }
@@ -2996,13 +3031,21 @@ impl Page for AppDetailPage {
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() }
+        unsafe { crate::appmgr::has_req() || crate::appmgr::excl_has_req() }
     }
 
     fn tick(&self) {
         unsafe {
+            let mut dirty = false;
             if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
+                dirty = true;
+            }
+            if crate::appmgr::excl_has_req() {
+                crate::appmgr::do_excl();
+                dirty = true;
+            }
+            if dirty {
                 crate::appmgr::detail_refresh();
                 render_req(29);
             }

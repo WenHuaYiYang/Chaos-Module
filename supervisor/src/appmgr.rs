@@ -91,6 +91,8 @@ pub(crate) static mut E_NAME: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];
 static mut E_OFF: [u32; APP_MAX] = [0; APP_MAX]; // 对象在本次载入的 REG_BUF 内的起点
 static mut E_LEN: [u32; APP_MAX] = [0; APP_MAX];
 static mut E_SRC: [u8; APP_MAX] = [0; APP_MAX];  // 0=可见 1=隐藏
+static mut E_VER: [[u8; 24]; APP_MAX] = [[0; 24]; APP_MAX];   // 条目里的 versionName
+static mut E_ICON: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];  // 条目里的 icon 文件名
 static mut E_LOCK: [u8; APP_MAX] = [0; APP_MAX];
 // 同一包名在合并列表里重复出现(同文件重复, 或可见/隐藏各一份)时, 后面的标记为 1。
 // 页1/批量都跳过它们: 固件对重复条目会注册出两个桌面记录, 退出快应用时二次释放 -> 黑屏。
@@ -648,6 +650,8 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
     let mut pkg_over = false;
     let mut hidden = 0u8;
     let mut locked = 0u8;
+    let mut ver = [0u8; 24];
+    let mut icon = [0u8; 32];
     let mut key = [0u8; 20];
     *p += 1; // '{'
     loop {
@@ -793,6 +797,13 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
             } else if !s_value_skip(base, len, p) {
                 return 2;
             }
+        } else if known && (key_is(key.as_ptr(), b"versionName\0")
+            || key_is(key.as_ptr(), b"version\0") || key_is(key.as_ptr(), b"ver\0")) {
+            let r = s_string_read(base, len, ver.as_mut_ptr(), 24, p);
+            if r == 2 { return 2; }
+        } else if known && key_is(key.as_ptr(), b"icon\0") {
+            let r = s_string_read(base, len, icon.as_mut_ptr(), 32, p);
+            if r == 2 { return 2; }
         } else if known && key_is(key.as_ptr(), b"hideFlag\0") {
             hidden = if s_peek(base, len, *p) == b't' { 1 } else { 0 };
             if !s_value_skip(base, len, p) { return 2; }
@@ -831,6 +842,10 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
     E_LEN[i] = (end - start) as u32;
     E_SRC[i] = src;
     E_LOCK[i] = locked;
+    let mut kv = 0usize;
+    while kv < 24 { E_VER[i][kv] = ver[kv]; kv += 1; }
+    let mut ki = 0usize;
+    while ki < 32 { E_ICON[i][ki] = icon[ki]; ki += 1; }
     // 隐藏注册表里的对象视作已隐藏(hideFlag 仅为固件约定, 展示态以所在文件为准)
     let _ = hidden;
     APP_N += 1;
@@ -2129,13 +2144,32 @@ unsafe fn excl_dedupe() {
 // 不走固件的卸载命令, 也不需要重启。
 // 批量页: 勾选集合, 支持全选/取消全选、隐藏选中、显示选中、删除选中。
 
-const D_BASES: [&[u8]; 5] = [
-    b"/data/app/",
-    b"/data/quickapp/system/",
-    b"/data/quickapp/cache/",
-    b"/data/quickapp/files/",
-    b"/data/quickapp/mass/",
-];
+// 快应用根目录与 SmartHome 一致: 有 /data/quickapp/apps.json 时用 quickapp/ 下,
+// 否则退回 /data/ 下。两者的子目录都是 app/ system/ cache/ files/ mass/。
+unsafe fn qapp_root() -> &'static [u8] {
+    let fd = fw_api::open(b"/data/quickapp/apps.json\0".as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd >= 0 { fw_api::close(fd); b"/data/quickapp/" } else { b"/data/" }
+}
+
+unsafe fn mk_path3(root: &[u8], mid: &[u8], pkg: *const u8, suffix: &[u8]) -> usize {
+    let buf = core::ptr::addr_of_mut!(D_WORK) as *mut u8;
+    let cap = 300usize;
+    let mut o = 0usize;
+    let mut i = 0usize;
+    while i < root.len() - 1 && o + 1 < cap { write_volatile(buf.add(o), root[i]); o += 1; i += 1; }
+    i = 0;
+    while i < mid.len() && o + 1 < cap { write_volatile(buf.add(o), mid[i]); o += 1; i += 1; }
+    let mut k = 0usize;
+    while o + 1 < cap {
+        let c = read_volatile(pkg.add(k));
+        if c == 0 { break; }
+        write_volatile(buf.add(o), c); o += 1; k += 1;
+    }
+    let mut j = 0usize;
+    while j < suffix.len() && o + 1 < cap { write_volatile(buf.add(o), suffix[j]); o += 1; j += 1; }
+    write_volatile(buf.add(o), 0);
+    o
+}
 
 static mut D_WORK: [u8; 300] = [0; 300];
 static mut D_SIZE: u32 = 0;
@@ -2148,6 +2182,8 @@ static mut D_HIDDEN: u8 = 0;
 static mut D_BYTES: u32 = 0;
 static mut D_VER: [u8; 24] = [0; 24];
 static mut D_CONFIRM: u32 = 0;
+// 0 = 从应用管理进详情(隐藏/显示按钮), 1 = 从排除项页进详情(排除/取消排除按钮)
+static mut D_EXCL: u32 = 0;
 
 static mut SEL: [u8; APP_MAX] = [0; APP_MAX];
 static mut SEL_N: usize = 0;
@@ -2277,33 +2313,64 @@ unsafe fn del_walk(plen: usize, depth: u32) {
 
 unsafe fn scan_size(pkg: *const u8) {
     D_BYTES = 0;
+    let root = qapp_root();
+    let subs: [&[u8]; 5] = [b"app/", b"system/", b"cache/", b"files/", b"mass/"];
     let mut b = 0usize;
-    while b < D_BASES.len() {
-        let plen = mk_path(D_BASES[b], pkg, b"");
+    while b < subs.len() {
+        let plen = mk_path3(root, subs[b], pkg, b"");
         calc_walk(plen, 0);
         b += 1;
     }
-    // /data/app/<pkg>.old
-    let plen = mk_path(b"/data/app/", pkg, b".old");
+    // 固件的旧版本目录在 system/ 下(<pkg>.old); app/ 下的也一并算上
+    let plen = mk_path3(root, b"system/", pkg, b".old");
+    calc_walk(plen, 0);
+    let plen = mk_path3(root, b"app/", pkg, b".old");
     calc_walk(plen, 0);
     D_SIZE = D_BYTES;
 }
 
 unsafe fn rm_app_dirs(pkg: *const u8) {
+    let root = qapp_root();
+    let subs: [&[u8]; 5] = [b"app/", b"system/", b"cache/", b"files/", b"mass/"];
     let mut b = 0usize;
-    while b < D_BASES.len() {
-        let plen = mk_path(D_BASES[b], pkg, b"");
+    while b < subs.len() {
+        let plen = mk_path3(root, subs[b], pkg, b"");
         del_walk(plen, 0);
         let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
         b += 1;
     }
-    let plen = mk_path(b"/data/app/", pkg, b".old");
+    let plen = mk_path3(root, b"system/", pkg, b".old");
+    del_walk(plen, 0);
+    let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+    let plen = mk_path3(root, b"app/", pkg, b".old");
     del_walk(plen, 0);
     let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
 }
 
 /// 从 rpk_info.json 里取该应用的 versionName(取不到就空)。
 unsafe fn scan_version(pkg: *const u8) {
+    // 1) 注册表条目里就带 versionName(SmartHome 也是读这个, 不再依赖 rpk_info.json)
+    let ebase = core::ptr::addr_of!(E_PKG) as *const u8;
+    let mut ei = 0usize;
+    while ei < APP_N {
+        if cstr_eq(ebase.add(ei * PKG_CAP), pkg) {
+            let vp = (core::ptr::addr_of!(E_VER) as *const u8).add(ei * 24);
+            if read_volatile(vp) != 0 {
+                let dst = core::ptr::addr_of_mut!(D_VER) as *mut u8;
+                let mut k = 0usize;
+                while k < 23 {
+                    let c = read_volatile(vp.add(k));
+                    write_volatile(dst.add(k), c);
+                    if c == 0 { break; }
+                    k += 1;
+                }
+                write_volatile(dst.add(23), 0);
+                return;
+            }
+            break;
+        }
+        ei += 1;
+    }
     write_volatile((core::ptr::addr_of_mut!(D_VER) as *mut u8).add(0), 0);
     let mut path: *const u8 = b"/data/app/quickapp/rpk_info.json\0".as_ptr();
     let mut fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
@@ -2374,9 +2441,12 @@ unsafe fn scan_version(pkg: *const u8) {
     }
 }
 
-pub(crate) unsafe fn detail_open(i: usize) {
+pub(crate) unsafe fn detail_open(i: usize) { detail_open_ctx(i, 0) }
+
+pub(crate) unsafe fn detail_open_ctx(i: usize, excl: u32) {
     D_IDX = usize::MAX;
     D_CONFIRM = 0;
+    D_EXCL = excl;
     if i >= APP_N { return; }
     D_IDX = i;
     cpy_n(core::ptr::addr_of_mut!(D_PKG) as *mut u8, pkg_ptr(i), PKG_CAP);
@@ -2385,6 +2455,8 @@ pub(crate) unsafe fn detail_open(i: usize) {
     scan_size(core::ptr::addr_of!(D_PKG) as *const u8);
     scan_version(core::ptr::addr_of!(D_PKG) as *const u8);
 }
+
+pub(crate) unsafe fn detail_excl_ctx() -> bool { D_EXCL != 0 }
 
 pub(crate) unsafe fn detail_valid() -> bool { D_IDX != usize::MAX && D_IDX < APP_N }
 pub(crate) unsafe fn detail_hidden() -> bool { D_HIDDEN != 0 }
@@ -2406,7 +2478,22 @@ pub(crate) unsafe fn detail_ver() -> &'static [u8] {
 /// 详情页里切换隐藏/显示: 复用单击流程(REQ_OP), tick 里执行。
 pub(crate) unsafe fn detail_toggle() {
     if !detail_valid() { return; }
-    click(D_IDX);
+    if D_EXCL != 0 {
+        request_excl(D_IDX);
+    } else {
+        click(D_IDX);
+    }
+}
+
+/// 详情页主操作按钮文案(随入口变化)
+pub(crate) unsafe fn detail_action_label() -> &'static [u8] {
+    if D_EXCL != 0 {
+        if excl_on(D_IDX) { "移出排除\0".as_bytes() } else { "加入排除\0".as_bytes() }
+    } else if D_HIDDEN != 0 {
+        "取消隐藏\0".as_bytes()
+    } else {
+        "隐藏应用\0".as_bytes()
+    }
 }
 
 /// 详情页操作完成后刷新(列表已 reload, 按包名找回新下标)。
