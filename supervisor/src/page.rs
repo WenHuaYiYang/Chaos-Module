@@ -1996,8 +1996,10 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
         let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
         if core::ptr::read_volatile(cache.add(v)) == st { continue; }
         core::ptr::write_volatile(cache.add(v), st);
+        // 批量页的副标题就是胶囊本体, 必须把文本一起传进去, 否则固件会把它清空/隐藏
+        let secondary = if selected_mode { sub } else { fw_api::NONE_PTR };
         fw_api::row_update(r, fw_api::NONE_PTR,
-            crate::appmgr::entry_primary(i), fw_api::NONE_PTR, 0, sel);
+            crate::appmgr::entry_primary(i), secondary, 0, sel);
         let sp = core::ptr::read_volatile((core::ptr::addr_of!(P_STATE_LB) as *const u32).add(v));
         let stxt: &[u8] = if picked { "已选\0".as_bytes() }
             else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
@@ -2523,7 +2525,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.39\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.40\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
