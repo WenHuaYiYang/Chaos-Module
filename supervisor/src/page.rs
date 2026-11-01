@@ -229,7 +229,7 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 8, 0);
     // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
     fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
-    fw_api::obj_set_size_wh(lab, pill_w(txt), 44);
+    fw_api::obj_set_size_wh(lab, pill_w(txt), 40);
     fw_api::obj_clear_scrollable(lab);
 }
 
@@ -2035,7 +2035,7 @@ static mut LB_SUB_HID: u32 = 0;
 static mut LIST_REBUILD: u8 = 0;
 
 const LB_FIRST_CHUNK: u32 = 0;
-const LB_TICK_CHUNK: u32 = 3;
+const LB_TICK_CHUNK: u32 = 5;
 
 pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
 
@@ -2065,7 +2065,7 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub
         while z < 40 { core::ptr::write_volatile(sp_.add(z), 0); core::ptr::write_volatile(ep_.add(z), 0); z += 1; }
     }
     LIST_REBUILD = 0;
-    LB_DELAY = 2;
+    LB_DELAY = 3;
     crate::appmgr::set_ui_rows(LB_N);
     crate::log::kv("应用总数 ", crate::appmgr::count() as u32);
     crate::log::kv("可见列表条目数 ", LB_N);
@@ -2091,6 +2091,7 @@ unsafe fn list_build_chunk(limit: u32) {
             if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
         }
         fw_api::obj_set_size_wh(r, 320, 100);
+        fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
         let sp = fw_api::label_create(r);
         let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
@@ -2101,7 +2102,7 @@ unsafe fn list_build_chunk(limit: u32) {
             // 锚在标题标签下面, 而不是行底: 行高会被固件按内容重算, 贴行底会掉到卡片外面
             let pri = crate::mem::rd32((r + 0x3c) as *const u32);
             let base = if pri != 0 { pri } else { r };
-            fw_api::obj_align_to(sp, base, fw_api::align::OUT_BOTTOM_LEFT, 0, 4);
+            fw_api::obj_align_to(sp, base, fw_api::align::OUT_BOTTOM_LEFT, 18, 8);
         }
         P_STATE_LB[v] = sp;
         let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
@@ -2493,7 +2494,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.23\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.24\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
