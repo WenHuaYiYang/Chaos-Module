@@ -136,12 +136,12 @@ unsafe fn tile_base(ctx: &PageCtx, slot: usize, text: &[u8], w: u32, h: u32) -> 
     r
 }
 
-/// 在基准行下方左侧建一个按钮块
+/// 在基准行下方左侧建一个按钮块(必须左对齐, 否则半宽块会被居中而整体右移)
 pub(crate) unsafe fn build_tile_below(
     ctx: &PageCtx, prev: u32, slot: usize, text: &[u8], w: u32, h: u32,
 ) -> u32 {
     let r = tile_base(ctx, slot, text, w, h);
-    if r != 0 { fw_api::obj_align_to(r, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8); }
+    if r != 0 { fw_api::obj_align_to(r, prev, fw_api::align::OUT_BOTTOM_LEFT, 0, 8); }
     r
 }
 
