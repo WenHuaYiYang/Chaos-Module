@@ -148,6 +148,30 @@ pub(crate) unsafe fn tile_primary(row: u32) {
 }
 
 static mut P_EXCL_LB: [u32; 40] = [0; 40];
+static mut LAST_MSG: [u8; 64] = [0; 64];
+static mut LAST_HDR: [u8; 64] = [0; 64];
+
+/// 文本是否变化; 变化时把新文本存进 cache(供下次比较)。避免每 tick 重设同一段文字。
+pub(crate) unsafe fn text_changed(cache: *mut u8, txt: *const u8, cap: usize) -> bool {
+    let mut i = 0usize;
+    let mut diff = false;
+    loop {
+        let b = core::ptr::read_volatile(txt.add(i));
+        let a = core::ptr::read_volatile(cache.add(i));
+        if a != b { diff = true; }
+        if b == 0 || i + 1 >= cap { break; }
+        i += 1;
+    }
+    if diff {
+        let mut j = 0usize;
+        while j <= i && j + 1 < cap {
+            core::ptr::write_volatile(cache.add(j), core::ptr::read_volatile(txt.add(j)));
+            j += 1;
+        }
+        if j + 1 < cap { core::ptr::write_volatile(cache.add(j), 0); }
+    }
+    diff
+}
 
 /// 在副标题胶囊右侧追加“排除状态”胶囊: 已排除=红, 未排除=灰。
 pub(crate) unsafe fn add_excl_pill(row: u32, sub_lab: u32, i: usize, skip: bool) -> u32 {
@@ -160,8 +184,8 @@ pub(crate) unsafe fn add_excl_pill(row: u32, sub_lab: u32, i: usize, skip: bool)
         ("未排除\0".as_bytes(), C_SECONDARY, 0x3A3A3E)
     };
     fw_api::label_set_text(p, txt.as_ptr());
-    pill(p, col, bg, 3);
-    fw_api::obj_align_to(p, sub_lab, 19, 8, 0);
+    pill(p, col, bg, txt);
+    fw_api::obj_align_to(p, sub_lab, 19, 4, 0);
     p
 }
 
@@ -173,11 +197,24 @@ pub(crate) unsafe fn set_excl_pill(p: u32, i: usize) {
         ("未排除\0".as_bytes(), C_SECONDARY, 0x3A3A3E)
     };
     fw_api::label_set_text(p, txt.as_ptr());
-    pill(p, col, bg, 3);
+    pill(p, col, bg, txt);
 }
 
 /// 把副标题标签做成彩色小胶囊(状态药丸): 角色 tint 底色 + 角色色文字。
-pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, cps: usize) {
+pub(crate) fn pill_w(txt: &[u8]) -> u32 {
+    let mut w = 30u32;
+    let mut i = 0usize;
+    while i < txt.len() {
+        let b = txt[i];
+        if b == 0 { break; }
+        if b >= 0xE0 { w += 22; i += 3; }
+        else if b >= 0xC0 { w += 20; i += 2; }
+        else { w += 11; i += 1; }
+    }
+    if w < 104 { 104 } else if w > 248 { 248 } else { w }
+}
+
+pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     use crate::fw_api::fwaddr::p65_style as ps;
     if lab == 0 { return; }
     fw_api::obj_style_color_a70(lab, col, 0);
@@ -190,10 +227,8 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, cps: usize) {
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 10, 0);
     // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
     fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
-    let mut w = 28 + 22 * cps;
-    if w < 108 { w = 108; }
-    if w > 232 { w = 232; }
-    fw_api::obj_set_size_wh(lab, w as u32, 36);
+    fw_api::obj_set_width(lab, pill_w(txt) as i32);
+    fw_api::obj_clear_scrollable(lab);
 }
 
 pub(crate) unsafe fn tile_danger(row: u32) {
@@ -264,12 +299,6 @@ pub(crate) unsafe fn no_scroll(obj: u32) {
         let c = fw_api::obj_get_child(obj, i);
         if c == 0 { break; }
         fw_api::obj_clear_scrollable(c);
-        let mut j = 0u32;
-        while j < 3 {
-            let g = fw_api::obj_get_child(c, j);
-            if g != 0 { fw_api::obj_clear_scrollable(g); } else { break; }
-            j += 1;
-        }
         i += 1;
     }
 }
@@ -971,8 +1000,8 @@ unsafe fn refresh_excl_rows() {
                 excl_sub(i), 0, 0);
             let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
             if lab != 0 {
-                if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 7); }
-                else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 7); }
+                if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, "显示中\0".as_bytes()); }
+                else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, "已隐藏\0".as_bytes()); }
             }
         }
         i += 1;
@@ -1034,8 +1063,8 @@ impl Page for ExclPage {
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
                 let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
                 if lab != 0 {
-                    if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 7); }
-                    else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 7); }
+                    if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, "显示中\0".as_bytes()); }
+                    else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, "已隐藏\0".as_bytes()); }
                 }
             }
             Ok(())
@@ -1973,8 +2002,8 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
             crate::appmgr::entry_primary(i), sub, 0, sel);
         let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
         if lab != 0 {
-            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 3); }
-            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 3); }
+            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, "显示中\0".as_bytes()); }
+            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, "已隐藏\0".as_bytes()); }
         }
         if !selected_mode {
             let p = core::ptr::read_volatile((core::ptr::addr_of!(P_EXCL_LB) as *const u32).add(v));
@@ -2029,6 +2058,10 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub
         let pl = core::ptr::addr_of_mut!(P_EXCL_LB) as *mut u32;
         let mut i = 0usize;
         while i < 40 { core::ptr::write_volatile(pl.add(i), 0); i += 1; }
+        let lm = core::ptr::addr_of_mut!(LAST_MSG) as *mut u8;
+        let lh = core::ptr::addr_of_mut!(LAST_HDR) as *mut u8;
+        let mut i = 0usize;
+        while i < 64 { core::ptr::write_volatile(lm.add(i), 0xFF); core::ptr::write_volatile(lh.add(i), 0xFF); i += 1; }
     }
     LIST_REBUILD = 0;
     crate::appmgr::set_ui_rows(LB_N);
@@ -2059,12 +2092,13 @@ unsafe fn list_build_chunk(limit: u32) {
         fw_api::obj_set_size_wh(r, 320, 100);
         cardify(r);
         if lab != 0 {
-            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 3); }
-            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 3); }
+            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, "显示中\0".as_bytes()); }
+            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, "已隐藏\0".as_bytes()); }
         }
         let exp = add_excl_pill(r, lab, i, LB_KIND == 2);
         if LB_KIND == 1 { P_EXCL_LB[v] = exp; }
-        fw_api::obj_align_to(r, LB_PREV, 14, 0, 10);
+        let ddx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
+        fw_api::obj_align_to(r, LB_PREV, 14, ddx, 10);
         LB_FIRST = 0;
         LB_PREV = r;
         if LB_KIND == 2 {
@@ -2166,9 +2200,13 @@ impl Page for AppMgrPage {
             }
             // 只改了隐藏位/名单时逐行原地刷新, 行数变了(卸载、重扫)才整页重建。
             // 整页重建会销毁行对象, 列表滚动位置会跳回顶部。
-            refresh_msg_row();
+            if text_changed(core::ptr::addr_of_mut!(LAST_MSG) as *mut u8,
+                crate::appmgr::msg().as_ptr(), 64) {
+                refresh_msg_row();
+            }
             let h = core::ptr::read_volatile(core::ptr::addr_of!(AM_HDR_ROW));
-            if h != 0 {
+            if h != 0 && text_changed(core::ptr::addr_of_mut!(LAST_HDR) as *mut u8,
+                crate::appmgr::header_text().as_ptr(), 64) {
                 fw_api::row_update(h, fw_api::NONE_PTR,
                     crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0, 0);
             }
@@ -2440,7 +2478,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.12\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.13\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
