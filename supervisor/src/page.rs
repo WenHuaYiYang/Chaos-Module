@@ -867,6 +867,7 @@ unsafe fn refresh_excl_rows() {
 pub(crate) struct ExclPage;
 
 static mut AM_MSG_ROW: u32 = 0;
+static mut AM_HDR_ROW: u32 = 0;
 static mut EX_HINT_ROW: u32 = 0;
 static mut EX_MSG_ROW: u32 = 0;
 
@@ -1810,9 +1811,18 @@ impl Page for IconSubPage {
 
 pub(crate) struct AppMgrPage;
 
-/// 状态文字用两种颜色: 已隐藏=琥珀, 显示中=蓝(用户要求"醒目")。
-const C_HIDDEN: u32 = 0xE6_A23C;
-const C_VISIBLE: u32 = 0x4A_9EFF;
+// UI 令牌: 与蓝牙音频模块同一套配色(白 / 次要灰 / 强调蓝 / 成功绿 / 警告琥珀 / 危险红)。
+#[allow(dead_code)]
+const C_SECONDARY: u32 = 0x8E_8E93;
+const C_ACCENT: u32 = 0x2D_7CF6;
+#[allow(dead_code)]
+const C_SUCCESS: u32 = 0x30_D158;
+const C_WARNING: u32 = 0xFF_9F0A;
+const C_DANGER: u32 = 0xFF_453A;
+
+/// 状态文字: 已隐藏=警告琥珀, 显示中=强调蓝。
+const C_HIDDEN: u32 = C_WARNING;
+const C_VISIBLE: u32 = C_ACCENT;
 
 static mut AM_STATUS_HID: [u8; 12] = [0; 12];
 static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
@@ -1821,6 +1831,7 @@ static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
 /// 这样列表滚动位置不会跳回顶部, 也不会在快速连点时销毁/重建行对象。
 /// 返回 false = 行数或句柄对不上, 调用方需要整页重建。
 unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
+    if list_building() { return true; } // 还在分批建行, 先不刷
     let n = crate::appmgr::view_count();
     if n as u32 != crate::appmgr::ui_rows() { return false; }
     let rows = crate::appmgr::rows_ptr();
@@ -1855,6 +1866,73 @@ unsafe fn refresh_msg_row() {
     }
 }
 
+
+// ---- 列表分批建立 ----
+// 打开页面时一次建几十行会长时间占住 UI 线程；这里先建首屏几行, 其余的每次 tick 续几行。
+// kind: 1 = 页1(无复选框), 2 = 页30(带复选框)。副标题用调用方传进来的状态文案。
+static mut LB_KIND: u32 = 0;
+static mut LB_V: u32 = 0;
+static mut LB_N: u32 = 0;
+static mut LB_PREV: u32 = 0;
+static mut LB_CONTENT: u32 = 0;
+static mut LB_FIRST: u32 = 0;
+static mut LB_SUB_VIS: u32 = 0;
+static mut LB_SUB_HID: u32 = 0;
+
+const LB_FIRST_CHUNK: u32 = 6;
+const LB_TICK_CHUNK: u32 = 4;
+
+pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
+
+unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub_hid: *const u8) {
+    LB_KIND = kind;
+    LB_V = 0;
+    LB_N = crate::appmgr::view_count() as u32;
+    LB_PREV = prev;
+    LB_CONTENT = content;
+    LB_FIRST = 1;
+    LB_SUB_VIS = sub_vis as u32;
+    LB_SUB_HID = sub_hid as u32;
+    crate::appmgr::set_ui_rows(LB_N);
+    list_build_chunk(LB_FIRST_CHUNK);
+}
+
+unsafe fn list_build_chunk(limit: u32) {
+    let rows = crate::appmgr::rows_ptr();
+    let mut k = 0u32;
+    while k < limit && LB_V < LB_N {
+        let v = LB_V as usize;
+        let i = crate::appmgr::view_at(v);
+        if i == usize::MAX { LB_V = LB_N; break; }
+        let vis = crate::appmgr::visible(i);
+        let sub = if vis { LB_SUB_VIS as *const u8 } else { LB_SUB_HID as *const u8 };
+        let trailing = if LB_KIND == 2 { fw_api::trailing::CHECKBOX } else { 0 };
+        let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i), sub, trailing);
+        if r == 0 { LB_V = LB_N; break; }
+        write_volatile(rows.add(v), r);
+        fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
+        if LB_KIND == 2 {
+            let tobj = fw_api::row_trailing(r);
+            if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
+        }
+        let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
+        if lab != 0 {
+            fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
+        }
+        row_shrink(r, 88);
+        let dx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
+        fw_api::obj_align_to(r, LB_PREV, 14, dx, 8);
+        LB_FIRST = 0;
+        LB_PREV = r;
+        if LB_KIND == 2 {
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                sub, 0, crate::appmgr::sel_has(i) as u8);
+        }
+        LB_V += 1;
+        k += 1;
+    }
+}
+
 impl Page for AppMgrPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用管理\0".as_bytes()); }
@@ -1883,36 +1961,22 @@ impl Page for AppMgrPage {
             put_str(core::ptr::addr_of_mut!(AM_STATUS_HID) as *mut u8, "已隐藏\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(AM_STATUS_VIS) as *mut u8, "显示中\0".as_bytes());
 
-            // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
+            // 条目行: 先建首屏, 其余由 tick 分批续建
             let mut prev = read_volatile(ctx.rows.add(3));
             if prev == 0 { prev = ctx.title; }
-            let rows = crate::appmgr::rows_ptr();
-            let n = crate::appmgr::view_count();
-            crate::appmgr::set_ui_rows(n as u32);
-            let mut v = 0usize;
-            while v < n {
-                let i = crate::appmgr::view_at(v);
-                if i == usize::MAX { break; }
-                let vis = crate::appmgr::visible(i);
-                let sub = if vis {
-                    core::ptr::addr_of!(AM_STATUS_VIS) as *const u8
-                } else {
-                    core::ptr::addr_of!(AM_STATUS_HID) as *const u8
-                };
-                let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), sub, 0);
-                if r == 0 { return Err(PageError::RowFailed(v)); }
-                write_volatile(rows.add(v), r);
-                fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
-                let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
-                if lab != 0 {
-                    fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
-                }
-                row_shrink(r, 88);
-                fw_api::obj_align_to(r, prev, 14, 0, 8);
-                prev = r;
-                v += 1;
+
+            // 分组说明行: "快应用 N / 已隐藏 M"
+            let hdr = fw_api::row_create(ctx.content,
+                crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0);
+            if hdr != 0 {
+                row_shrink(hdr, 48);
+                fw_api::obj_align_to(hdr, prev, 14, 0, 8);
+                prev = hdr;
+                AM_HDR_ROW = hdr;
             }
+            list_begin(1, prev, ctx.content,
+                core::ptr::addr_of!(AM_STATUS_VIS) as *const u8,
+                core::ptr::addr_of!(AM_STATUS_HID) as *const u8);
             Ok(())
         }
     }
@@ -1942,13 +2006,14 @@ impl Page for AppMgrPage {
 
     fn needs_tick(&self) -> bool {
         unsafe {
-            crate::appmgr::has_req() || crate::appmgr::batch_pending()
+            list_building() || crate::appmgr::has_req() || crate::appmgr::batch_pending()
                 || crate::appmgr::reapply_pending()
         }
     }
 
     fn tick(&self) {
         unsafe {
+            if list_building() { list_build_chunk(LB_TICK_CHUNK); }
             if crate::appmgr::reapply_pending() {
                 crate::appmgr::do_reapply();
             } else if crate::appmgr::batch_pending() {
@@ -1959,6 +2024,11 @@ impl Page for AppMgrPage {
             // 只改了隐藏位/名单时逐行原地刷新, 行数变了(卸载、重扫)才整页重建。
             // 整页重建会销毁行对象, 列表滚动位置会跳回顶部。
             refresh_msg_row();
+            let h = core::ptr::read_volatile(core::ptr::addr_of!(AM_HDR_ROW));
+            if h != 0 {
+                fw_api::row_update(h, fw_api::NONE_PTR,
+                    crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0, 0);
+            }
             if !refresh_list_rows(false) { render_req(1); }
         }
     }
@@ -2224,7 +2294,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.3\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.4\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -3012,42 +3082,11 @@ impl Page for BatchPage {
             if t3 == 0 { return Err(PageError::RowFailed(3)); }
             let _ = build_tile_right(ctx, t3, 4, del, TILE_W, TILE_H);
 
-            // 勾选行
-            let mut prev = t3;
-            let mut first = true;
-            let rows = crate::appmgr::rows_ptr();
-            let n = crate::appmgr::view_count();
-            crate::appmgr::set_ui_rows(n as u32);
-            let mut v = 0usize;
-            while v < n {
-                let i = crate::appmgr::view_at(v);
-                if i == usize::MAX { break; }
-                let vis = crate::appmgr::visible(i);
-                let sub = if vis {
-                    core::ptr::addr_of!(B_ST_VIS) as *const u8
-                } else {
-                    core::ptr::addr_of!(B_ST_HID) as *const u8
-                };
-                let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
-                if r == 0 { return Err(PageError::RowFailed(v)); }
-                write_volatile(rows.add(v), r);
-                fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
-                let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
-                let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
-                if lab != 0 {
-                    fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
-                }
-                row_shrink(r, 88);
-                let dx = if first { TILE_CENTER_DX } else { 0 };
-                fw_api::obj_align_to(r, prev, 14, dx, 8);
-                first = false;
-                prev = r;
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                    sub, 0, crate::appmgr::sel_has(i) as u8);
-                v += 1;
-            }
+            // 勾选行: 先建首屏, 其余由 tick 分批续建
+            crate::appmgr::sort_view_visible_first();
+            list_begin(2, t3, ctx.content,
+                core::ptr::addr_of!(B_ST_VIS) as *const u8,
+                core::ptr::addr_of!(B_ST_HID) as *const u8);
             Ok(())
         }
     }
@@ -3088,13 +3127,14 @@ impl Page for BatchPage {
 
     fn needs_tick(&self) -> bool {
         unsafe {
-            crate::appmgr::batch_pending() || crate::appmgr::del_pending()
+            list_building() || crate::appmgr::batch_pending() || crate::appmgr::del_pending()
                 || crate::appmgr::has_req()
         }
     }
 
     fn tick(&self) {
         unsafe {
+            if list_building() { list_build_chunk(LB_TICK_CHUNK); }
             if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
             } else if crate::appmgr::batch_pending() {

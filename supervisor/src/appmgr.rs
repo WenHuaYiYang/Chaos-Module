@@ -206,6 +206,24 @@ unsafe fn cstr_len(s: *const u8) -> usize {
 
 pub(crate) unsafe fn count() -> usize { APP_N }
 
+pub(crate) static mut HDR_BUF: [u8; 48] = [0; 48];
+
+/// 列表上方一行分组说明: "快应用 N · 已隐藏 M" (随 tick 原地刷新)
+pub(crate) unsafe fn header_text() -> &'static [u8] {
+    let n = view_count();
+    let mut hid = 0usize;
+    let mut v = 0usize;
+    while v < n {
+        let i = view_at(v);
+        if i != usize::MAX && !visible(i) { hid += 1; }
+        v += 1;
+    }
+    let mut w = W::new(core::ptr::addr_of_mut!(HDR_BUF) as *mut u8, 48);
+    w.s("快应用 ".as_bytes()).n(n as u32).s(" / 已隐藏 ".as_bytes()).n(hid as u32).end();
+    let len = cstr_len(core::ptr::addr_of!(HDR_BUF) as *const u8);
+    core::slice::from_raw_parts(core::ptr::addr_of!(HDR_BUF) as *const u8, len + 1)
+}
+
 pub(crate) unsafe fn msg() -> &'static [u8] {
     let n = cstr_len(core::ptr::addr_of!(APP_MSG) as *const u8);
     core::slice::from_raw_parts(core::ptr::addr_of!(APP_MSG) as *const u8, n + 1)
