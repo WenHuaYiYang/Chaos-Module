@@ -374,17 +374,10 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     if pid > MAX_PID { return 0; }
     st_wr!(FG_PAGE, pid as u32);
     shake_arm();   // 首次进入(UI线程)订阅摇一摇+建timer, 幂等
-    if pid == 3 {
-        // 目录页: depth=pid-1, 恢复该级窗位, 重新加载目录(数据永远新鲜)。
-        // (2026-10-15) 文件管理入口退役: 目录页只剩 pid3(不可达), 页1 已重分配给应用管理。
-        // (2026-10-17) 页2 让给时间/日期设置 —— 这一格原来是 `pid >= 2 && pid <= 3`,
-        // 页2 一旦真被跳进去就会拿从没填过的 PATH_STACK 跑 load_dir()(opendir/readdir),
-        // 表现是点「时间设置」立即崩。判据必须按"现在还有哪一页是目录页"写, 不能按区间写。
-        st_wr!(DIR_DEPTH, (pid - 1) as u32);
-        let w = read_volatile((core::ptr::addr_of!(DIR_WIN_SAVE) as *const u32).add(pid - 1));
-        st_wr!(DIR_WIN, w);
-        load_dir();
-    }
+    // 页3 原来是文件管理的最后一级，现在让给日期第二步(月/日)。
+    // 这一格以前是 `if pid == 3 { DIR_DEPTH…; load_dir(); }`，目录页退役之后必须跟着删:
+    // 留着的话进日期第二屏就会拿从没填过的 PATH_STACK 跑 opendir/readdir
+    // (页2 当年占目录位时就是这么一点进去就崩)。判据要按"现在还有哪一页是目录页"写，不能按区间写。
     if pid == 8 || pid == 9 {
         // 两页各自独立过滤: 表盘页看 WF_SHOW_BUILTIN, 轮换页看 WF_SEL_BUILTIN
         let f = if pid == 8 {

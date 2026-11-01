@@ -16,6 +16,7 @@ mod font_hot;
 mod icon_apply;
 mod res_hook;
 mod time_set;
+mod desktop_scale;
 mod settings_entry;
 mod system_update_entry;
 mod launcher_entry;
@@ -232,6 +233,9 @@ unsafe extern "C" fn chaos_ctor() {
         // 这里只建立延后执行的维护定时器；真正的订阅、hook 和设置应用
         // 由定时器在启动窗口结束后统一开始。
         crate::watchface::maintenance_arm();
+        // 定时器句柄: 0 说明 timer_create 没成, 那样 chaos_shake_timer 永远不会被调,
+        // 依赖它的一切(页面 tick / desktop_scale)都不会跑。
+        crate::log::kv("timer h ", st_rd!(SHAKE_TIMER));
         crate::log::line("模块加载: /dev/chaos 注册成功");
     }
 }

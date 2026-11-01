@@ -113,6 +113,15 @@ pub unsafe extern "C" fn obj_clear_state(obj: Obj, state: u32) -> Obj {
 /// 滚轮"当前处于焦点态"的那个状态位（闹钟页就是清掉它，让开局没有轮是蓝的）。
 pub const LV_STATE_FOCUSED: u32 = 2;
 
+/// `lv_obj_t` 状态字在对象里的偏移(16 位宽)。
+///
+/// 出处不是猜的：上面那个清状态入口(`0x004C8518`)的 flash 影子源 `0x00076178` 头三条就是
+/// `ldrh r3,[r0,#0x30]` -> `tst r1,r3` -> `bic r2,r3,r1` —— 读的就是这一格、写的也是这一格。
+/// 用来"读控件自己此刻处于哪种状态"，比数事件码可靠：按下/松手由核心改写这一格。
+/// 具体某一位是什么含义不必在这里定(这份固件的状态位排布与常见版本不一致，
+/// 上面那串注释是已核对的取值)——页面用的是"与建屏那一刻的基线比有没有变"这种不认位的判法。
+pub const OBJ_STATE_OFF: u32 = 0x30;
+
 /// `lv_obj_add_event_cb(obj, cb, filter, user_data)` filter 用 `ev::*`（0=ALL） 已验证
 pub unsafe extern "C" fn obj_add_event(obj: Obj, cb: Cb, filter: u32, udata: u32) -> Obj {
     let f: unsafe extern "C" fn(Obj, Cb, u32, u32) -> Obj = transmute(0x0C58_83F1usize);
@@ -460,6 +469,39 @@ pub unsafe extern "C" fn fw_style_get_prop(obj: u32, sel: u32, prop: u32) -> u32
 pub unsafe extern "C" fn obj_set_local_style_prop(obj: u32, prop: u32, val: u32, sel: u32) -> u32 {
     let f: unsafe extern "C" fn(u32, u32, u32, u32) -> u32 = transmute(0x0C10_7791usize);
     f(obj, prop, val, sel)
+}
+
+/// `0x0C13C690(root, cb, ud)` LVGL v9 的对象树遍历；`root = 0` 时遍历全部已注册 screen。
+/// 回调签名 `u32 (u32 obj, u32 ud)`，返回非 0 停止遍历。
+/// 依据: 地址表 043.lv_obj_tree_walk（静态核对，壳与槽值反查成立）。
+pub unsafe extern "C" fn lv_obj_tree_walk(root: u32, cb: u32, ud: u32) -> u32 {
+    let f: unsafe extern "C" fn(u32, u32, u32) -> u32 = transmute(0x0C13_C691usize);
+    f(root, cb, ud)
+}
+
+/// `lv_obj_invalidate(obj)` —— 只让这一个对象重画：不发样式事件，也不往子树传播。
+/// `lv_obj_refresh_style`(0x0C1070AC) 体内第一件事就是调它，所以"改完属性要重画"这一发
+/// 用它而不是 refresh_style，代价小得多。
+/// 形态: VA `0x0C10CBB4`（file 0x0004CBB4）处是 `ldr.w pc,[pc],#0` 的跳转壳，壳里的槽值
+/// `0x1C02B305` 是运行期落在 PSRAM 侧的真身（同一支壳另有两处引用：`0x0C587AB8`、`0x0CAC1028`）。
+/// 等级 静态核对 —— 壳与槽值反查成立，"单独调它屏幕是否真重画"未实测。
+/// fw_addr: 0x0004CBB4  (文件偏移; VA = +0x0C0C0000, 指针 |=1)
+/// fw_thunk: 0x1C02B305
+pub unsafe extern "C" fn obj_invalidate(obj: u32) {
+    let f: unsafe extern "C" fn(u32) -> u32 = transmute(0x0C10_CBB5usize);
+    f(obj);
+}
+
+/// `lvx_image_set_scale(obj, scale_x, scale_y)` —— 固件自己的图片缩放入口（256 = 一倍）。
+///
+/// **直接写 `lv_image_t+0x50/+0x54` 不会改变绘制**：实测把这两个字段写成 128（半尺寸），
+/// 屏幕上图标仍是 100px 原样。原因在函数体内：它读完 `+0x50/+0x54`（都是 `ldrh`，u16）
+/// 还要连 `+0x44/+0x48/+0x4c/+0x58/+0x5c` 一起交给 `0x0C07_FDC8` 重算派生几何 ——
+/// 少了这一发，光改字段只是改了缓存值，绘制用的还是旧几何。
+/// fw_addr: 0x000B9DB0  (文件偏移; VA = +0x0C0C0000, 指针 |=1)
+pub unsafe extern "C" fn image_set_scale(obj: u32, sx: i32, sy: i32) {
+    let f: unsafe extern "C" fn(u32, i32, i32) = transmute(0x0C17_9DB1usize);
+    f(obj, sx, sy);
 }
 
 /// `LV_STYLE_TEXT_FONT` 属性号。依据(字节级): 固件自己的

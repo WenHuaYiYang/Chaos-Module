@@ -242,21 +242,34 @@ pub(crate) unsafe fn stat_name(idx: usize) -> *const u8 {
     }
 }
 
-// 刷新信息页第 idx 行(0=存储 1=内存 2=CPU)的数值文本
-pub(crate) unsafe fn stat_fill(idx: usize) {
+// 刷新信息页第 idx 行(0=存储 1=内存 2=CPU)的数值文本, 并返回该行的占用百分比。
+//
+// 合并前是 stat_fill(idx) + storage_pct()/mem_pct() 两个调用各读一遍同一个 procfs 文件 ——
+// 一轮刷新 5 次 open/read/close。现在一个函数读一次、同时产出文本与百分比, 一轮 3 次。
+pub(crate) unsafe fn stat_fill_pct(idx: usize) -> u32 {
     let dst = (core::ptr::addr_of_mut!(STAT_VAL) as *mut u8).add(idx * STAT_STRIDE);
     write_volatile(dst.add(0), 0);
     let mut buf: [u8; 512] = [0; 512];   // meminfo 可能有多行分配器统计, 256 不保险
+    let pct: u32;
     match idx {
         0 => {
             // 存储: 容量/已用都带单位后缀, 必须按单位还原(见 fs_usage_mb)
-            if read_proc(PROC_FS.as_ptr(), buf.as_mut_ptr(), 256) > 0
-                && !fs_usage_mb(buf.as_ptr(), dst) { first_line(buf.as_ptr(), dst); }
+            if read_proc(PROC_FS.as_ptr(), buf.as_mut_ptr(), 256) > 0 {
+                pct = storage_pct_of(buf.as_ptr());
+                if !fs_usage_mb(buf.as_ptr(), dst) { first_line(buf.as_ptr(), dst); }
+            } else {
+                pct = 0;
+            }
         }
         1 => {
             // Umem 行(标签在行尾, 行号不固定), 解析见 mem_umem
             let n = read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 512);
-            if n > 0 && !mem_mb(buf.as_ptr(), n, dst) { first_line(buf.as_ptr(), dst); }
+            if n > 0 {
+                pct = mem_pct_of(buf.as_ptr(), n);
+                if !mem_mb(buf.as_ptr(), n, dst) { first_line(buf.as_ptr(), dst); }
+            } else {
+                pct = 0;
+            }
         }
         _ => {
             // CPU 占用: /proc/cpuload, 固件格式 "%3ld.%01ld%%"(每 CPU 一行)
@@ -266,14 +279,16 @@ pub(crate) unsafe fn stat_fill(idx: usize) {
                 let mut j = 0usize;
                 while j < n && j < 8 { write_volatile(dst.add(j), one[j]); j += 1; }
                 write_volatile(dst.add(j), 0);
-                return;
+                return 0;
             }
+            pct = 0;
         }
     }
     if read_volatile(dst) == 0 {
         write_volatile(dst, b'-');
         write_volatile(dst.add(1), 0);
     }
+    pct
 }
 
 
@@ -317,29 +332,37 @@ unsafe fn next_size(src: *const u8, k: &mut usize, ok: &mut bool) -> u64 {
 // 存储占用百分比 0..100。数据行 = "挂载点 容量 已用 可用 挂载点", 取首行前两个数,
 // 用 小/大 反推占用比(与列顺序无关)。这两行说的是下面的 storage_pct, 不是紧跟的 mem_pct。
 // 内存占用比 0..100: meminfo 的 Umem 行 已用/总量(mem_umem; 旧实现按固定行号取错行)
+unsafe fn mem_pct_of(buf: *const u8, n: usize) -> u32 {
+    let Some((total, used, _)) = mem_umem(buf, n) else { return 0; };
+    if total == 0 || used > total { return 0; }
+    let p = (used as u64 * 100 / total as u64) as u32;
+    if p > 100 { 100 } else { p }
+}
+
 pub(crate) unsafe fn mem_pct() -> u32 {
     let mut buf: [u8; 512] = [0; 512];
     let n = read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 512);
     if n == 0 { return 0; }
-    let Some((total, used, _)) = mem_umem(buf.as_ptr(), n) else { return 0; };
-    if total == 0 || used > total { return 0; }
-    let p = (used as u64 * 100 / total as u64) as u32;
+    mem_pct_of(buf.as_ptr(), n)
+}
+
+unsafe fn storage_pct_of(buf: *const u8) -> u32 {
+    let mut k = 0usize;
+    let mut ok = false;
+    let a = next_size(buf, &mut k, &mut ok);
+    if !ok { return 0; }
+    let b = next_size(buf, &mut k, &mut ok);
+    if !ok { return 0; }
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    if hi == 0 { return 0; }
+    let p = (lo as u128 * 100 / hi as u128) as u32;
     if p > 100 { 100 } else { p }
 }
 
 pub(crate) unsafe fn storage_pct() -> u32 {
     let mut buf: [u8; 256] = [0; 256];
     if read_proc(PROC_FS.as_ptr(), buf.as_mut_ptr(), 256) == 0 { return 0; }
-    let mut k = 0usize;
-    let mut ok = false;
-    let a = next_size(buf.as_ptr(), &mut k, &mut ok);
-    if !ok { return 0; }
-    let b = next_size(buf.as_ptr(), &mut k, &mut ok);
-    if !ok { return 0; }
-    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-    if hi == 0 { return 0; }
-    let p = (lo as u128 * 100 / hi as u128) as u32;
-    if p > 100 { 100 } else { p }
+    storage_pct_of(buf.as_ptr())
 }
 
 
