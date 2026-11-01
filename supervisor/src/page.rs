@@ -893,8 +893,7 @@ unsafe fn refresh_excl_rows() {
             } else {
                 ("已隐藏\0".as_bytes().as_ptr(), C_HIDDEN)
             };
-            let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
             let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
             if lab != 0 { fw_api::obj_style_color_a70(lab, col, 0); }
         }
@@ -930,7 +929,7 @@ impl Page for ExclPage {
             let t0 = build_tile_below(ctx, ctx.title, 0,
                 crate::appmgr::mode_label(), 328, 56);
             if t0 == 0 { return Err(PageError::RowFailed(0)); }
-            let s1 = build_row_under_left(ctx, t0, 1,
+            let s1 = build_row(ctx, t0, 1,
                 &RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null()));
             row_shrink(s1, 56);
             EX_HINT_ROW = read_volatile(ctx.rows.add(1));
@@ -957,20 +956,15 @@ impl Page for ExclPage {
                     "已隐藏\0".as_bytes().as_ptr()
                 };
                 let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
+                    crate::appmgr::entry_primary(i), sub, 0);
                 if r == 0 { return Err(PageError::RowFailed(i)); }
                 write_volatile(rows.add(i), r);
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
-                let dx = if v == 1 { TILE_CENTER_DX } else { 0 };
-                fw_api::obj_align_to(r, prev, 14, dx, 8);
+                fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
                 row_shrink(r, 88);
                 cardify(r);
-                // 复选框: 排除模式 = 是否排除; 显隐模式 = 是否可见(勾=显示中)
-                let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
+                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
                 let col = if mode == 0 {
                     if crate::appmgr::excl_on(i) { C_WARNING } else { C_SECONDARY }
                 } else if crate::appmgr::visible(i) { C_VISIBLE } else { C_HIDDEN };
