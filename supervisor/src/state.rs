@@ -163,11 +163,17 @@ pub static PAGE_DEVNAME: [u8; 8] = *b"devname\0";
 /// 页27: 系统关于页面修改 -> 手环型号。三个预设与自定义入口。
 pub static PAGE_DEVMODEL: [u8; 9] = *b"devmodel\0";
 
+/// 页28: 应用管理 -> 应用详情(P0 占位)。
+pub static PAGE_DETAIL: [u8; 7] = *b"detail\0";
+
+/// 页29: 应用管理 -> 批量操作(P0 占位)。
+pub static PAGE_BATCH: [u8; 6] = *b"batch\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 28;                   // 注册页数(页0..页27)
+pub const PAGE_COUNT: usize = 30;                   // 注册页数(页0..页29)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 812] = [0; 812];         // 28 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 870] = [0; 870];         // 30 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

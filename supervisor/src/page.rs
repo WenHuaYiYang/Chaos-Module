@@ -1718,6 +1718,8 @@ impl Page for AppMgrPage {
                 (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
                 (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 深度隐藏(全局)
                 (5, RowSpec::clickable("重新应用隐藏\0".as_bytes())), // 按名单重收一遍(装新应用后)
+                (6, RowSpec::clickable("批量操作(测试)\0".as_bytes())), // P0 冒烟: 页29
+                (7, RowSpec::clickable("应用详情(测试)\0".as_bytes())), // P0 冒烟: 页28
             ])?;
             AM_MSG_ROW = read_volatile(ctx.rows.add(2));
             // 勾选(=可见)在前, 隐藏在后
@@ -1727,7 +1729,7 @@ impl Page for AppMgrPage {
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
                 0, crate::appmgr::deep_on() as u8);
             // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
-            let mut prev = read_volatile(ctx.rows.add(5));
+            let mut prev = read_volatile(ctx.rows.add(7));
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::view_count();
@@ -1773,6 +1775,10 @@ impl Page for AppMgrPage {
             } else if idx == 5 {
                 crate::appmgr::request_reapply();
                 render_req(1);
+            } else if idx == 6 {
+                nav_goto(29, 0);   // 批量操作(P0 占位)
+            } else if idx == 7 {
+                nav_goto(28, 0);   // 应用详情(P0 占位)
             } else if idx >= 12 {
                 let v = idx - 12;
                 if v < crate::appmgr::view_count() {
@@ -2693,6 +2699,42 @@ impl Page for KeyboardPage {
     fn on_click(&self, _idx: usize) {}
 }
 
+// ===== 页28: 应用管理 -> 应用详情(P0 占位) =====
+pub(crate) struct AppDetailPage;
+static PAGE_DETAILP: AppDetailPage = AppDetailPage;
+
+impl Page for AppDetailPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "应用详情\0".as_bytes()); }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            let row = build_row(ctx, ctx.title, 0, &RowSpec::display("开发中\0".as_bytes(), core::ptr::null()));
+            if row == 0 { return Err(PageError::RowFailed(0)); }
+            Ok(())
+        }
+    }
+    fn on_click(&self, _idx: usize) {}
+}
+
+// ===== 页29: 应用管理 -> 批量操作(P0 占位) =====
+pub(crate) struct BatchPage;
+static PAGE_BATCHP: BatchPage = BatchPage;
+
+impl Page for BatchPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "批量操作\0".as_bytes()); }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            let row = build_row(ctx, ctx.title, 0, &RowSpec::display("开发中\0".as_bytes(), core::ptr::null()));
+            if row == 0 { return Err(PageError::RowFailed(0)); }
+            Ok(())
+        }
+    }
+    fn on_click(&self, _idx: usize) {}
+}
+
 pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
@@ -2722,4 +2764,6 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_SYSTEXTP,     // 25 系统关于页面修改 -> 手环系统文本
     &PAGE_DEVNAMEP,     // 26 系统关于页面修改 -> 设备名称
     &PAGE_DEVMODELP,    // 27 系统关于页面修改 -> 手环型号
+    &PAGE_DETAILP,      // 28 应用管理 -> 应用详情(P0 占位)
+    &PAGE_BATCHP,       // 29 应用管理 -> 批量操作(P0 占位)
 ];
