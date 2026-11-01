@@ -1985,41 +1985,28 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
         if r == 0 { return false; }
         let vis = crate::appmgr::visible(i);
         let picked = selected_mode && crate::appmgr::sel_has(i);
-        let sub = if picked {
-            "已选\0".as_bytes().as_ptr()
-        } else if vis {
-            core::ptr::addr_of!(AM_STATUS_VIS) as *const u8
-        } else {
-            core::ptr::addr_of!(AM_STATUS_HID) as *const u8
-        };
-        let sel = if selected_mode && crate::appmgr::sel_has(i) { 1u8 } else { 0u8 };
-        let st = (vis as u8) | (sel << 1);
+        let st = (vis as u8) | ((picked as u8) << 1);
         let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
         if core::ptr::read_volatile(cache.add(v)) == st { continue; }
         core::ptr::write_volatile(cache.add(v), st);
-        // 批量页的副标题就是胶囊本体, 必须把文本一起传进去, 否则固件会把它清空/隐藏
-        let secondary = if selected_mode { sub } else { fw_api::NONE_PTR };
         fw_api::row_update(r, fw_api::NONE_PTR,
-            crate::appmgr::entry_primary(i), secondary, 0, sel);
+            crate::appmgr::entry_primary(i), fw_api::NONE_PTR, 0, 0);
         let sp = core::ptr::read_volatile((core::ptr::addr_of!(P_STATE_LB) as *const u32).add(v));
-        let stxt: &[u8] = if picked { "已选\0".as_bytes() }
-            else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
+        let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
         if sp != 0 {
             fw_api::label_set_text(sp, stxt.as_ptr());
-            if selected_mode {
-                let face = fw_api::style_get_font(crate::state::FW_STYLE_MISANS_REG_24);
-                if face != 0 { fw_api::obj_set_style_text_font(sp, face, 0); }
-            }
-            // row_update 对副标签的处理会把它打上隐藏标志, 清掉才能看见
             fw_api::obj_clear_flag(sp, 0x01);
-            if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
-            else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
+            if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
         }
-        if !selected_mode {
-            let p = core::ptr::read_volatile((core::ptr::addr_of!(P_EXCL_LB) as *const u32).add(v));
-            set_excl_pill(p, i);
+        if selected_mode {
+            let title = crate::mem::rd32((r + 0x3c) as *const u32);
+            if title != 0 {
+                fw_api::obj_style_color_a70(title, if picked { C_ACCENT } else { 0xFFFFFF }, 0);
+            }
         }
+        let p = core::ptr::read_volatile((core::ptr::addr_of!(P_EXCL_LB) as *const u32).add(v));
+        set_excl_pill(p, i);
     }
     true
 }
@@ -2095,46 +2082,28 @@ unsafe fn list_build_chunk(limit: u32) {
         let i = crate::appmgr::view_at(v);
         if i == usize::MAX { LB_V = LB_N; break; }
         let vis = crate::appmgr::visible(i);
-        // 批量页保留复选框(批量选择的标识); 复选框会压缩第二行宽度, 偏移量按 118 算
-        let trailing = if LB_KIND == 2 { fw_api::trailing::CHECKBOX } else { 0 };
+        // 批量页也不再使用复选框: 和页 1 一样用行 + 胶囊, 选中态靠标题变色
+        let trailing = 0;
         // 页 1 本来就是两行行型, 副标题用不换行空格占位即可;
         // 批量页的复选框行会被固件当成单行(标题垂直居中), 用真实字形占位把它撑成两行,
         // 这个占位稍后被胶囊完全盖住
         // 批量页把状态文本直接交给固件副标题(有真实文字 -> 行是两行行型, 标题在左上),
         // 之后把这个副标题本身做成胶囊; 页 1 仍是占位 + 自建胶囊
         let picked = LB_KIND == 2 && crate::appmgr::sel_has(i);
-        let stxt: &[u8] = if picked { "已选\0".as_bytes() }
-            else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
-        let sub_ph: &[u8] = if LB_KIND == 2 { stxt } else { b"\xc2\xa0\0" };
+        let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
+        let sub_ph: &[u8] = b"\xc2\xa0\0";
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
             sub_ph.as_ptr(), trailing);
         if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
         fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
-        if LB_KIND == 2 {
-            let tobj = fw_api::row_trailing(r);
-            if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
-        }
         fw_api::obj_set_size_wh(r, 320, 100);
         fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
         // 页 1 自建胶囊; 批量页直接用固件副标题当胶囊(保持可见文本, 行才不会退化单行)
-        let sp = if LB_KIND == 2 {
-            crate::mem::rd32((r + 0x40) as *const u32)
-        } else {
-            fw_api::label_create(r)
-        };
+        let sp = fw_api::label_create(r);
         if sp != 0 {
-            if LB_KIND == 2 {
-                // 固件副标题字体比自建标签大, 先换成 24px 系统字体, 再用 34 高的胶囊尺寸
-                let face = fw_api::style_get_font(crate::state::FW_STYLE_MISANS_REG_24);
-                if face != 0 { fw_api::obj_set_style_text_font(sp, face, 0); }
-                // 标题也一起压到和左边距一致的上边距
-                let title = crate::mem::rd32((r + 0x3c) as *const u32);
-                if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 10, 10); }
-            } else {
-                fw_api::label_set_text(sp, stxt.as_ptr());
-            }
+            fw_api::label_set_text(sp, stxt.as_ptr());
             if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
             else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
@@ -2142,20 +2111,19 @@ unsafe fn list_build_chunk(limit: u32) {
             // 第二行一定在卡片内部, 所以胶囊不会再掉到卡片外面。
             let sub = crate::mem::rd32((r + 0x40) as *const u32);
             let base = if sub != 0 { sub } else { r };
-            // 副标签的“中心”在卡片内(实测正确), 但它的底边比卡片低, 所以只能用 CENTER 再水平偏移。
-            // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
             let w = pill_w(stxt) as i32;
-            if LB_KIND == 2 {
-                // 批量页: OUT_BOTTOM_MID 以行底为基准, 上抬到 -18; dx 使左边距 10
-                fw_api::obj_align_to(sp, r, fw_api::align::OUT_BOTTOM_MID, -(150 - w / 2), -10);
-            } else {
-                // 页 1 锚副标题行: 纵向贴底(下边距刚好), 左边距 10
-                fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(150 - w / 2), 0);
-            }
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(150 - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
-        let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
-        if LB_KIND == 1 { P_EXCL_LB[v] = exp; }
+        let exp = add_excl_pill(r, sp, i, false);
+        P_EXCL_LB[v] = exp;
+        // 批量页: 选中的应用名称变色
+        if LB_KIND == 2 {
+            let title = crate::mem::rd32((r + 0x3c) as *const u32);
+            if title != 0 {
+                fw_api::obj_style_color_a70(title, if picked { C_ACCENT } else { 0xFFFFFF }, 0);
+            }
+        }
         if LB_KIND == 1 {
             let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
             core::ptr::write_volatile(cache.add(v), (vis as u8) | 0);
@@ -2164,10 +2132,6 @@ unsafe fn list_build_chunk(limit: u32) {
         fw_api::obj_align_to(r, LB_PREV, 14, ddx, 10);
         LB_FIRST = 0;
         LB_PREV = r;
-        if LB_KIND == 2 {
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                fw_api::NONE_PTR, 0, crate::appmgr::sel_has(i) as u8);
-        }
         LB_V += 1;
         k += 1;
     }
