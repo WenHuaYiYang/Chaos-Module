@@ -48,6 +48,34 @@ def run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
+def find_icon_python(repo: Path) -> str:
+    """在编译前检查 Pillow；当前 Python 缺依赖时复用项目虚拟环境。"""
+    venv_python = repo / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    failures = []
+    # 不 resolve() 虚拟环境的符号链接，否则会绕过它的 site-packages。
+    for python in dict.fromkeys((Path(sys.executable), venv_python)):
+        if not python.is_file():
+            continue
+        try:
+            result = subprocess.run(
+                [str(python), "-c", "from PIL import Image, ImageDraw"],
+                cwd=repo, capture_output=True, text=True,
+            )
+        except OSError as exc:
+            failures.append(f"{python}: {exc}")
+            continue
+        if result.returncode == 0:
+            return str(python)
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        failures.append(f"{python}: {detail}")
+    raise RuntimeError(
+        "图标生成需要 Pillow（PIL），当前 Python 和项目 .venv 均不可用。\n"
+        f"请在 {repo} 中创建 .venv（建议 Python 3.12；已有环境无需重建），再执行：\n"
+        f"  {venv_python.relative_to(repo)} -m pip install -r tools/requirements-build.txt\n"
+        + "\n".join(failures)
+    )
+
+
 def build_ko(repo: Path, out: Path, build_time: str) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -73,11 +101,11 @@ def build_capatch(repo: Path, out: Path) -> None:
         raise RuntimeError(f"没有生成有效 capatch 模块: {out}")
 
 
-def build_icon(repo: Path, out: Path, size: int) -> None:
+def build_icon(repo: Path, out: Path, size: int, python: str) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["CHAOS_ICON_SIZE"] = str(size)
-    run([sys.executable, str(repo / "tools" / "gen_chaos_icon.py"),
+    run([python, str(repo / "tools" / "gen_chaos_icon.py"),
          str(repo / "tools" / "chaos.png"), str(out)], repo, env)
     data = out.read_bytes()
     if len(data) != 12 + size * size * 4 or data[:4] != bytes((0x19, 0x10, 0, 0)):
@@ -154,6 +182,9 @@ def main() -> int:
     args = ap.parse_args()
 
     repo = args.repo.expanduser().resolve()
+    icon_python = None if args.no_icons else find_icon_python(repo)
+    if icon_python is not None:
+        print(f"图标 Python: {icon_python}", flush=True)
     dist = repo / "dist"
     assets = dist / "assets"
     stage = dist / "stage"
@@ -182,9 +213,9 @@ def main() -> int:
     print(f"fetch: {fetch} ({fetch.stat().st_size} bytes)")
     print(f"capatch: {capatch} ({capatch.stat().st_size} bytes)")
 
-    if not args.no_icons:
-        build_icon(repo, assets / "chaos_icon.bin", 112)
-        build_icon(repo, assets / "chaos_icon_settings.bin", 64)
+    if icon_python is not None:
+        build_icon(repo, assets / "chaos_icon.bin", 112, icon_python)
+        build_icon(repo, assets / "chaos_icon_settings.bin", 64, icon_python)
     else:
         # 兼容旧目录：首次迁移时把 installer/ 里的图标搬进 dist/assets。
         for icon in ("chaos_icon.bin", "chaos_icon_settings.bin"):

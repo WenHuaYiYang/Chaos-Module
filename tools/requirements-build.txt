@@ -1,0 +1,2 @@
+# Only icon generation needs third-party Python packages.
+Pillow>=10.0,<13

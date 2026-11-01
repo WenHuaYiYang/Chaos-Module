@@ -18,11 +18,24 @@ pub unsafe extern "C" fn eventbus_subscribe(topic: u32, arg1: u32, cb: Cb, udata
 /// `quick_guesture` topic 描述符（payload 16B，手势码 = payload+8 u16） 已验证
 pub const TOPIC_QUICK_GUESTURE: u32 = 0x2CD4_64E4;
 
+/// `lv_timer_create` 的地址按目标各自的**文件偏移**现算，不拿 VA 对手抄 VA。
+/// 谁把哪一档的值抄成了另一档的，对应目标的构建当场失败。
+#[cfg(not(feature = "fw-p65"))]
+const _: () = assert!(super::fwaddr::LV_TIMER_CREATE == (0x004C_7ED0 + 0x0C0C_0000 + 1));
+
+#[cfg(feature = "fw-p65")]
+const _: () = assert!(super::fwaddr::LV_TIMER_CREATE == (0x0068_14D8 + 0x0C0C_0000 + 1));
+
 /// `lv_timer_create(cb, period_ms, user_data)` 回调在 **UI 线程**执行 已验证
 ///
 /// 这是把"重活"从事件回调/派发线程搬到 UI 线程的标准手段，也是**安全销毁对象的唯一时机**。
+///
+/// 重要: 这一支在两个目标上是两个不同地址（本档是 LVGL 跳转壳，p65 是另一段真身），
+/// 值只能从 `fwaddr` 取 —— 在调用点写死字面量等于允许把一个目标的值带进另一个目标的
+/// 构建，那种错在构建期完全安静，到设备上表现为整条节拍不跑或直接复位。
 pub unsafe extern "C" fn timer_create(cb: Cb, period_ms: u32, udata: u32) -> u32 {
-    let f: unsafe extern "C" fn(Cb, u32, u32) -> u32 = transmute(0x0C58_7ED1usize);
+    let f: unsafe extern "C" fn(Cb, u32, u32) -> u32 =
+        transmute(super::fwaddr::LV_TIMER_CREATE as usize);
     f(cb, period_ms, udata)
 }
 

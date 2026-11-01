@@ -341,6 +341,9 @@ pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
 //   都算有活, 所以**所有以"拍"为单位的等待量都还在按 50ms 走, 不会因为降频被拉长**。
 const TICK_FAST_MS: u32 = 50;
 const TICK_IDLE_MS: u32 = 1000;
+// 曾经有过一档"桌面滚动时把节拍提到 16ms"。两次复测都更糟：写入频率高 3 倍，
+// 屏上反而连"缩"都看不到（拖拽帧全 100）—— 列表每帧重排会把倍率重置，绘制紧跟着重排，
+// 外部写多快都插不进去。现在滚动中干脆不写（见 desktop_scale::fast_cb），停下后缓入。
 // 注入后先让友商/系统模块完成启动；50 个 50ms tick 后才运行 Chaos 逻辑。
 static mut BOOT_DELAY: u32 = 50;
 
@@ -361,8 +364,20 @@ unsafe fn tick_busy() -> bool {
 
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。
 unsafe fn tick_adapt() {
-    if st_rd!(TICK_ADAPT) == 0 { return; }
-    let want = if tick_busy() { TICK_FAST_MS } else { TICK_IDLE_MS };
+    if st_rd!(TICK_ADAPT) == 0 {
+        // 句柄形状没验上 => 一辈子 50ms，滚动提速也不会生效。报一次，
+        // 免得真机把"根本没提速"看成"提速了但观感没变"。
+        if crate::desktop_scale::scrolling() && st_rd!(TICK_ADAPT_WARN) == 0 {
+            st_wr!(TICK_ADAPT_WARN, 1);
+            crate::log::line("tick noadapt");
+        }
+        return;
+    }
+    let want = if tick_busy() {
+        TICK_FAST_MS
+    } else {
+        TICK_IDLE_MS
+    };
     if want == st_rd!(TICK_PERIOD_MS) { return; }
     let t = st_rd!(SHAKE_TIMER);
     fw_api::timer_set_period(t, want);
@@ -421,6 +436,8 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
             }
         }
     }
+    // 2.5 桌面图标缩放(与页面无关: 固件 launcher 桌面不是我们的页, 前台页 tick 不会跑到)
+    crate::desktop_scale::tick();
     // 3. 消费重建请求(lv_timer 上下文销毁/重建对象树是安全的)
     let rq = st_rd!(RENDER_REQ);
     if rq != RENDER_NONE {

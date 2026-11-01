@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/release-v1.0.6-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v1.0.7-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 

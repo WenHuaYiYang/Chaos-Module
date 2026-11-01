@@ -31,6 +31,9 @@ pub const MAX_ROWS_PER_PAGE: usize = 12;
 // 信息页三行实时数值(存储/内存/CPU), 每格 STAT_STRIDE 字节
 pub const STAT_STRIDE: usize = 32;
 pub static mut STAT_VAL: [[u8; STAT_STRIDE]; 3] = [[0; STAT_STRIDE]; 3];
+/// 存储/内存占用百分比(0..100)。tick 刷的时候顺手存下, render 建数据行时直接用 ——
+/// 进页面不再为"建个进度条"去读两遍 procfs(见 InfoPage::render 的注释)。
+pub static mut STAT_PCT: [u32; 2] = [0; 2];
 pub static mut STAT_TICK: u32 = 0;
 pub static mut HEAL_TRYS: u32 = 0;            // 自愈重试次数(限次防死循环)
 
@@ -100,7 +103,10 @@ pub static PAGE_DIR0: [u8; 6] = *b"files\0";
 /// 文件管理入口退役后没人再跳进来，页名跟着改判 —— 页名只是 page_goto 的解析键。
 pub static PAGE_TIME: [u8; 8] = *b"timeset\0";
 
-pub static PAGE_DIR2: [u8; 7] = *b"files2\0";
+/// 页3: 日期设置第二步(月 + 日)。原来这一格是文件管理的第 3 级目录(files2)，
+/// 入口退役后一直不可达，日期拆两屏之后腾给它。页名只是 page_goto 的解析键，
+/// 改它要三处同步(state / ipc / page 的 PAGE_TABLE)。
+pub static PAGE_DATEMD: [u8; 7] = *b"datemd\0";
 
 /// 页4: 系统美化 -> 系统模糊(二级)。原来这一格是目录第 4 级(files3),
 /// 为了让模糊页有真正的 page_goto/page_back 动画而重新分配过来。
@@ -163,17 +169,20 @@ pub static PAGE_DEVNAME: [u8; 8] = *b"devname\0";
 /// 页27: 系统关于页面修改 -> 手环型号。三个预设与自定义入口。
 pub static PAGE_DEVMODEL: [u8; 9] = *b"devmodel\0";
 
-/// 页28: 应用管理 -> 应用详情(P0 占位)。
+/// 页28: 系统美化 -> 应用列表设置(二级)。桌面图标的缩放/排距/内缩三个开关。
+pub static PAGE_APPLIST: [u8; 8] = *b"applist\0";
+
+/// 页29: 应用管理 -> 应用详情(P0 占位)。
 pub static PAGE_DETAIL: [u8; 7] = *b"detail\0";
 
-/// 页29: 应用管理 -> 批量操作(P0 占位)。
+/// 页30: 应用管理 -> 批量操作(P0 占位)。
 pub static PAGE_BATCH: [u8; 6] = *b"batch\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 30;                   // 注册页数(页0..页29)
+pub const PAGE_COUNT: usize = 31;                   // 注册页数(页0..页30)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 870] = [0; 870];         // 30 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 899] = [0; 899];         // 31 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 
@@ -349,6 +358,8 @@ pub static mut TIMER_CREATE_N: u32 = 0;   // 诊断: 我们一共创建了几个
 pub static mut TICK_ADAPT: u32 = 0;
 /// 当前已生效的周期(避免每拍都调 set_period; 也用于"变了才写")
 pub static mut TICK_PERIOD_MS: u32 = 50;
+/// 自适应关掉时滚动提速也不会生效 —— 报过一次就置位, 别让真机把它看成"提速了但没效果"。
+pub static mut TICK_ADAPT_WARN: u32 = 0;
 
 pub static mut SHAKE_PENDING: u32 = 0;                   // 回调置旗, timer 消费
 

@@ -121,12 +121,15 @@ pub(crate) unsafe fn build_structures() {
     let cb_pause = chaos_on_pause as *const () as u32;
     let cb_destroy = chaos_on_destroy as *const () as u32;
     let cb_ui_destroy = chaos_on_ui_destroy as *const () as u32;
-    // 17 页注册(固件自带模块是 3 页模式, 这里扩到 17 页; 全部填充无空页 —— 空描述符会崩):
+    // 逐页注册(固件自带模块是 3 页模式, 这里扩到 29 页; 全部填充无空页 —— 空描述符会崩):
 // page0=信息 page1=应用管理 page2/3=时间/日期设置 page4=系统模糊 page5=更换字体
 // page6=桌面图标 page7=应用管理·排除项 page8/9=表盘切换/摇一摇轮换 page10=表盘管理
-// page11=亮度 page12=缓存 page13=系统美化菜单 page14=设置 page15=模糊区域 page16=震动。
+// page11=亮度 page12=缓存 page13=系统美化菜单 page14=设置 page15=模糊区域 page16=震动
+// page17=运行日志 page18=关于 page19=恢复fetch page20=开放源代码许可 page21=MPL许可正文
+// page22=系统版本显示 page23=键盘 page24=系统关于页面修改 page25=手环系统文本
+// page26=设备名称 page27=手环型号 page28=应用列表设置。
 // **每级目录独立 page_id → 进入/返回/标题< 全走 page_goto/page_back 固件动画**;
-// 美化页的两个二级页同样给独立 page_id, 就是为了让它们也有这个动画。
+// 美化页的二级页同样给独立 page_id, 就是为了让它们也有这个动画。
 let cb_create = chaos_on_create as *const () as u32;
 let cb_resume = chaos_on_resume as *const () as u32;
 let app_id = st_rd!(APP_ID);
@@ -136,7 +139,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_MAIN) as u32,
     core::ptr::addr_of!(PAGE_DIR0) as u32,
     core::ptr::addr_of!(PAGE_TIME) as u32,
-    core::ptr::addr_of!(PAGE_DIR2) as u32,
+    core::ptr::addr_of!(PAGE_DATEMD) as u32,
     core::ptr::addr_of!(PAGE_BLUR) as u32,
     core::ptr::addr_of!(PAGE_TXTSUB) as u32,
     core::ptr::addr_of!(PAGE_ICONSUB) as u32,
@@ -161,6 +164,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_SYSTEXT) as u32,
     core::ptr::addr_of!(PAGE_DEVNAME) as u32,
     core::ptr::addr_of!(PAGE_DEVMODEL) as u32,
+    core::ptr::addr_of!(PAGE_APPLIST) as u32,
     core::ptr::addr_of!(PAGE_DETAIL) as u32,
     core::ptr::addr_of!(PAGE_BATCH) as u32,
 ];
@@ -282,7 +286,7 @@ pub(crate) unsafe fn cmd_install(phase: u32) {
         desc_addr + 0x740, desc_addr + 0x7B4, desc_addr + 0x828, desc_addr + 0x89C,
         desc_addr + 0x910, desc_addr + 0x984, desc_addr + 0x9F8, desc_addr + 0xA6C,
         desc_addr + 0xAE0, desc_addr + 0xB54, desc_addr + 0xBC8, desc_addr + 0xC3C,
-        desc_addr + 0xCB0, desc_addr + 0xD24,
+        desc_addr + 0xCB0, desc_addr + 0xD24, desc_addr + 0xD98,
     ];
     trace_step(12); // register_app 前
     let install_result = install(meta, items.as_ptr(), PAGE_COUNT as u32);

@@ -24,6 +24,22 @@ pub unsafe extern "C" fn obj_set_size(obj: Obj, w: i32, h: i32) -> Obj {
     f(obj, w, h)
 }
 
+/// `lv_obj_set_scroll_dir(obj, dir)`，p67 / 3.101.043 静态核对。
+/// 壳 0x004C84C8 -> 0x1C02CBE9；镜像本体 0x0007A028 先分配 spec_attr，
+/// 再写其 +0x32 的 bits 6..9；相邻 getter 0x0007A0C0 读同一字段，默认 0xF。
+/// 方向位 LEFT=1、RIGHT=2、TOP=4、BOTTOM=8；3 只允许横向滚动。
+pub unsafe extern "C" fn obj_set_scroll_dir(obj: Obj, dir: u32) {
+    let f: unsafe extern "C" fn(Obj, u32) = transmute(super::fwaddr::OBJ_SET_SCROLL_DIR as usize);
+    f(obj, dir)
+}
+
+pub const LV_DIR_HOR: u32 = 0x3;
+pub const LV_OBJ_FLAG_CLICKABLE: u32 = 0x2;
+pub const LV_OBJ_FLAG_SCROLLABLE: u32 = 0x10;
+pub const LV_OBJ_FLAG_SCROLL_ELASTIC: u32 = 0x20;
+pub const LV_OBJ_FLAG_SCROLL_CHAIN: u32 = 0x300;
+pub const LV_OBJ_FLAG_GESTURE_BUBBLE: u32 = 0x8000;
+
 
 /// `lvx_confirm_btn_create(parent)` 系统闹钟页底部那个确认按钮的工厂
 ///
@@ -112,6 +128,15 @@ pub unsafe extern "C" fn obj_clear_state(obj: Obj, state: u32) -> Obj {
 
 /// 滚轮"当前处于焦点态"的那个状态位（闹钟页就是清掉它，让开局没有轮是蓝的）。
 pub const LV_STATE_FOCUSED: u32 = 2;
+
+/// `lv_obj_t` 状态字在对象里的偏移(16 位宽)。
+///
+/// 出处不是猜的：上面那个清状态入口(`0x004C8518`)的 flash 影子源 `0x00076178` 头三条就是
+/// `ldrh r3,[r0,#0x30]` -> `tst r1,r3` -> `bic r2,r3,r1` —— 读的就是这一格、写的也是这一格。
+/// 用来"读控件自己此刻处于哪种状态"，比数事件码可靠：按下/松手由核心改写这一格。
+/// 具体某一位是什么含义不必在这里定(这份固件的状态位排布与常见版本不一致，
+/// 上面那串注释是已核对的取值)——页面用的是"与建屏那一刻的基线比有没有变"这种不认位的判法。
+pub const OBJ_STATE_OFF: u32 = 0x30;
 
 /// `lv_obj_add_event_cb(obj, cb, filter, user_data)` filter 用 `ev::*`（0=ALL） 已验证
 pub unsafe extern "C" fn obj_add_event(obj: Obj, cb: Cb, filter: u32, udata: u32) -> Obj {
@@ -449,26 +474,72 @@ pub unsafe extern "C" fn fw_style_get_prop(obj: u32, sel: u32, prop: u32) -> u32
     f(obj, sel, prop)
 }
 
-/// `0x0C107790(obj, prop, value, selector)` LVGL v9 对象级 local style 写入,
-/// 即固件里的 `lv_obj_set_local_style_prop`(R1=prop R2=值 R3=selector)。
-/// 用途: 样式对象/记录/缓存三条路都改不到行文字 => 对**活对象**直写 text_font。
-/// 重要(字节级): 该入口尾部 0x0c107892 会调 `lv_obj_refresh_style`
-/// (0x0C1070AC) 做整棵子树失效重绘, 传播与否由属性标志表 0x2CCE5BC4[prop] 决定;
-/// text_font(0x5A) 实测该表值 0x05 = 带传播位 => **写完不需要再补任何重绘调用**。
-/// 另: 对象本来没有 local style 时它会自行分配 12B(0x0c1078ce 起), 由 obj_delete 回收。
-/// 静态核对
-pub unsafe extern "C" fn obj_set_local_style_prop(obj: u32, prop: u32, val: u32, sel: u32) -> u32 {
-    let f: unsafe extern "C" fn(u32, u32, u32, u32) -> u32 = transmute(0x0C10_7791usize);
+/// `lv_obj_set_local_style_prop(obj, prop, value, selector)`，四参、无返回值。
+/// p67 / 3.101.043 静态核对：固件调用点 0x009E6600 -> thunk 0x00A00BB0
+/// -> 0x002BD925。镜像本体在文件 0x00047790，由启动代码 0x00000A60
+/// 从 0x2C0FC6CC..0x2C10D438 搬到 0x200B2860，函数落在 0x200BD924，
+/// 使用对应 SRAM 执行地址 0x002BD924；不能将副本直接换算成 0x0C107790。
+/// 本体 R1=prop、R2=4 字节 value、R3=selector；尾部调用 refresh_style。
+/// 属性标志表 0x2CCE5BC4[0x5A]=0x05，字体写入会传播，不需另补刷新。
+/// 缺少 local style 时会分配 12B 样式及条目数组，由对象销毁回收。
+/// 验证脚本 tools/verify_keyboard_abi.py；静态核对不等于真机运行通过。
+pub unsafe extern "C" fn obj_set_local_style_prop(obj: u32, prop: u32, val: u32, sel: u32) {
+    let f: unsafe extern "C" fn(u32, u32, u32, u32) =
+        transmute(super::fwaddr::OBJ_SET_LOCAL_STYLE_PROP as usize);
     f(obj, prop, val, sel)
+}
+
+/// `0x0C13C690(root, cb, ud)` LVGL v9 的对象树遍历；`root = 0` 时遍历全部已注册 screen。
+/// 回调签名 `u32 (u32 obj, u32 ud)`，返回非 0 停止遍历。
+/// 依据: 地址表 043.lv_obj_tree_walk（静态核对，壳与槽值反查成立）。
+pub unsafe extern "C" fn lv_obj_tree_walk(root: u32, cb: u32, ud: u32) -> u32 {
+    let f: unsafe extern "C" fn(u32, u32, u32) -> u32 = transmute(0x0C13_C691usize);
+    f(root, cb, ud)
+}
+
+/// `lv_obj_invalidate(obj)` —— 只让这一个对象重画：不发样式事件，也不往子树传播。
+/// `lv_obj_refresh_style`(0x0C1070AC) 体内第一件事就是调它，所以"改完属性要重画"这一发
+/// 用它而不是 refresh_style，代价小得多。
+/// 形态: VA `0x0C10CBB4`（file 0x0004CBB4）处是 `ldr.w pc,[pc],#0` 的跳转壳，壳里的槽值
+/// `0x1C02B305` 是运行期落在 PSRAM 侧的真身（同一支壳另有两处引用：`0x0C587AB8`、`0x0CAC1028`）。
+/// 等级 静态核对 —— 壳与槽值反查成立，"单独调它屏幕是否真重画"未实测。
+/// fw_addr: 0x0004CBB4  (文件偏移; VA = +0x0C0C0000, 指针 |=1)
+/// fw_thunk: 0x1C02B305
+pub unsafe extern "C" fn obj_invalidate(obj: u32) {
+    let f: unsafe extern "C" fn(u32) -> u32 = transmute(0x0C10_CBB5usize);
+    f(obj);
+}
+
+/// `lvx_image_set_scale(obj, scale_x, scale_y)` —— 固件自己的图片缩放入口（256 = 一倍）。
+///
+/// **直接写 `lv_image_t+0x50/+0x54` 不会改变绘制**：实测把这两个字段写成 128（半尺寸），
+/// 屏幕上图标仍是 100px 原样。原因在函数体内：它读完 `+0x50/+0x54`（都是 `ldrh`，u16）
+/// 还要连 `+0x44/+0x48/+0x4c/+0x58/+0x5c` 一起交给 `0x0C07_FDC8` 重算派生几何 ——
+/// 少了这一发，光改字段只是改了缓存值，绘制用的还是旧几何。
+/// fw_addr: 0x000B9DB0  (文件偏移; VA = +0x0C0C0000, 指针 |=1)
+pub unsafe extern "C" fn image_set_scale(obj: u32, sx: i32, sy: i32) {
+    let f: unsafe extern "C" fn(u32, i32, i32) = transmute(0x0C17_9DB1usize);
+    f(obj, sx, sy);
 }
 
 /// `LV_STYLE_TEXT_FONT` 属性号。依据(字节级): 固件自己的
 /// `style_get_text_font`(0x0C4BF87C) 逐字为
 /// `movs r1,#0x5A; bl 0x0C588BB8(style, 0x5A, &out)` —— 即读 text_font 用的就是 0x5A;
 /// `row_init` 也以 `movs r2,#0x5A` 调 getter 取行字体。
-/// 注意: "local style 写入即崩"的成因是**属性号靠猜**, 不是本入口的问题;
-/// 本常量是固件自己用过的号, 属实证。
+/// 属性号和调用入口必须分别核对；属性号正确不能证明镜像副本地址可执行。
 pub const LV_STYLE_TEXT_FONT: u32 = 0x5A;
+
+/// 清除绝对坐标布局的主题内边距和边框，不移除字体、颜色与圆角。
+/// p67 镜像：0x000756C0 以属性 0x10 / 0x12 计算子对象 y / x 原点；
+/// 0x0007A164 以 0x10 / 0x11、0x30(border_width)计算上下可滚动边界。
+/// 左右对称分支 0x00079D7C 使用 0x12 / 0x13。
+/// 官方 setter 本体 0x48258/0x48270/0x48288/0x482A0/0x484A0 使用同一组属性，
+/// 最终调用 SRAM 中的 local style setter；本封装也必须走正式 thunk。详见 docs/KEYBOARD.md。
+pub unsafe fn obj_clear_box_spacing(obj: Obj) {
+    for prop in [0x10, 0x11, 0x12, 0x13, 0x30] {
+        obj_set_local_style_prop(obj, prop, 0, 0);
+    }
+}
 
 /// `0x0C588BB8(style, prop, &out)` lv_style_t **结构体**属性读取(只读)。
 /// 依据(字节级): 固件 style_get_text_font(0x0C4BF87C, 全固件 1265 处调用)体内就是
