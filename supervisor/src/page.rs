@@ -147,6 +147,26 @@ pub(crate) unsafe fn tile_primary(row: u32) {
     if lb != 0 { fw_api::obj_set_local_style_prop(lb, ps::TEXT_COLOR, 0xFFFFFF, 0); }
 }
 
+/// 把副标题标签做成彩色小胶囊(状态药丸): 角色 tint 底色 + 角色色文字。
+pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, cps: usize) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if lab == 0 { return; }
+    fw_api::obj_style_color_a70(lab, col, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::BG_COLOR, bg, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::BG_OPA, 255, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::RADIUS, 100, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_0, 4, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_1, 4, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_2, 10, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 10, 0);
+    // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
+    fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
+    let mut w = 24 + 20 * cps;
+    if w < 96 { w = 96; }
+    if w > 232 { w = 232; }
+    fw_api::obj_set_width(lab, w as i32);
+}
+
 pub(crate) unsafe fn tile_danger(row: u32) {
     use crate::fw_api::fwaddr::p65_style as ps;
     if row == 0 { return; }
@@ -891,29 +911,40 @@ unsafe fn cstr_len(s: *const u8) -> usize {
 // 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
 
 // (旧版 refresh_appmgr_rows 已由 refresh_list_rows 取代)
+
+static mut EX_SUB: [u8; 64] = [0; 64];
+
+unsafe fn ex_sub_cp(dst: *mut u8, mut o: usize, s: &[u8]) -> usize {
+    for &c in s { core::ptr::write_volatile(dst.add(o), c); o += 1; }
+    o
+}
+
+/// 排除项行的副标题: "已排除·显示中" / "未排除·已隐藏" (7 个字符)
+unsafe fn excl_sub(i: usize) -> *const u8 {
+    let d = core::ptr::addr_of_mut!(EX_SUB) as *mut u8;
+    let mut o = 0usize;
+    o = ex_sub_cp(d, o, if crate::appmgr::excl_on(i) { "已排除".as_bytes() } else { "未排除".as_bytes() });
+    o = ex_sub_cp(d, o, "·".as_bytes());
+    o = ex_sub_cp(d, o, if crate::appmgr::visible(i) { "显示中".as_bytes() } else { "已隐藏".as_bytes() });
+    core::ptr::write_volatile(d.add(o), 0);
+    d as *const u8
+}
+
 unsafe fn refresh_excl_rows() {
     let rows = crate::appmgr::rows_ptr();
     let mode = crate::appmgr::excl_mode();
     let n = crate::appmgr::count();
     let mut i = 0usize;
     while i < n {
-        if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
         let r = read_volatile(rows.add(i));
         if r != 0 {
-            let (sub, col) = if mode == 0 {
-                if crate::appmgr::excl_on(i) {
-                    ("已排除\0".as_bytes().as_ptr(), C_WARNING)
-                } else {
-                    ("未排除\0".as_bytes().as_ptr(), C_SECONDARY)
-                }
-            } else if crate::appmgr::visible(i) {
-                ("显示中\0".as_bytes().as_ptr(), C_VISIBLE)
-            } else {
-                ("已隐藏\0".as_bytes().as_ptr(), C_HIDDEN)
-            };
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
+            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                excl_sub(i), 0, 0);
             let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
-            if lab != 0 { fw_api::obj_style_color_a70(lab, col, 0); }
+            if lab != 0 {
+                if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 7); }
+                else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 7); }
+            }
         }
         i += 1;
     }
@@ -944,19 +975,16 @@ impl Page for ExclPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();
-            let t0 = build_tile_below(ctx, ctx.title, 0,
-                crate::appmgr::mode_label(), 328, 56);
-            if t0 == 0 { return Err(PageError::RowFailed(0)); }
-            let s1 = build_row(ctx, t0, 1,
+            let s1 = build_row(ctx, ctx.title, 0,
                 &RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null()));
+            if s1 == 0 { return Err(PageError::RowFailed(0)); }
             row_shrink(s1, 56);
-            EX_HINT_ROW = read_volatile(ctx.rows.add(1));
+            EX_HINT_ROW = read_volatile(ctx.rows.add(0));
             EX_MSG_ROW = 0;
             let mut prev = s1;
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
-            let mode = crate::appmgr::excl_mode();
-            // 排除项在前, 稳定排序
+            // 排除项在前, 稳定排序; 单模式: 列出全部快应用
             crate::appmgr::build_excl_view();
             let n = crate::appmgr::excl_view_count();
             let mut v = 0usize;
@@ -964,15 +992,7 @@ impl Page for ExclPage {
                 let i = crate::appmgr::excl_view_at(v);
                 v += 1;
                 if i == usize::MAX { break; }
-                // 管理显隐模式下只列排除项; 非排除项在页1 管理
-                if mode != 0 && !crate::appmgr::excl_on(i) { continue; }
-                let sub = if mode == 0 {
-                    if crate::appmgr::excl_on(i) { "已排除\0".as_bytes().as_ptr() } else { "未排除\0".as_bytes().as_ptr() }
-                } else if crate::appmgr::visible(i) {
-                    "显示中\0".as_bytes().as_ptr()
-                } else {
-                    "已隐藏\0".as_bytes().as_ptr()
-                };
+                let sub = excl_sub(i);
                 let r = fw_api::row_create(ctx.content,
                     crate::appmgr::entry_primary(i), sub, 0);
                 if r == 0 { return Err(PageError::RowFailed(i)); }
@@ -983,11 +1003,11 @@ impl Page for ExclPage {
                 fw_api::obj_set_size_wh(r, 320, 100);
                 cardify(r);
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
-                let col = if mode == 0 {
-                    if crate::appmgr::excl_on(i) { C_WARNING } else { C_SECONDARY }
-                } else if crate::appmgr::visible(i) { C_VISIBLE } else { C_HIDDEN };
                 let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
-                if lab != 0 { fw_api::obj_style_color_a70(lab, col, 0); }
+                if lab != 0 {
+                    if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 7); }
+                    else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 7); }
+                }
             }
             Ok(())
         }
@@ -995,10 +1015,7 @@ impl Page for ExclPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            if idx == 0 {
-                crate::appmgr::toggle_excl_mode();
-                render_req(7);
-            } else if idx >= 12 {
+            if idx >= 12 {
                 let i = idx - 12;
                 crate::appmgr::detail_open_ctx(i, 1);
                 nav_goto(29, 0);
@@ -1890,6 +1907,8 @@ const C_DANGER: u32 = 0xFF_453A;
 
 /// 状态文字: 已隐藏=警告琥珀, 显示中=强调蓝。
 const C_HIDDEN: u32 = C_WARNING;
+const C_HIDDEN_TINT: u32 = 0x4A3008;
+const C_VISIBLE_TINT: u32 = 0x10284D;
 const C_VISIBLE: u32 = C_ACCENT;
 
 static mut AM_STATUS_HID: [u8; 12] = [0; 12];
@@ -1919,7 +1938,8 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
             crate::appmgr::entry_primary(i), sub, 0, sel);
         let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
         if lab != 0 {
-            fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
+            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 3); }
+            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 3); }
         }
     }
     true
@@ -1985,7 +2005,8 @@ unsafe fn list_build_chunk(limit: u32) {
         }
         let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
         if lab != 0 {
-            fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
+            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 3); }
+            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 3); }
         }
         fw_api::obj_set_size_wh(r, 320, 100);
         cardify(r);
@@ -2365,7 +2386,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.7\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.8\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
