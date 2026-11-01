@@ -177,13 +177,13 @@ pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
 pub(crate) unsafe fn cardify(row: u32) {
     use crate::fw_api::fwaddr::p65_style as ps;
     if row == 0 { return; }
-    fw_api::obj_set_local_style_prop(row, ps::RADIUS, 18, 0);
-    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x242426, 0);
+    fw_api::obj_set_local_style_prop(row, ps::RADIUS, 22, 0);
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2D, 0);
     fw_api::obj_set_local_style_prop(row, ps::BG_OPA, 255, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_0, 8, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_1, 8, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_2, 14, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_3, 14, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_0, 10, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_1, 10, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_2, 16, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_3, 16, 0);
     // 卡片内边距让文字更容易超宽/超高; 行和它的标签都不许再自己滚
     no_scroll(row);
 }
@@ -960,9 +960,9 @@ impl Page for ExclPage {
                 if r == 0 { return Err(PageError::RowFailed(i)); }
                 write_volatile(rows.add(i), r);
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                fw_api::obj_align_to(r, prev, 14, 0, 8);
+                fw_api::obj_align_to(r, prev, 14, 0, 10);
                 prev = r;
-                row_shrink(r, 88);
+                row_shrink(r, 100);
                 cardify(r);
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
                 let col = if mode == 0 {
@@ -1969,10 +1969,10 @@ unsafe fn list_build_chunk(limit: u32) {
         if lab != 0 {
             fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
         }
-        row_shrink(r, 88);
+        row_shrink(r, 100);
         cardify(r);
         let dx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
-        fw_api::obj_align_to(r, LB_PREV, 14, dx, 8);
+        fw_api::obj_align_to(r, LB_PREV, 14, dx, 10);
         LB_FIRST = 0;
         LB_PREV = r;
         if LB_KIND == 2 {
@@ -2345,7 +2345,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.5\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.6\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),

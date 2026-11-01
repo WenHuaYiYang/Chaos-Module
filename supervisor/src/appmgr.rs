@@ -2144,12 +2144,26 @@ unsafe fn excl_dedupe() {
 // 不走固件的卸载命令, 也不需要重启。
 // 批量页: 勾选集合, 支持全选/取消全选、隐藏选中、显示选中、删除选中。
 
-// 快应用根目录与 SmartHome 一致: 有 /data/quickapp/apps.json 时用 quickapp/ 下,
-// 否则退回 /data/ 下。两者的子目录都是 app/ system/ cache/ files/ mass/。
-unsafe fn qapp_root() -> &'static [u8] {
-    let fd = fw_api::open(b"/data/quickapp/apps.json\0".as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd >= 0 { fw_api::close(fd); b"/data/quickapp/" } else { b"/data/" }
-}
+
+// 快应用在各固件版本里落盘位置不完全一致; 逐个候选求和/删除, 不存在的自然贡献 0。
+// 依据: 固件字符串 "/data/app/%s/%s"(图标)、"/data/quickapp/"(config/rpk_info)、
+// "data/quickapp/system"、"/data/quickapp/cache"; SmartHome 另外尝试 /data/ 下。
+const APP_DIRS: [&[u8]; 4] = [
+    b"/data/app/",
+    b"/data/quickapp/app/",
+    b"/data/app/quickapp/",
+    b"/data/quickapp/",
+];
+const SUB_DIRS: [&[u8]; 8] = [
+    b"/data/quickapp/system/",
+    b"/data/quickapp/cache/",
+    b"/data/quickapp/files/",
+    b"/data/quickapp/mass/",
+    b"/data/app/system/",
+    b"/data/cache/",
+    b"/data/files/",
+    b"/data/mass/",
+];
 
 unsafe fn mk_path3(root: &[u8], mid: &[u8], pkg: *const u8, suffix: &[u8]) -> usize {
     let buf = core::ptr::addr_of_mut!(D_WORK) as *mut u8;
@@ -2171,6 +2185,14 @@ unsafe fn mk_path3(root: &[u8], mid: &[u8], pkg: *const u8, suffix: &[u8]) -> us
     o
 }
 
+unsafe fn path_exists(path: *const u8) -> bool {
+    let dp = fw_api::opendir(path);
+    if dp != 0 { fw_api::closedir(dp); return true; }
+    let fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
+    if fd >= 0 { fw_api::close(fd); return true; }
+    false
+}
+
 static mut D_WORK: [u8; 300] = [0; 300];
 static mut D_SIZE: u32 = 0;
 static mut D_VERBUF: [u8; 3000] = [0; 3000];
@@ -2180,6 +2202,7 @@ static mut D_PKG: [u8; PKG_CAP] = [0; PKG_CAP];
 static mut D_NAME: [u8; 32] = [0; 32];
 static mut D_HIDDEN: u8 = 0;
 static mut D_BYTES: u32 = 0;
+static mut HITS: u32 = 0;
 static mut D_VER: [u8; 24] = [0; 24];
 static mut D_CONFIRM: u32 = 0;
 // 0 = 从应用管理进详情(隐藏/显示按钮), 1 = 从排除项页进详情(排除/取消排除按钮)
@@ -2205,25 +2228,6 @@ unsafe fn cpy_n(dst: *mut u8, src: *const u8, cap: usize) {
         k += 1;
     }
     write_volatile(dst.add(cap - 1), 0);
-}
-
-/// 把 base + pkg + suffix 拼进 D_WORK, 返回长度(不含结尾 NUL)。
-unsafe fn mk_path(base: &[u8], pkg: *const u8, suffix: &[u8]) -> usize {
-    let buf = core::ptr::addr_of_mut!(D_WORK) as *mut u8;
-    let mut o = 0usize;
-    let cap = 300usize;
-    let mut i = 0usize;
-    while i < base.len() - 1 && o + 1 < cap { write_volatile(buf.add(o), base[i]); o += 1; i += 1; }
-    let mut k = 0usize;
-    while o + 1 < cap {
-        let c = read_volatile(pkg.add(k));
-        if c == 0 { break; }
-        write_volatile(buf.add(o), c); o += 1; k += 1;
-    }
-    let mut j = 0usize;
-    while j + 1 < suffix.len() && o + 1 < cap { write_volatile(buf.add(o), suffix[j]); o += 1; j += 1; }
-    write_volatile(buf.add(o), 0);
-    o
 }
 
 unsafe fn file_bytes(path: *const u8) -> u32 {
@@ -2264,8 +2268,15 @@ unsafe fn calc_walk(plen: usize, depth: u32) {
         write_volatile(buf.add(o), 0);
         if dt == crate::state::DT_REG {
             D_BYTES = D_BYTES.saturating_add(file_bytes(buf as *const u8));
-        } else if dt == crate::state::DT_DIR && depth < 6 {
-            calc_walk(o, depth + 1);
+        } else if depth < 6 {
+            // 目录项类型未知(0)时不能只当文件: 先试当目录打开
+            let dp2 = fw_api::opendir(buf as *const u8);
+            if dp2 != 0 {
+                fw_api::closedir(dp2);
+                calc_walk(o, depth + 1);
+            } else {
+                D_BYTES = D_BYTES.saturating_add(file_bytes(buf as *const u8));
+            }
         }
         write_volatile(buf.add(plen), 0);
     }
@@ -2302,9 +2313,13 @@ unsafe fn del_walk(plen: usize, depth: u32) {
         write_volatile(buf.add(o), 0);
         if dt == crate::state::DT_REG {
             if fw_api::fs_remove(buf as *const u8) < 0 { DEL_FAIL += 1; }
-        } else if dt == crate::state::DT_DIR && depth < 6 {
-            del_walk(o, depth + 1);
-            let _ = fw_api::fs_remove(buf as *const u8);
+        } else if depth < 6 {
+            let dp2 = fw_api::opendir(buf as *const u8);
+            if dp2 != 0 {
+                fw_api::closedir(dp2);
+                del_walk(o, depth + 1);
+            }
+            if fw_api::fs_remove(buf as *const u8) < 0 { DEL_FAIL += 1; }
         }
         write_volatile(buf.add(plen), 0);
     }
@@ -2313,38 +2328,55 @@ unsafe fn del_walk(plen: usize, depth: u32) {
 
 unsafe fn scan_size(pkg: *const u8) {
     D_BYTES = 0;
-    let root = qapp_root();
-    let subs: [&[u8]; 5] = [b"app/", b"system/", b"cache/", b"files/", b"mass/"];
-    let mut b = 0usize;
-    while b < subs.len() {
-        let plen = mk_path3(root, subs[b], pkg, b"");
-        calc_walk(plen, 0);
-        b += 1;
+    HITS = 0;
+    let mut i = 0usize;
+    while i < APP_DIRS.len() {
+        let plen = mk_path3(APP_DIRS[i], b"", pkg, b"");
+        if path_exists(core::ptr::addr_of!(D_WORK) as *const u8) { HITS += 1; calc_walk(plen, 0); }
+        i += 1;
     }
-    // 固件的旧版本目录在 system/ 下(<pkg>.old); app/ 下的也一并算上
-    let plen = mk_path3(root, b"system/", pkg, b".old");
-    calc_walk(plen, 0);
-    let plen = mk_path3(root, b"app/", pkg, b".old");
-    calc_walk(plen, 0);
+    let mut j = 0usize;
+    while j < SUB_DIRS.len() {
+        let plen = mk_path3(SUB_DIRS[j], b"", pkg, b"");
+        if path_exists(core::ptr::addr_of!(D_WORK) as *const u8) { HITS += 1; calc_walk(plen, 0); }
+        j += 1;
+    }
+    // 旧版本目录: 优先 app/ 与 system/ 下的 <pkg>.old
+    let olds: [&[u8]; 3] = [b"/data/app/", b"/data/quickapp/system/", b"/data/app/system/"];
+    let mut k = 0usize;
+    while k < olds.len() {
+        let plen = mk_path3(olds[k], b"", pkg, b".old");
+        if path_exists(core::ptr::addr_of!(D_WORK) as *const u8) { HITS += 1; calc_walk(plen, 0); }
+        k += 1;
+    }
     D_SIZE = D_BYTES;
+    crate::log::kv("详情大小(字节) ", D_BYTES);
+    crate::log::kv("命中的目录数 ", HITS);
 }
 
 unsafe fn rm_app_dirs(pkg: *const u8) {
-    let root = qapp_root();
-    let subs: [&[u8]; 5] = [b"app/", b"system/", b"cache/", b"files/", b"mass/"];
-    let mut b = 0usize;
-    while b < subs.len() {
-        let plen = mk_path3(root, subs[b], pkg, b"");
+    let mut i = 0usize;
+    while i < APP_DIRS.len() {
+        let plen = mk_path3(APP_DIRS[i], b"", pkg, b"");
         del_walk(plen, 0);
         let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
-        b += 1;
+        i += 1;
     }
-    let plen = mk_path3(root, b"system/", pkg, b".old");
-    del_walk(plen, 0);
-    let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
-    let plen = mk_path3(root, b"app/", pkg, b".old");
-    del_walk(plen, 0);
-    let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+    let mut j = 0usize;
+    while j < SUB_DIRS.len() {
+        let plen = mk_path3(SUB_DIRS[j], b"", pkg, b"");
+        del_walk(plen, 0);
+        let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+        j += 1;
+    }
+    let olds: [&[u8]; 3] = [b"/data/app/", b"/data/quickapp/system/", b"/data/app/system/"];
+    let mut k = 0usize;
+    while k < olds.len() {
+        let plen = mk_path3(olds[k], b"", pkg, b".old");
+        del_walk(plen, 0);
+        let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+        k += 1;
+    }
 }
 
 /// 从 rpk_info.json 里取该应用的 versionName(取不到就空)。
