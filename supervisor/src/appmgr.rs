@@ -2170,9 +2170,13 @@ unsafe fn mk_path3(root: &[u8], mid: &[u8], pkg: *const u8, suffix: &[u8]) -> us
     let cap = 300usize;
     let mut o = 0usize;
     let mut i = 0usize;
-    while i < root.len() - 1 && o + 1 < cap { write_volatile(buf.add(o), root[i]); o += 1; i += 1; }
+    // 整段拷贝 root(包括结尾的 /), 之前少拷最后一个字节, 拼出来是 "/data/appcom.x"
+    while i < root.len() && o + 1 < cap { write_volatile(buf.add(o), root[i]); o += 1; i += 1; }
     i = 0;
     while i < mid.len() && o + 1 < cap { write_volatile(buf.add(o), mid[i]); o += 1; i += 1; }
+    if o > 0 && read_volatile(buf.add(o - 1)) != b'/' && o + 1 < cap {
+        write_volatile(buf.add(o), b'/'); o += 1;
+    }
     let mut k = 0usize;
     while o + 1 < cap {
         let c = read_volatile(pkg.add(k));
