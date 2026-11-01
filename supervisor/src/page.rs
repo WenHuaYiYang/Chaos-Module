@@ -958,146 +958,6 @@ unsafe fn cstr_len(s: *const u8) -> usize {
     n
 }
 
-// ===== 页7: 排除项管理 =====
-//
-// 从页1 行3 进入。列表显示**全部**应用(含已隐藏), 勾选 = 加入排除名单;
-// 排除项不参与页1 的一键隐藏/显示, 且在页1 列表里不出现。
-// 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
-
-// (旧版 refresh_appmgr_rows 已由 refresh_list_rows 取代)
-
-static mut EX_SUB: [u8; 64] = [0; 64];
-
-unsafe fn ex_sub_cp(dst: *mut u8, mut o: usize, s: &[u8]) -> usize {
-    for &c in s { core::ptr::write_volatile(dst.add(o), c); o += 1; }
-    o
-}
-
-/// 排除项行的副标题: "已排除·显示中" / "未排除·已隐藏" (7 个字符)
-unsafe fn excl_sub(i: usize) -> *const u8 {
-    let d = core::ptr::addr_of_mut!(EX_SUB) as *mut u8;
-    let mut o = 0usize;
-    o = ex_sub_cp(d, o, if crate::appmgr::excl_on(i) { "已排除".as_bytes() } else { "未排除".as_bytes() });
-    o = ex_sub_cp(d, o, "·".as_bytes());
-    o = ex_sub_cp(d, o, if crate::appmgr::visible(i) { "显示中".as_bytes() } else { "已隐藏".as_bytes() });
-    core::ptr::write_volatile(d.add(o), 0);
-    d as *const u8
-}
-
-unsafe fn refresh_excl_rows() {
-    let rows = crate::appmgr::rows_ptr();
-    let mode = crate::appmgr::excl_mode();
-    let n = crate::appmgr::count();
-    let mut i = 0usize;
-    while i < n {
-        let r = read_volatile(rows.add(i));
-        if r != 0 {
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                excl_sub(i), 0, 0);
-            let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
-            if lab != 0 {
-                if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, "显示中\0".as_bytes()); }
-                else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, "已隐藏\0".as_bytes()); }
-            }
-        }
-        i += 1;
-    }
-    if EX_HINT_ROW != 0 {
-        fw_api::row_update(EX_HINT_ROW, fw_api::NONE_PTR,
-            crate::appmgr::excl_hint().as_ptr(), fw_api::NONE_PTR, 0, 0);
-    }
-    if EX_MSG_ROW != 0 {
-        let m = if mode == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() };
-        fw_api::row_update(EX_MSG_ROW, fw_api::NONE_PTR,
-            m.as_ptr(), fw_api::NONE_PTR, 0, 0);
-    }
-}
-
-pub(crate) struct ExclPage;
-
-static mut AM_MSG_ROW: u32 = 0;
-static mut AM_HDR_ROW: u32 = 0;
-static mut EX_HINT_ROW: u32 = 0;
-static mut EX_MSG_ROW: u32 = 0;
-
-impl Page for ExclPage {
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "排除项管理\0".as_bytes()); }
-    }
-
-    fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            crate::appmgr::ensure();
-            crate::appmgr::rows_reset();
-            let s1 = build_row(ctx, ctx.title, 0,
-                &RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null()));
-            if s1 == 0 { return Err(PageError::RowFailed(0)); }
-            row_shrink(s1, 56);
-            EX_HINT_ROW = read_volatile(ctx.rows.add(0));
-            EX_MSG_ROW = 0;
-            let mut prev = s1;
-            if prev == 0 { prev = ctx.title; }
-            let rows = crate::appmgr::rows_ptr();
-            // 排除项在前, 稳定排序; 单模式: 列出全部快应用
-            crate::appmgr::build_excl_view();
-            let n = crate::appmgr::excl_view_count();
-            let mut v = 0usize;
-            while v < n {
-                let i = crate::appmgr::excl_view_at(v);
-                v += 1;
-                if i == usize::MAX { break; }
-                let sub = excl_sub(i);
-                let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), sub, 0);
-                if r == 0 { return Err(PageError::RowFailed(i)); }
-                write_volatile(rows.add(i), r);
-                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                fw_api::obj_align_to(r, prev, 14, 0, 10);
-                prev = r;
-                fw_api::obj_set_size_wh(r, 320, 100);
-                cardify(r);
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
-                let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
-                if lab != 0 {
-                    if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, "显示中\0".as_bytes()); }
-                    else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, "已隐藏\0".as_bytes()); }
-                }
-            }
-            Ok(())
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            if idx >= 12 {
-                let i = idx - 12;
-                crate::appmgr::detail_open_ctx(i, 1);
-                nav_goto(29, 0);
-            }
-        }
-    }
-
-    fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::excl_has_req() || crate::appmgr::has_req() }
-    }
-
-    fn tick(&self) {
-        unsafe {
-            let mut dirty = false;
-            if crate::appmgr::excl_has_req() {
-                crate::appmgr::do_excl();
-                dirty = true;
-            }
-            if crate::appmgr::has_req() {
-                crate::appmgr::do_op();
-                dirty = true;
-            }
-            if dirty { refresh_excl_rows(); }
-        }
-    }
-}
-
-
 // ===== 页17: 运行日志 =====
 // 直接显示一段文字，不再逐行建列表。只读尾部 2KB，截到最后一个换行后的 512B。
 pub(crate) struct LogPage;
@@ -2314,11 +2174,13 @@ impl Page for VibPage {
     }
 }
 
+static mut AM_MSG_ROW: u32 = 0;
+static mut AM_HDR_ROW: u32 = 0;
+
 // ===== 分发表 =====
 
 static PAGE_INFO: InfoPage = InfoPage;
 static PAGE_APPMGR: AppMgrPage = AppMgrPage;
-static PAGE_EXCL: ExclPage = ExclPage;
 static PAGE_WF_LIST_8: WatchfaceListPage = WatchfaceListPage { pid: 8 };
 static PAGE_WF_LIST_9: WatchfaceListPage = WatchfaceListPage { pid: 9 };
 static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage;
@@ -2523,7 +2385,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.45\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.53\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2531,7 +2393,6 @@ impl Page for AboutPage {
                 (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (6, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
                 (7, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
-                (8, RowSpec::clickable("开放源代码许可\0".as_bytes())),
             ])?;
             Ok(())
         }
@@ -2558,10 +2419,6 @@ impl Page for AboutPage {
             if idx == 0 {
                 DBG_CLICKS += 1;
                 if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
-            } else if idx == 8 {
-                // 行 8 才是"开放源代码许可"(行 6 是 @wzx, 行 7 是不可点的许可证展示行)。
-                // 判据按 build_rows 的 slot 走, 插行时必须跟着挪。
-                nav_goto(20, 0);
             }
         }
     }
@@ -2705,135 +2562,6 @@ impl Page for BlurZonePage {
             if idx >= crate::blur_zone::REGION_N { return; }
             if crate::blur_zone::set(idx, !crate::blur_zone::on(idx)) {
                 crate::background_home::remount();
-            }
-        }
-    }
-}
-
-// ===== 页20: 关于 -> 开放源代码许可 =====
-pub(crate) struct LicensesPage;
-static PAGE_LICENSESP: LicensesPage = LicensesPage;
-
-impl Page for LicensesPage {
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "开放源代码许可\0".as_bytes()); }
-    }
-
-    fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
-                    "MPL-2.0 license\0".as_bytes().as_ptr())),
-            ]).map(|_| ())
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            if idx == 0 {
-                MPL_PAGE = 0;
-                nav_goto(21, 0);
-            }
-        }
-    }
-}
-
-// ===== 页21: MIBAND10PRO-TUNMODULE / MPL-2.0 许可正文 =====
-pub(crate) struct MplLicensePage;
-static PAGE_LICENSE_MPLP: MplLicensePage = MplLicensePage;
-static MPL_TEXT: &[u8] = include_bytes!("../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
-const MPL_PAGE_LINES: usize = 8;
-static mut MPL_PAGE: usize = 0;
-static mut MPL_VIEW: [u8; 4096] = [0; 4096];
-static mut MPL_STATUS: [u8; 48] = [0; 48];
-
-fn mpl_line_count() -> usize {
-    let mut lines = 1usize;
-    for &c in MPL_TEXT {
-        if c == b'\n' { lines += 1; }
-    }
-    lines
-}
-
-fn mpl_page_count() -> usize {
-    (mpl_line_count() + MPL_PAGE_LINES - 1) / MPL_PAGE_LINES
-}
-
-unsafe fn mpl_render_page() {
-    let pages = mpl_page_count();
-    if MPL_PAGE >= pages { MPL_PAGE = pages - 1; }
-    let target_line = MPL_PAGE * MPL_PAGE_LINES;
-    let mut line = 0usize;
-    let mut start = 0usize;
-    let mut i = 0usize;
-    while i < MPL_TEXT.len() && line < target_line {
-        if MPL_TEXT[i] == b'\n' { line += 1; }
-        i += 1;
-        start = i;
-    }
-    let mut end = start;
-    line = 0;
-    while end < MPL_TEXT.len() && line < MPL_PAGE_LINES {
-        if MPL_TEXT[end] == b'\n' { line += 1; }
-        end += 1;
-    }
-    let out = core::ptr::addr_of_mut!(MPL_VIEW) as *mut u8;
-    let count = core::cmp::min(end - start, 4095);
-    for i in 0..count { write_volatile(out.add(i), MPL_TEXT[start + i]); }
-    write_volatile(out.add(count), 0);
-
-    let status = core::ptr::addr_of_mut!(MPL_STATUS) as *mut u8;
-    let mut buf = [0u8; 48];
-    let mut w = crate::text::W::new(buf.as_mut_ptr(), buf.len());
-    w.s("第 ".as_bytes());
-    w.n((MPL_PAGE + 1) as u32);
-    w.s("/".as_bytes());
-    w.n(pages as u32);
-    w.s(" 页".as_bytes());
-    w.end();
-    let len = w.len();
-    for i in 0..len { write_volatile(status.add(i), buf[i]); }
-    write_volatile(status.add(len), 0);
-}
-
-impl Page for MplLicensePage {
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "MPL-2.0 license\0".as_bytes()); }
-    }
-
-    fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            mpl_render_page();
-            let pages = mpl_page_count();
-            let specs: [(usize, RowSpec); 3] = [
-                (0, RowSpec::clickable(if MPL_PAGE > 0 { "上一页\0".as_bytes() } else { "已到首页\0".as_bytes() })),
-                (1, RowSpec::clickable(if MPL_PAGE + 1 < pages { "下一页\0".as_bytes() } else { "已到末页\0".as_bytes() })),
-                (2, RowSpec::display(
-                    core::slice::from_raw_parts(core::ptr::addr_of!(MPL_STATUS) as *const u8,
-                        cstr_len(core::ptr::addr_of!(MPL_STATUS) as *const u8) + 1),
-                    core::ptr::null())),
-            ];
-            let prev = build_rows(ctx, ctx.title, &specs)?;
-            let label = fw_api::label_create(ctx.content);
-            if label != 0 {
-                fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
-                fw_api::label_set_text(label, core::ptr::addr_of!(MPL_VIEW) as *const u8);
-                fw_api::obj_set_size_wh(label, 320, 320);
-                fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
-            }
-            Ok(())
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            let pages = mpl_page_count();
-            if idx == 0 && MPL_PAGE > 0 {
-                MPL_PAGE -= 1;
-                render_req(21);
-            } else if idx == 1 && MPL_PAGE + 1 < pages {
-                MPL_PAGE += 1;
-                render_req(21);
             }
         }
     }
@@ -3396,6 +3124,14 @@ impl Page for BatchPage {
     }
 }
 
+pub(crate) struct RemovedPage;
+static PAGE_REMOVED: RemovedPage = RemovedPage;
+impl Page for RemovedPage {
+    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "已移除\0".as_bytes()); } }
+    fn render(&self, _ctx: &PageCtx) -> PageResult { Ok(()) }
+    fn on_click(&self, _idx: usize) {}
+}
+
 pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
@@ -3404,7 +3140,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
     &PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
-    &PAGE_EXCL,       // 7  应用管理 -> 排除项管理(原文件查看退役)
+    &PAGE_REMOVED,    // 7  已移除(排除项页)
     &PAGE_WF_LIST_8,  // 8
     &PAGE_WF_LIST_9,  // 9
     &PAGE_WF_MGMT,    // 10
@@ -3417,8 +3153,8 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_LOG,          // 17 设置 -> 运行日志
     &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
     &PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
-    &PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
-    &PAGE_LICENSE_MPLP, // 21 MIBAND10PRO-TUNMODULE / MPL-2.0
+    &PAGE_REMOVED,      // 20 已移除(开源许可列表)
+    &PAGE_REMOVED,      // 21 已移除(MPL 全文)
     &PAGE_SYSVERP,      // 22 系统关于页面修改 -> 系统版本显示
     &PAGE_KEYBOARDP,    // 23 通用英文数字键盘
     &PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改

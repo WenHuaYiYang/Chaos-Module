@@ -61,19 +61,25 @@ const EXCL_TOTAL: usize = EXCL_SUM_OFF + 4;
 // 1 = 普通隐藏(保留 apps.json 条目, 只同步注册表隐藏位 + 桌面图标;
 //     隐藏名单另存 appmgr_keep.bin, 开机由维护定时器补隐藏, 会闪一下)
 // 开关只迁移“隐藏状态的存储方式”, 不改变哪些应用在逻辑上是隐藏的。
-pub(crate) const APPLY_CFG: &[u8] = b"/data/chaos/appmgr_apply.cfg\0";
 const KEEP_PATH: &[u8] = b"/data/chaos/appmgr_keep.bin\0";
 const KEEP_MAGIC: [u8; 4] = *b"KH01";
 const KEEP_TOTAL: usize = 4 + APP_MAX * PKG_CAP;
-static mut APPLY_MODE: u32 = 0;
-static mut APPLY_LOADED: u32 = 0;
+pub(crate) const APPLY_CFG: &[u8] = b"/data/chaos/appmgr_apply.cfg\0";
 static mut APPLY_LABEL: [u8; 48] = [0; 48];
-static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
-static mut KEEP_N: usize = 0;
-// 切换隐藏方式时的包名快照: 文件会被逐条重写, 不能边遍历 E_PKG 边搬。
 static mut MIG_BUF: [[u8; PKG_CAP]; APP_MAX] = [[0; PKG_CAP]; APP_MAX];
 static mut MIG_N: usize = 0;
 static mut REQ_MODE: u32 = 0;
+static mut EXCL_LABEL: [u8; 48] = [0; 48];
+static mut EXCL_HINT: [u8; 64] = [0; 64];
+static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];
+static mut EXCL_VIEW_N: usize = 0;
+static mut EXCL_MODE: u32 = 0;
+static mut MODE_LABEL: [u8; 48] = [0; 48];
+static mut APPLY_MODE: u32 = 0;
+static mut APPLY_LOADED: u32 = 0;
+static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
+static mut KEEP_N: usize = 0;
+// 切换隐藏方式时的包名快照: 文件会被逐条重写, 不能边遍历 E_PKG 边搬。
 static mut BOOT_APPLIED: u32 = 0;
 static mut BOOT_TRIES: u32 = 0;
 static mut BOOT_WAIT: u32 = 0;
@@ -117,8 +123,6 @@ static mut EXCL_PKG: [[u8; EXCL_SLOT]; EXCL_MAX] = [[0; EXCL_SLOT]; EXCL_MAX];
 static mut EXCL_N: usize = 0;
 static mut EXCL_LOADED: u32 = 0;
 static mut EXCL_IO: [u8; EXCL_TOTAL] = [0; EXCL_TOTAL];
-static mut EXCL_LABEL: [u8; 48] = [0; 48];   // 页1 行3 文案
-static mut EXCL_HINT: [u8; 64] = [0; 64];    // 页7 行1 文案
 // 当前列表每项是否被排除(按完整列表下标), 批量循环直接查它。
 static mut E_EXCL: [u8; APP_MAX] = [0; APP_MAX];
 // 页1 过滤视图: VIEW_IDX[v] = 完整列表下标; 已排除的条目不出现在页1。
@@ -132,8 +136,6 @@ pub(crate) unsafe fn set_ui_rows(n: u32) { UI_ROWS = n; }
 pub(crate) unsafe fn ui_rows() -> u32 { UI_ROWS }
 
 // 页7 的展示顺序: 排除项优先, 其余保持原顺序。
-static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];
-static mut EXCL_VIEW_N: usize = 0;
 
 pub(crate) unsafe fn rows_reset() {
     let p = core::ptr::addr_of_mut!(APP_ROWS) as *mut u32;
@@ -171,8 +173,6 @@ static mut REQ_REAPPLY: u32 = 0;
 static mut REG_SIG: u32 = 0;        // 上次注册表的包名指纹(与顺序无关)
 static mut REG_SEEN: u32 = 0;       // 是否已建立基线
 static mut EXCL_MSG: [u8; 48] = [0; 48];
-static mut EXCL_MODE: u32 = 0;              // 0=管理排除项 1=管理显示/隐藏
-static mut MODE_LABEL: [u8; 48] = [0; 48];
 
 // ===== 解析工作区 =====
 static mut REG_BUF: [u8; REG_CAP] = [0; REG_CAP];
@@ -384,47 +384,6 @@ pub(crate) unsafe fn do_op() {
 }
 
 /// 一键批量: 把当前批的方向对应的全部条目拷进队列(快照), tick 里逐个执行。
-pub(crate) unsafe fn request_batch(hide_all: bool) {
-    if REQ_BATCH != 0 || REQ_OP != 0 || APP_LOADED == 0 { return; }
-    if write_blocked() { wmsg("列表不完整, 禁止改写\0"); return; }
-    BATCH_N = 0;
-    BATCH_CURSOR = 0;
-    BATCH_DONE = 0;
-    BATCH_FAIL = 0;
-    BATCH_NOREG = 0;
-    let mut i = 0usize;
-    while i < APP_N && BATCH_N < APP_MAX {
-        let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i));
-        let want = if hide_all { 0u8 } else { 1u8 };
-        // 重复包名只操作一次: 固件会为重复条目建多个桌面记录, 退出时二次释放 -> 黑屏。
-        if read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i)) != 0 {
-            i += 1; continue;
-        }
-        if src == want {
-            // 排除名单不参与任何一键操作
-            if read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0 {
-                i += 1; continue;
-            }
-            let pp = core::ptr::addr_of!(E_PKG) as *const u8;
-            let dp = (core::ptr::addr_of_mut!(BATCH_PKG) as *mut u8).add(BATCH_N * 44);
-            let mut k = 0usize;
-            while k < 43 { let c = read_volatile(pp.add(i * 44 + k)); write_volatile(dp.add(k), c); if c == 0 { break; } k += 1; }
-            write_volatile(dp.add(43), 0);
-            // 锁定位在入队时快照(批量循环里 capture 会重置 E_*, 不能再回头查)
-            write_volatile((core::ptr::addr_of_mut!(BATCH_LOCK) as *mut u8).add(BATCH_N),
-                read_volatile((core::ptr::addr_of!(E_LOCK) as *const u8).add(i)));
-            BATCH_N += 1;
-        }
-        i += 1;
-    }
-    if BATCH_N == 0 {
-        wmsg("没有可操作应用\0");
-        return;
-    }
-    REQ_BATCH = if hide_all { 1 } else { 2 };
-    crate::log::kv(if hide_all { "批量隐藏开始, 队列 " } else { "批量显示开始, 队列 " }, BATCH_N as u32);
-}
-
 pub(crate) unsafe fn batch_pending() -> bool { REQ_BATCH != 0 }
 
 /// tick: 执行批量队列。每个条目一次 capture+写回(单条 op 的完整流程),
@@ -1031,42 +990,6 @@ pub(crate) unsafe fn sort_view_visible_first() {
 }
 
 /// 页7 顺序: 排除项在前; 稳定排序。
-pub(crate) unsafe fn build_excl_view() {
-    EXCL_VIEW_N = 0;
-    let mut i = 0usize;
-    while i < APP_N && i < APP_MAX {
-        if !is_dup(i) {
-            write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(EXCL_VIEW_N), i as u8);
-            EXCL_VIEW_N += 1;
-        }
-        i += 1;
-    }
-    let mut a = 1usize;
-    while a < EXCL_VIEW_N {
-        let cur = read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(a));
-        let mut b = a;
-        while b > 0 {
-            let prev = read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(b - 1));
-            if (excl_on(prev as usize) as u8) >= (excl_on(cur as usize) as u8) { break; }
-            write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), prev);
-            b -= 1;
-        }
-        write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), cur);
-        a += 1;
-    }
-}
-
-pub(crate) unsafe fn is_dup(i: usize) -> bool {
-    i < APP_N && read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i)) != 0
-}
-
-pub(crate) unsafe fn excl_view_count() -> usize { EXCL_VIEW_N }
-
-pub(crate) unsafe fn excl_view_at(v: usize) -> usize {
-    if v >= EXCL_VIEW_N { return usize::MAX; }
-    read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(v)) as usize
-}
-
 unsafe fn excl_checksum(b: *const u8) -> u32 {
     let mut s = 0u32;
     let mut i = EXCL_HDR;
@@ -1212,10 +1135,6 @@ unsafe fn eset(s: &str) {
     put_str(core::ptr::addr_of_mut!(EXCL_MSG) as *mut u8, s.as_bytes());
 }
 
-pub(crate) unsafe fn excl_msg() -> &'static [u8] {
-    core::slice::from_raw_parts(core::ptr::addr_of!(EXCL_MSG) as *const u8, 48)
-}
-
 /// 事件回调里只登记请求, 真正读写由 tick 做。
 pub(crate) unsafe fn request_excl(i: usize) {
     if REQ_EXCL != 0 || APP_LOADED == 0 || i >= APP_N { return; }
@@ -1237,40 +1156,6 @@ pub(crate) unsafe fn do_excl() {
     }
     build_view();
 }
-
-pub(crate) unsafe fn excl_label() -> &'static [u8] {
-    let d = core::ptr::addr_of_mut!(EXCL_LABEL) as *mut u8;
-    let mut n = put_lit(d, "排除项管理 (".as_bytes());
-    n += put_u32(d.add(n), EXCL_N as u32);
-    n += put_lit(d.add(n), ")\0".as_bytes());
-    core::slice::from_raw_parts(d, n)
-}
-
-pub(crate) unsafe fn excl_hint() -> &'static [u8] {
-    let d = core::ptr::addr_of_mut!(EXCL_HINT) as *mut u8;
-    if EXCL_MODE != 0 {
-        return {
-            let mut n = put_lit(d, "点一行 = 隐藏/显示该应用\0".as_bytes());
-            core::slice::from_raw_parts(d, n)
-        };
-    }
-    let mut n = put_lit(d, "勾选 = 不参与一键 (已排除 ".as_bytes());
-    n += put_u32(d.add(n), EXCL_N as u32);
-    n += put_lit(d.add(n), ")\0".as_bytes());
-    core::slice::from_raw_parts(d, n)
-}
-
-pub(crate) unsafe fn excl_mode() -> u32 { EXCL_MODE }
-
-pub(crate) unsafe fn toggle_excl_mode() { EXCL_MODE = if EXCL_MODE == 0 { 1 } else { 0 }; }
-
-pub(crate) unsafe fn mode_label() -> &'static [u8] {
-    let d = core::ptr::addr_of_mut!(MODE_LABEL) as *mut u8;
-    let s = if EXCL_MODE == 0 { "模式: 管理排除项\0" } else { "模式: 管理显隐\0" };
-    let n = put_lit(d, s.as_bytes());
-    core::slice::from_raw_parts(d, n)
-}
-
 
 /// (重)读两份注册表, 重建展示列表。
 pub(crate) unsafe fn reload() {
