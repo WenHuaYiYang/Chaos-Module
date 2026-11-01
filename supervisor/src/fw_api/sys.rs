@@ -418,6 +418,21 @@ pub unsafe fn quickapp_registry_find(key: *const u8) -> u32 {
     f(key)
 }
 
+/// `quickapp_launch_app(app_id, uri)` —— 启动一个已安装的快应用。`0x0C5481E4`。
+///
+/// 固件里只有 `ThirdpartyAppID_LAUNCH_APP` 消息处理调它（`0xC549C88`/`0xC549D5C`），
+/// 其中 uri 为空的分支显式传 NULL（`0xC549D30`），说明 `(app_id, NULL)` 是合法入口：
+/// 先按 app_id 查 proxyquickapp 已装表（`0x20111B90`），失败打印
+/// `Failed to get appinfo for package: %s` 返回 -1；成功则拼启动参数、调框架
+/// vtable `[0x200EB6E0+8]` 拉起页面。隐藏位（节点 +0x3C bit0）不参与判断。
+///
+/// 前提：app_id 在已装表里存在（深度隐藏后要先 `quickapp_resync_missing()` 补节点），
+/// 且在 UI/tick 线程调用；单实例下会被 `launching deferred` 延后。
+pub unsafe fn quickapp_launch_app(app_id: u16) -> i32 {
+    let f: unsafe extern "C" fn(u16, *const u8) -> i32 = transmute(0x0C54_81E5usize);
+    f(app_id, core::ptr::null())
+}
+
 /// 遍历已装应用表，**只给注册表里查不到的 app 补节点**，返回 `(扫描数, 补建数)`。
 ///
 /// 用途：深度隐藏把条目搬进 `apps.json_hide` 后重启，固件不会为这些应用建节点，

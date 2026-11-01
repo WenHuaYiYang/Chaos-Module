@@ -2385,7 +2385,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.0\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.1\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2927,8 +2927,12 @@ impl Page for AppDetailPage {
             tile_primary(t2);
             let xt = crate::appmgr::detail_excl_label();
             let t3 = build_tile_right(ctx, t2, 3, xt, TILE_W, TILE_H);
-            let t4 = build_tile_below(ctx, t2, 4, un, TILE_ROW_W, 56);
-            tile_danger(t4);
+            let t4 = build_tile_below(ctx, t2, 4, "打开应用\0".as_bytes(), TILE_ROW_W, 56);
+            if t4 == 0 { return Err(PageError::RowFailed(4)); }
+            tile_primary(t4);
+            let t5 = build_tile_below(ctx, t4, 5, un, TILE_ROW_W, 56);
+            if t5 == 0 { return Err(PageError::RowFailed(5)); }
+            tile_danger(t5);
             Ok(())
         }
     }
@@ -2946,6 +2950,8 @@ impl Page for AppDetailPage {
                 crate::appmgr::detail_toggle_excl();
                 render_req(29);
             } else if idx == 4 {
+                crate::appmgr::detail_launch();
+            } else if idx == 5 {
                 if crate::appmgr::detail_uninstall_click() {
                     // 已卸载: 回到应用管理列表
                     nav_back();
