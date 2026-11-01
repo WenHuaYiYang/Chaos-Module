@@ -2465,6 +2465,13 @@ pub(crate) unsafe fn detail_uninstall_click() -> bool {
 pub(crate) unsafe fn detail_launch() -> bool {
     if !detail_valid() { return false; }
     let pkg = core::ptr::addr_of!(D_PKG) as *const u8;
+    // 深度隐藏重启后注册表没有节点: 先按包名补建(固件页面管理器按节点找应用),
+    // 补完若原本是隐藏态, 再把图标摘掉, 保持隐藏。
+    if find_node(pkg) == 0 {
+        let ok = fw_api::quickapp_register_pkg(pkg);
+        crate::log::kv("打开应用-补建节点 ", if ok { 1 } else { 0 });
+        if ok && D_HIDDEN != 0 { let _ = apply_pkg(true, pkg); }
+    }
     let rc = fw_api::quickapp_launch_app(pkg);
     if rc < 0 {
         wmsg_keep("启动失败, 应用可能未安装\0");
