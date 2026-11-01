@@ -62,6 +62,8 @@ ko_slim.js              清空局部符号名 → 文件 251KB→195KB（CHAOS_N
 verify_chaos_ko.py      打印节区/重定位/未定义符号
         ↓
 p67_pack.py             ko + 图标 + main.lua → p67 容器
+                        （无 python3 时用 tools/p67_pack.js：
+                         inspect/build/repack，repack 可直接换容器里的单个资源）
 ```
 
 `tools/build_ko.sh` 负责前两步，`tools/build.py` 串起全流程。
