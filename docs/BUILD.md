@@ -57,6 +57,8 @@ rust-lld -r --gc-sections -u module_main -u chaos_ctor -T merge_sections.ld
         ↓  （不 merge 节区时 .text 会是 0，insmod 静默成功但模块没有任何指令）
 fix_ko_layout.py        重排各节 sh_addr（链接产物全是 0）
         ↓
+ko_slim.js              清空局部符号名 → 文件 251KB→195KB（CHAOS_NO_SLIM=1 可跳过）
+        ↓
 verify_chaos_ko.py      打印节区/重定位/未定义符号
         ↓
 p67_pack.py             ko + 图标 + main.lua → p67 容器

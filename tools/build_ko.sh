@@ -54,9 +54,20 @@ echo "rust-lld: $lld"
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then
   python3 "$here/fix_ko_layout.py" "$out"
-  python3 "$here/verify_chaos_ko.py" "$out"
 else
   node "$here/fix_ko_layout.js" "$out"
+fi
+
+# 体积瘦身(S1): 局部符号名置空。加载器做重定位只认 symtab 下标, 不需要局部符号名;
+# 本模块未定义符号为 0, 保留名字的只有全局/弱符号导出。省 ~56KB, 见 docs/22。
+# 需要保留完整符号名调试时: CHAOS_NO_SLIM=1 sh tools/build_ko.sh
+if [ "${CHAOS_NO_SLIM:-0}" != "1" ]; then
+  node "$here/ko_slim.js" "$out"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$here/verify_chaos_ko.py" "$out"
+else
   node "$here/verify_chaos_ko.js" "$out"
 fi
 echo "OK: $out"
