@@ -1983,7 +1983,10 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
         let r = core::ptr::read_volatile(rows.add(v));
         if r == 0 { return false; }
         let vis = crate::appmgr::visible(i);
-        let sub = if vis {
+        let picked = selected_mode && crate::appmgr::sel_has(i);
+        let sub = if picked {
+            "已选\0".as_bytes().as_ptr()
+        } else if vis {
             core::ptr::addr_of!(AM_STATUS_VIS) as *const u8
         } else {
             core::ptr::addr_of!(AM_STATUS_HID) as *const u8
@@ -1996,10 +1999,12 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
         fw_api::row_update(r, fw_api::NONE_PTR,
             crate::appmgr::entry_primary(i), fw_api::NONE_PTR, 0, sel);
         let sp = core::ptr::read_volatile((core::ptr::addr_of!(P_STATE_LB) as *const u32).add(v));
-        let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
+        let stxt: &[u8] = if picked { "已选\0".as_bytes() }
+            else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
         if sp != 0 {
             fw_api::label_set_text(sp, stxt.as_ptr());
-            if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
+            if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
+            else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
         }
         if !selected_mode {
@@ -2081,24 +2086,23 @@ unsafe fn list_build_chunk(limit: u32) {
         let i = crate::appmgr::view_at(v);
         if i == usize::MAX { LB_V = LB_N; break; }
         let vis = crate::appmgr::visible(i);
-        let trailing = if LB_KIND == 2 { fw_api::trailing::CHECKBOX } else { 0 };
+        // 两个列表统一两行行型, 不带复选框: 复选框会压缩副标签宽度, 导致胶囊位置两边不一致
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
-            b"\xc2\xa0\0".as_ptr(), trailing);
+            b"\xc2\xa0\0".as_ptr(), 0);
         if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
         fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
-        if LB_KIND == 2 {
-            let tobj = fw_api::row_trailing(r);
-            if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
-        }
         fw_api::obj_set_size_wh(r, 320, 100);
         fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
         let sp = fw_api::label_create(r);
-        let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
+        let picked = LB_KIND == 2 && crate::appmgr::sel_has(i);
+        let stxt: &[u8] = if picked { "已选\0".as_bytes() }
+            else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
         if sp != 0 {
             fw_api::label_set_text(sp, stxt.as_ptr());
-            if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
+            if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
+            else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
             // 锚在固件自己排出来的第二行(副标签)上: 垂直居中于该行, 水平用 dx 拉回左边距。
             // 第二行一定在卡片内部, 所以胶囊不会再掉到卡片外面。
@@ -2107,8 +2111,7 @@ unsafe fn list_build_chunk(limit: u32) {
             // 副标签的“中心”在卡片内(实测正确), 但它的底边比卡片低, 所以只能用 CENTER 再水平偏移。
             // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
             let w = pill_w(stxt) as i32;
-            let half = if LB_KIND == 2 { 118 } else { 142 };
-            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(half - w / 2), 0);
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(142 - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
         let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
@@ -2500,7 +2503,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.30\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.31\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
