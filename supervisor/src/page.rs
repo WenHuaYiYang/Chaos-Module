@@ -115,6 +115,63 @@ pub(crate) unsafe fn build_rows(
     Ok(prev)
 }
 
+// ===== 紧凑按钮块(一行放多个按钮) =====
+
+/// 单个按钮块的标准尺寸。行控件默认按"双排列表行"占高, 四五个按钮就会把
+/// 480 高的屏铺满, 所以按钮一律显式给宽高、走这些常量。
+pub(crate) const TILE_W: u32 = 160;
+pub(crate) const TILE_H: u32 = 64;
+/// 整行(328)减去两个按钮和中间 8px 缝: 160*2+8
+const TILE_ROW_W: u32 = 328;
+/// 半宽按钮居中到父容器中心需要的横向补偿(左边块的中心比内容中心小 84)
+const TILE_CENTER_DX: i32 = 84;
+
+unsafe fn tile_base(ctx: &PageCtx, slot: usize, text: &[u8], w: u32, h: u32) -> u32 {
+    if slot >= fw_api::MAX_ROWS_PER_PAGE || text.is_empty() { return 0; }
+    let r = fw_api::row_create(ctx.content, text.as_ptr(), fw_api::NONE_PTR, 0);
+    if r == 0 { return 0; }
+    write_volatile(ctx.rows.add(slot), r);
+    fw_api::obj_set_size_wh(r, w, h);
+    fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
+    r
+}
+
+/// 在基准行下方左侧建一个按钮块
+pub(crate) unsafe fn build_tile_below(
+    ctx: &PageCtx, prev: u32, slot: usize, text: &[u8], w: u32, h: u32,
+) -> u32 {
+    let r = tile_base(ctx, slot, text, w, h);
+    if r != 0 { fw_api::obj_align_to(r, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8); }
+    r
+}
+
+/// 在基准按钮块右侧建一个按钮块
+pub(crate) unsafe fn build_tile_right(
+    ctx: &PageCtx, base: u32, slot: usize, text: &[u8], w: u32, h: u32,
+) -> u32 {
+    let r = tile_base(ctx, slot, text, w, h);
+    if r != 0 { fw_api::obj_align_to(r, base, fw_api::align::OUT_RIGHT_MID, 8, 0); }
+    r
+}
+
+/// 把整行宽度(328)的控件挂到"左边半宽按钮块"下方时, 需要向右补
+/// (内容中心 - 左块中心)=84, 否则会整体偏左半个按钮。
+pub(crate) unsafe fn build_row_under_left(
+    ctx: &PageCtx, left_tile: u32, slot: usize, spec: &RowSpec,
+) -> u32 {
+    let r = build_row(ctx, left_tile, slot, spec);
+    if r != 0 {
+        fw_api::obj_align_to(r, left_tile, fw_api::align::OUT_BOTTOM_MID,
+            TILE_CENTER_DX, 8);
+    }
+    r
+}
+
+/// 行建立后压高度(用于状态/信息行, 默认双排高度太占屏)
+pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
+    if row != 0 { fw_api::obj_set_size_wh(row, TILE_ROW_W, h); }
+}
+
 // ===== Page trait =====
 
 /// 页面行为接口。页面知道自己是谁, 不需要外部传 pid。
@@ -1789,14 +1846,19 @@ impl Page for AppMgrPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();
-            // 顶部四行(槽 0..3): 批量操作 / 排除项 / 状态 / 重新应用隐藏
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("批量操作 >\0".as_bytes(), core::ptr::null())),
-                (1, RowSpec::tap(crate::appmgr::excl_label(), core::ptr::null())),
-                (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
-                (3, RowSpec::tap("重新应用隐藏\0".as_bytes(), core::ptr::null())),
-            ])?;
+            // 顶部: 两个按钮并排一行 + 状态行 + 重新应用隐藏(按钮块统一压低高度)
+            let t0 = build_tile_below(ctx, ctx.title, 0,
+                "批量操作 >\0".as_bytes(), TILE_W, TILE_H);
+            if t0 == 0 { return Err(PageError::RowFailed(0)); }
+            let _ = build_tile_right(ctx, t0, 1, crate::appmgr::excl_label(), TILE_W, TILE_H);
+            let s2 = build_row_under_left(ctx, t0, 2,
+                &RowSpec::display(crate::appmgr::msg(), core::ptr::null()));
+            row_shrink(s2, 56);
             AM_MSG_ROW = read_volatile(ctx.rows.add(2));
+            if s2 != 0 {
+                let _ = build_tile_below(ctx, s2, 3,
+                    "重新应用隐藏\0".as_bytes(), 328, 56);
+            }
             crate::appmgr::sort_view_visible_first();
 
             // 状态文案(静态缓冲, 供每行的副标签使用)
@@ -1827,6 +1889,7 @@ impl Page for AppMgrPage {
                 if lab != 0 {
                     fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
                 }
+                row_shrink(r, 88);
                 fw_api::obj_align_to(r, prev, 14, 0, 8);
                 prev = r;
                 v += 1;
@@ -1836,6 +1899,7 @@ impl Page for AppMgrPage {
     }
 
     fn on_click(&self, idx: usize) {
+        // 页1 顶部按钮槽位不变: 0=批量, 1=排除项, 3=重新应用隐藏
         unsafe {
             if idx == 0 {
                 nav_goto(30, 0);            // 批量操作
@@ -2138,7 +2202,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.8\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.2\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2786,7 +2850,7 @@ impl Page for AppDetailPage {
             put_str(core::ptr::addr_of_mut!(DT_LBL_SHOW) as *mut u8, "显示该应用\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(DT_LBL_HIDE) as *mut u8, "隐藏该应用\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(DT_LBL_UN) as *mut u8, "卸载应用\0".as_bytes());
-            put_str(core::ptr::addr_of_mut!(DT_LBL_UN2) as *mut u8, "再点一次确认卸载\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(DT_LBL_UN2) as *mut u8, "确认卸载?\0".as_bytes());
 
             let toggle: &[u8] = if crate::appmgr::detail_hidden() {
                 cstr_static(core::ptr::addr_of!(DT_LBL_SHOW) as *const u8)
@@ -2798,13 +2862,20 @@ impl Page for AppDetailPage {
             } else {
                 cstr_static(core::ptr::addr_of!(DT_LBL_UN) as *const u8)
             };
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::display(crate::appmgr::detail_name(), crate::appmgr::detail_pkg().as_ptr())),
-                (1, RowSpec::display(cstr_static(crate::appmgr::detail_fmt()), core::ptr::null())),
-                (2, RowSpec::tap(toggle, core::ptr::null())),
-                (3, RowSpec::tap(un, core::ptr::null())),
-                (4, RowSpec::tap("返回\0".as_bytes(), core::ptr::null())),
-            ])?;
+            let r0 = build_row(ctx, ctx.title, 0,
+                &RowSpec::display(crate::appmgr::detail_name(),
+                    crate::appmgr::detail_pkg().as_ptr()));
+            if r0 == 0 { return Err(PageError::RowFailed(0)); }
+            row_shrink(r0, 88);
+            let r1 = build_row(ctx, r0, 1,
+                &RowSpec::display(cstr_static(crate::appmgr::detail_fmt()),
+                    core::ptr::null()));
+            if r1 == 0 { return Err(PageError::RowFailed(1)); }
+            row_shrink(r1, 56);
+            // 隐藏/显示 与 卸载 并排一行, 返回交给标题栏的返回键
+            let t2 = build_tile_below(ctx, r1, 2, toggle, TILE_W, TILE_H);
+            if t2 == 0 { return Err(PageError::RowFailed(2)); }
+            let _ = build_tile_right(ctx, t2, 3, un, TILE_W, TILE_H);
             Ok(())
         }
     }
@@ -2881,7 +2952,7 @@ impl Page for BatchPage {
             put_str(core::ptr::addr_of_mut!(B_ST_VIS) as *mut u8, "显示中\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(B_LBL_ALL) as *mut u8, "全选\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(B_LBL_DEL) as *mut u8, "删除选中\0".as_bytes());
-            put_str(core::ptr::addr_of_mut!(B_LBL_DEL2) as *mut u8, "再点一次确认删除\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(B_LBL_DEL2) as *mut u8, "确认删除?\0".as_bytes());
             let _ = &B_LBL_UNSEL;
 
             let all: &[u8] = if crate::appmgr::sel_count() == 0 {
@@ -2896,18 +2967,21 @@ impl Page for BatchPage {
             } else {
                 cstr_static(core::ptr::addr_of!(B_LBL_DEL) as *const u8)
             };
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap(all, core::ptr::null())),
-                (1, RowSpec::display(cstr_static(b_sel_text()), core::ptr::null())),
-                (2, RowSpec::tap("隐藏选中\0".as_bytes(), core::ptr::null())),
-                (3, RowSpec::tap("显示选中\0".as_bytes(), core::ptr::null())),
-                (4, RowSpec::tap(del, core::ptr::null())),
-                (5, RowSpec::tap("返回\0".as_bytes(), core::ptr::null())),
-            ])?;
+            // 顶部: 已选统计 + 四个操作按钮并排两行, 返回交给标题栏返回键
+            let s0 = build_row(ctx, ctx.title, 0,
+                &RowSpec::display(cstr_static(b_sel_text()), core::ptr::null()));
+            if s0 == 0 { return Err(PageError::RowFailed(0)); }
+            row_shrink(s0, 56);
+            let t1 = build_tile_below(ctx, s0, 1, all, TILE_W, TILE_H);
+            if t1 == 0 { return Err(PageError::RowFailed(1)); }
+            let _ = build_tile_right(ctx, t1, 2, "隐藏选中\0".as_bytes(), TILE_W, TILE_H);
+            let t3 = build_tile_below(ctx, t1, 3, "显示选中\0".as_bytes(), TILE_W, TILE_H);
+            if t3 == 0 { return Err(PageError::RowFailed(3)); }
+            let _ = build_tile_right(ctx, t3, 4, del, TILE_W, TILE_H);
 
             // 勾选行
-            let mut prev = read_volatile(ctx.rows.add(5));
-            if prev == 0 { prev = ctx.title; }
+            let mut prev = t3;
+            let mut first = true;
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::view_count();
             let mut v = 0usize;
@@ -2931,7 +3005,10 @@ impl Page for BatchPage {
                 if lab != 0 {
                     fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
                 }
-                fw_api::obj_align_to(r, prev, 14, 0, 8);
+                row_shrink(r, 88);
+                let dx = if first { TILE_CENTER_DX } else { 0 };
+                fw_api::obj_align_to(r, prev, 14, dx, 8);
+                first = false;
                 prev = r;
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
                     sub, 0, crate::appmgr::sel_has(i) as u8);
@@ -2943,7 +3020,7 @@ impl Page for BatchPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            if idx == 0 {
+            if idx == 1 {
                 crate::appmgr::sel_toggle_all();
                 render_req(30);
             } else if idx == 2 {
