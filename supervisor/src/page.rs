@@ -1989,8 +1989,13 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
         let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
         if core::ptr::read_volatile(cache.add(v)) == st { continue; }
         core::ptr::write_volatile(cache.add(v), st);
+        // 副标题必须继续传占位符: 传空会让固件把行退化成单行(标题垂直居中), 而且会打隐藏标志
+        let ph: [u8; 3] = [0xc2, 0xa0, 0];
         fw_api::row_update(r, fw_api::NONE_PTR,
-            crate::appmgr::entry_primary(i), fw_api::NONE_PTR, 0, 0);
+            crate::appmgr::entry_primary(i), ph.as_ptr(), 0, 0);
+        // 无论固件怎么排, 标题统一钉在左上 (与左边距一致)
+        let title = crate::mem::rd32((r + 0x3c) as *const u32);
+        if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 10, 10); }
         let sp = core::ptr::read_volatile((core::ptr::addr_of!(P_STATE_LB) as *const u32).add(v));
         let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
         if sp != 0 {
