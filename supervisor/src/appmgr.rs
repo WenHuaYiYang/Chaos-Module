@@ -2590,7 +2590,22 @@ unsafe fn uninstall_pkg(pkg: *const u8, name: *const u8) -> bool {
 pub(crate) unsafe fn sel_clear() { let p = core::ptr::addr_of_mut!(SEL) as *mut u8; let mut i=0; while i<APP_MAX { write_volatile(p.add(i),0); i+=1; } SEL_N = 0; }
 pub(crate) unsafe fn sel_count() -> usize { SEL_N }
 pub(crate) unsafe fn sel_has(i: usize) -> bool { i < APP_MAX && read_volatile((core::ptr::addr_of!(SEL) as *const u8).add(i)) != 0 }
-pub(crate) unsafe fn batch_total() -> usize { view_count() }
+pub(crate) unsafe fn excluded(i: usize) -> bool {
+    i < APP_MAX && read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0
+}
+
+/// 批量页只算未被排除的应用
+pub(crate) unsafe fn batch_total() -> usize {
+    let n = view_count();
+    let mut v = 0usize;
+    let mut c = 0usize;
+    while v < n {
+        let i = view_at(v);
+        if i != usize::MAX && !excluded(i) { c += 1; }
+        v += 1;
+    }
+    c
+}
 
 pub(crate) unsafe fn sel_toggle(i: usize) {
     if i >= APP_N { return; }

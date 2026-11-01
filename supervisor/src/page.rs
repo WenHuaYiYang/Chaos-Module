@@ -2105,6 +2105,8 @@ unsafe fn list_build_chunk(limit: u32) {
         fw_api::obj_set_size_wh(r, 320, 100);
         fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
+        // 批量页不显示被排除的应用: 隐藏整行, 不参与布局也不可点击
+        if LB_KIND == 2 && crate::appmgr::excluded(i) { fw_api::obj_add_flag(r, 0x01); }
         // 页 1 自建胶囊; 批量页直接用固件副标题当胶囊(保持可见文本, 行才不会退化单行)
         let sp = fw_api::label_create(r);
         if sp != 0 {
