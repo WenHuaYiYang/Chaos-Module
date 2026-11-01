@@ -2003,6 +2003,8 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
             else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
         if sp != 0 {
             fw_api::label_set_text(sp, stxt.as_ptr());
+            // row_update 对副标签的处理会把它打上隐藏标志, 清掉才能看见
+            fw_api::obj_clear_flag(sp, 0x01);
             if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
             else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
@@ -2521,7 +2523,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.38\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.39\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
