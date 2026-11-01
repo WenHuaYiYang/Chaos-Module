@@ -2122,13 +2122,8 @@ unsafe fn list_build_chunk(limit: u32) {
             fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(150 - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
-        // 批量页不显示排除项胶囊
-        if LB_KIND == 1 {
-            let exp = add_excl_pill(r, sp, i, false);
-            P_EXCL_LB[v] = exp;
-        } else {
-            P_EXCL_LB[v] = 0;
-        }
+        let exp = add_excl_pill(r, sp, i, false);
+        P_EXCL_LB[v] = exp;
         // 批量页: 选中的应用名称变色
         if LB_KIND == 2 {
             let title = crate::mem::rd32((r + 0x3c) as *const u32);
