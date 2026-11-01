@@ -164,7 +164,7 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, cps: usize) {
     let mut w = 24 + 20 * cps;
     if w < 96 { w = 96; }
     if w > 232 { w = 232; }
-    fw_api::obj_set_width(lab, w as i32);
+    fw_api::obj_set_size_wh(lab, w as u32, 36);
 }
 
 pub(crate) unsafe fn tile_danger(row: u32) {
@@ -1917,6 +1917,8 @@ static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
 /// 列表行原地刷新(页1/页30 共用): 行数没变就逐行改副标题与颜色, 不重建整页,
 /// 这样列表滚动位置不会跳回顶部, 也不会在快速连点时销毁/重建行对象。
 /// 返回 false = 行数或句柄对不上, 调用方需要整页重建。
+static mut ROW_STATE: [u8; 40] = [0xFF; 40];
+
 unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
     if list_building() { return true; } // 还在分批建行, 先不刷
     let n = crate::appmgr::view_count();
@@ -1934,6 +1936,10 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
             core::ptr::addr_of!(AM_STATUS_HID) as *const u8
         };
         let sel = if selected_mode && crate::appmgr::sel_has(i) { 1u8 } else { 0u8 };
+        let st = (vis as u8) | (sel << 1);
+        let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
+        if core::ptr::read_volatile(cache.add(v)) == st { continue; }
+        core::ptr::write_volatile(cache.add(v), st);
         fw_api::row_update(r, fw_api::NONE_PTR,
             crate::appmgr::entry_primary(i), sub, 0, sel);
         let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
@@ -1967,6 +1973,8 @@ static mut LB_FIRST: u32 = 0;
 static mut LB_SUB_VIS: u32 = 0;
 static mut LB_SUB_HID: u32 = 0;
 
+static mut LIST_REBUILD: u8 = 0;
+
 const LB_FIRST_CHUNK: u32 = 6;
 const LB_TICK_CHUNK: u32 = 4;
 
@@ -1981,7 +1989,15 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub
     LB_FIRST = 1;
     LB_SUB_VIS = sub_vis as u32;
     LB_SUB_HID = sub_hid as u32;
+    {
+        let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
+        let mut i = 0usize;
+        while i < 40 { core::ptr::write_volatile(cache.add(i), 0xFF); i += 1; }
+    }
+    LIST_REBUILD = 0;
     crate::appmgr::set_ui_rows(LB_N);
+    crate::log::kv("应用总数 ", crate::appmgr::count() as u32);
+    crate::log::kv("可见列表条目数 ", LB_N);
     list_build_chunk(LB_FIRST_CHUNK);
 }
 
@@ -1996,7 +2012,7 @@ unsafe fn list_build_chunk(limit: u32) {
         let sub = if vis { LB_SUB_VIS as *const u8 } else { LB_SUB_HID as *const u8 };
         let trailing = if LB_KIND == 2 { fw_api::trailing::CHECKBOX } else { 0 };
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i), sub, trailing);
-        if r == 0 { LB_V = LB_N; break; }
+        if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
         fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
         if LB_KIND == 2 {
@@ -2121,7 +2137,10 @@ impl Page for AppMgrPage {
                 fw_api::row_update(h, fw_api::NONE_PTR,
                     crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0, 0);
             }
-            if !refresh_list_rows(false) { render_req(1); }
+            if !refresh_list_rows(false) && LIST_REBUILD == 0 {
+                LIST_REBUILD = 1;
+                render_req(1);
+            }
         }
     }
 }
