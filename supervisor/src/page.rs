@@ -2131,7 +2131,7 @@ unsafe fn list_build_chunk(limit: u32) {
                 if face != 0 { fw_api::obj_set_style_text_font(sp, face, 0); }
                 // 标题也一起压到和左边距一致的上边距
                 let title = crate::mem::rd32((r + 0x3c) as *const u32);
-                if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 10, 12); }
+                if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 10, 10); }
             } else {
                 fw_api::label_set_text(sp, stxt.as_ptr());
             }
@@ -2147,7 +2147,7 @@ unsafe fn list_build_chunk(limit: u32) {
             let w = pill_w(stxt) as i32;
             if LB_KIND == 2 {
                 // 批量页: OUT_BOTTOM_MID 以行底为基准, 上抬到 -18; dx 使左边距 10
-                fw_api::obj_align_to(sp, r, fw_api::align::OUT_BOTTOM_MID, -(150 - w / 2), -18);
+                fw_api::obj_align_to(sp, r, fw_api::align::OUT_BOTTOM_MID, -(150 - w / 2), -10);
             } else {
                 // 页 1 锚副标题行: 纵向贴底(下边距刚好), 左边距 10
                 fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(150 - w / 2), 0);
@@ -2543,7 +2543,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.44\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.45\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
