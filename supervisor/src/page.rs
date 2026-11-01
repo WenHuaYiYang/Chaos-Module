@@ -2100,8 +2100,12 @@ unsafe fn list_build_chunk(limit: u32) {
             fw_api::label_set_text(sp, stxt.as_ptr());
             if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
-            // 锚在行本体左下角: 与标题是否换行、有没有复选框都无关, 两个列表页一致
-            fw_api::obj_align_to(sp, r, fw_api::align::OUT_BOTTOM_LEFT, 18, -4);
+            // 锚在固件自己排出来的第二行(副标签)上: 垂直居中于该行, 水平用 dx 拉回左边距。
+            // 第二行一定在卡片内部, 所以胶囊不会再掉到卡片外面。
+            let sub = crate::mem::rd32((r + 0x40) as *const u32);
+            let base = if sub != 0 { sub } else { r };
+            let w = pill_w(stxt) as i32;
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(142 - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
         let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
@@ -2493,7 +2497,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.27\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.28\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
