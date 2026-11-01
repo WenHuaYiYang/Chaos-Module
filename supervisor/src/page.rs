@@ -2207,10 +2207,9 @@ impl Page for AppMgrPage {
                 fw_api::row_update(h, fw_api::NONE_PTR,
                     crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0, 0);
             }
-            if !refresh_list_rows(false) && LIST_REBUILD == 0 {
-                LIST_REBUILD = 1;
-                render_req(1);
-            }
+            // 行句柄失效时不再整页重建: 重建会销毁 40 个对象并再次触发本 tick, 形成每帧重建的卡顿。
+            // 行数真的变了(卸载/重扫)由对应操作自己 render_req。
+            let _ = refresh_list_rows(false);
         }
     }
 }
@@ -2475,7 +2474,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.18\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.19\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -3338,8 +3337,8 @@ impl Page for BatchPage {
             } else if crate::appmgr::del_pending() {
                 crate::appmgr::do_del_batch();
             }
-            // 状态/勾选变化原地刷新；删除会让行数变化，那时才整页重建
-            if !refresh_list_rows(true) { render_req(30); }
+            // 同上: 勾选/状态变化只原地刷新, 不再自动整页重建
+            let _ = refresh_list_rows(true);
             refresh_batch_count_row();
         }
     }
