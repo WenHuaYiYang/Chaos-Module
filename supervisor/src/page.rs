@@ -203,16 +203,16 @@ pub(crate) unsafe fn set_excl_pill(p: u32, i: usize) {
 
 /// 把副标题标签做成彩色小胶囊(状态药丸): 角色 tint 底色 + 角色色文字。
 pub(crate) fn pill_w(txt: &[u8]) -> u32 {
-    let mut w = 32u32;
+    let mut w = 30u32;
     let mut i = 0usize;
     while i < txt.len() {
         let b = txt[i];
         if b == 0 { break; }
-        if b >= 0xE0 { w += 26; i += 3; }
-        else if b >= 0xC0 { w += 22; i += 2; }
-        else { w += 13; i += 1; }
+        if b >= 0xE0 { w += 34; i += 3; }
+        else if b >= 0xC0 { w += 30; i += 2; }
+        else { w += 16; i += 1; }
     }
-    if w < 110 { 110 } else if w > 220 { 220 } else { w }
+    if w < 132 { 132 } else if w > 236 { 236 } else { w }
 }
 
 pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
@@ -228,7 +228,7 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 8, 0);
     // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
     fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
-    fw_api::obj_set_size_wh(lab, pill_w(txt), 40);
+    fw_api::obj_set_size_wh(lab, pill_w(txt), 52);
     fw_api::obj_clear_scrollable(lab);
 }
 
@@ -2031,7 +2031,7 @@ static mut LB_SUB_HID: u32 = 0;
 static mut LIST_REBUILD: u8 = 0;
 
 const LB_FIRST_CHUNK: u32 = 0;
-const LB_TICK_CHUNK: u32 = 5;
+const LB_TICK_CHUNK: u32 = 4;
 
 pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
 
@@ -2090,6 +2090,10 @@ unsafe fn list_build_chunk(limit: u32) {
         }
         let exp = add_excl_pill(r, lab, i, LB_KIND == 2);
         if LB_KIND == 1 { P_EXCL_LB[v] = exp; }
+        if LB_KIND == 1 {
+            let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
+            core::ptr::write_volatile(cache.add(v), (vis as u8) | 0);
+        }
         let ddx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
         fw_api::obj_align_to(r, LB_PREV, 14, ddx, 10);
         LB_FIRST = 0;
@@ -2471,7 +2475,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.17\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.18\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
