@@ -2113,17 +2113,15 @@ unsafe fn list_build_chunk(limit: u32) {
         fw_api::obj_set_size_wh(r, 320, 100);
         fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
-        // 两个页面都自建胶囊; 批量页的固件副标题只留作"撑两行"的隐形文本
-        let sp = fw_api::label_create(r);
-        if LB_KIND == 2 {
-            let sub = crate::mem::rd32((r + 0x40) as *const u32);
-            if sub != 0 {
-                fw_api::obj_set_local_style_prop(sub,
-                    crate::fw_api::fwaddr::p65_style::TEXT_OPA, 0, 0);
-            }
-        }
+        // 页 1 自建胶囊; 批量页直接用固件副标题当胶囊(保持可见文本, 行才不会退化单行)
+        let sp = if LB_KIND == 2 {
+            crate::mem::rd32((r + 0x40) as *const u32)
+        } else {
+            fw_api::label_create(r)
+        };
         if sp != 0 {
-            fw_api::label_set_text(sp, stxt.as_ptr());
+            if LB_KIND != 2 { fw_api::label_set_text(sp, stxt.as_ptr()); }
+            else { fw_api::obj_set_size_wh(sp, pill_w(stxt), 40); }
             if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
             else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
@@ -2133,7 +2131,6 @@ unsafe fn list_build_chunk(limit: u32) {
             let base = if sub != 0 { sub } else { r };
             // 副标签的“中心”在卡片内(实测正确), 但它的底边比卡片低, 所以只能用 CENTER 再水平偏移。
             // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
-            let w = pill_w(stxt) as i32;
             let w = pill_w(stxt) as i32;
             if LB_KIND == 2 {
                 // 批量页锚行本体(行宽已知 320): 左边距 10, 底边距 10
@@ -2533,7 +2530,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.41\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.42\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
