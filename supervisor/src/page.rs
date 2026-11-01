@@ -184,6 +184,27 @@ pub(crate) unsafe fn cardify(row: u32) {
     fw_api::obj_set_local_style_prop(row, ps::PAD_1, 8, 0);
     fw_api::obj_set_local_style_prop(row, ps::PAD_2, 14, 0);
     fw_api::obj_set_local_style_prop(row, ps::PAD_3, 14, 0);
+    // 卡片内边距让文字更容易超宽/超高; 行和它的标签都不许再自己滚
+    no_scroll(row);
+}
+
+/// 关掉对象及其后代(两层)的 SCROLLABLE: 文字超长时裁剪, 不让整行跟手划动。
+pub(crate) unsafe fn no_scroll(obj: u32) {
+    if obj == 0 { return; }
+    fw_api::obj_clear_scrollable(obj);
+    let mut i = 0u32;
+    while i < 4 {
+        let c = fw_api::obj_get_child(obj, i);
+        if c == 0 { break; }
+        fw_api::obj_clear_scrollable(c);
+        let mut j = 0u32;
+        while j < 3 {
+            let g = fw_api::obj_get_child(c, j);
+            if g != 0 { fw_api::obj_clear_scrollable(g); } else { break; }
+            j += 1;
+        }
+        i += 1;
+    }
 }
 
 // ===== Page trait =====
