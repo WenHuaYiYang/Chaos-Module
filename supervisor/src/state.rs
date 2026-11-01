@@ -172,11 +172,17 @@ pub static PAGE_DEVMODEL: [u8; 9] = *b"devmodel\0";
 /// 页28: 系统美化 -> 应用列表设置(二级)。桌面图标的缩放/排距/内缩三个开关。
 pub static PAGE_APPLIST: [u8; 8] = *b"applist\0";
 
+/// 页29: 应用管理 -> 应用详情(P0 占位)。
+pub static PAGE_DETAIL: [u8; 7] = *b"detail\0";
+
+/// 页30: 应用管理 -> 批量操作(P0 占位)。
+pub static PAGE_BATCH: [u8; 6] = *b"batch\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 29;                   // 注册页数(页0..页28)
+pub const PAGE_COUNT: usize = 31;                   // 注册页数(页0..页30)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
-pub static mut DESC: [u32; 841] = [0; 841];         // 29 页 × 29 word(116B/页, 固件描述符尺寸)
+pub static mut DESC: [u32; 899] = [0; 899];         // 31 页 × 29 word(116B/页, 固件描述符尺寸)
 
 pub static mut NOTIF: [u32; 22] = [0; 22];
 

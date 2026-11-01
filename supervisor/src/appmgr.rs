@@ -61,22 +61,35 @@ const EXCL_TOTAL: usize = EXCL_SUM_OFF + 4;
 // 1 = 普通隐藏(保留 apps.json 条目, 只同步注册表隐藏位 + 桌面图标;
 //     隐藏名单另存 appmgr_keep.bin, 开机由维护定时器补隐藏, 会闪一下)
 // 开关只迁移“隐藏状态的存储方式”, 不改变哪些应用在逻辑上是隐藏的。
-pub(crate) const APPLY_CFG: &[u8] = b"/data/chaos/appmgr_apply.cfg\0";
 const KEEP_PATH: &[u8] = b"/data/chaos/appmgr_keep.bin\0";
 const KEEP_MAGIC: [u8; 4] = *b"KH01";
 const KEEP_TOTAL: usize = 4 + APP_MAX * PKG_CAP;
-static mut APPLY_MODE: u32 = 0;
-static mut APPLY_LOADED: u32 = 0;
+pub(crate) const APPLY_CFG: &[u8] = b"/data/chaos/appmgr_apply.cfg\0";
 static mut APPLY_LABEL: [u8; 48] = [0; 48];
-static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
-static mut KEEP_N: usize = 0;
-// 切换隐藏方式时的包名快照: 文件会被逐条重写, 不能边遍历 E_PKG 边搬。
 static mut MIG_BUF: [[u8; PKG_CAP]; APP_MAX] = [[0; PKG_CAP]; APP_MAX];
 static mut MIG_N: usize = 0;
 static mut REQ_MODE: u32 = 0;
+static mut EXCL_LABEL: [u8; 48] = [0; 48];
+static mut EXCL_HINT: [u8; 64] = [0; 64];
+static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];
+static mut EXCL_VIEW_N: usize = 0;
+static mut EXCL_MODE: u32 = 0;
+static mut MODE_LABEL: [u8; 48] = [0; 48];
+static mut APPLY_MODE: u32 = 0;
+static mut APPLY_LOADED: u32 = 0;
+static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
+static mut KEEP_N: usize = 0;
+// 切换隐藏方式时的包名快照: 文件会被逐条重写, 不能边遍历 E_PKG 边搬。
 static mut BOOT_APPLIED: u32 = 0;
 static mut BOOT_TRIES: u32 = 0;
 static mut BOOT_WAIT: u32 = 0;
+// 运行期看门狗: 换绑/重连、手机重发 rpk_info、新装应用都会触发固件重注册,
+// 普通隐藏的隐藏位只在运行期(新节点 bit0 默认 0), 需要有人持续补回来。
+static mut WATCH_WAIT: u32 = 0;
+static mut WATCH_SIG: u32 = 0;
+static mut WATCH_SEEN: u32 = 0;
+static mut WATCH_BUSY: u32 = 0;
+static mut WATCH_CHG: u32 = 0;      // 注册表刚变过, 等安静一拍再统一重放
 
 // ===== 条目元数据(两份注册表合并; E_SRC 区分来源) =====
 pub(crate) static mut E_PKG: [[u8; 44]; APP_MAX] = [[0; 44]; APP_MAX];
@@ -84,6 +97,8 @@ pub(crate) static mut E_NAME: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];
 static mut E_OFF: [u32; APP_MAX] = [0; APP_MAX]; // 对象在本次载入的 REG_BUF 内的起点
 static mut E_LEN: [u32; APP_MAX] = [0; APP_MAX];
 static mut E_SRC: [u8; APP_MAX] = [0; APP_MAX];  // 0=可见 1=隐藏
+static mut E_VER: [[u8; 24]; APP_MAX] = [[0; 24]; APP_MAX];   // 条目里的 versionName
+static mut E_ICON: [[u8; 32]; APP_MAX] = [[0; 32]; APP_MAX];  // 条目里的 icon 文件名
 static mut E_LOCK: [u8; APP_MAX] = [0; APP_MAX];
 // 同一包名在合并列表里重复出现(同文件重复, 或可见/隐藏各一份)时, 后面的标记为 1。
 // 页1/批量都跳过它们: 固件对重复条目会注册出两个桌面记录, 退出快应用时二次释放 -> 黑屏。
@@ -108,17 +123,19 @@ static mut EXCL_PKG: [[u8; EXCL_SLOT]; EXCL_MAX] = [[0; EXCL_SLOT]; EXCL_MAX];
 static mut EXCL_N: usize = 0;
 static mut EXCL_LOADED: u32 = 0;
 static mut EXCL_IO: [u8; EXCL_TOTAL] = [0; EXCL_TOTAL];
-static mut EXCL_LABEL: [u8; 48] = [0; 48];   // 页1 行3 文案
-static mut EXCL_HINT: [u8; 64] = [0; 64];    // 页7 行1 文案
 // 当前列表每项是否被排除(按完整列表下标), 批量循环直接查它。
 static mut E_EXCL: [u8; APP_MAX] = [0; APP_MAX];
 // 页1 过滤视图: VIEW_IDX[v] = 完整列表下标; 已排除的条目不出现在页1。
 static mut VIEW_IDX: [u8; APP_MAX] = [0; APP_MAX];
 static mut VIEW_N: usize = 0;
+// 页1/页30 上次建出来的行数。行数没变就逐行原地刷新, 不整页重建
+// (重建会销毁行对象, 列表滚动位置也会跳回顶部)。
+static mut UI_ROWS: u32 = 0;
+
+pub(crate) unsafe fn set_ui_rows(n: u32) { UI_ROWS = n; }
+pub(crate) unsafe fn ui_rows() -> u32 { UI_ROWS }
 
 // 页7 的展示顺序: 排除项优先, 其余保持原顺序。
-static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];
-static mut EXCL_VIEW_N: usize = 0;
 
 pub(crate) unsafe fn rows_reset() {
     let p = core::ptr::addr_of_mut!(APP_ROWS) as *mut u32;
@@ -151,9 +168,11 @@ static mut REQ_NAME: [u8; 32] = [0; 32];
 // 排除项切换请求(同样由 tick 消费, 不在事件回调里做文件 IO)
 static mut REQ_EXCL: u32 = 0;
 static mut REQ_EXCL_PKG: [u8; 44] = [0; 44];
+// 重放隐藏名单: 注册表有变化(设备上新装了应用)或用户点"重新应用隐藏"时置位, tick 消费
+static mut REQ_REAPPLY: u32 = 0;
+static mut REG_SIG: u32 = 0;        // 上次注册表的包名指纹(与顺序无关)
+static mut REG_SEEN: u32 = 0;       // 是否已建立基线
 static mut EXCL_MSG: [u8; 48] = [0; 48];
-static mut EXCL_MODE: u32 = 0;              // 0=管理排除项 1=管理显示/隐藏
-static mut MODE_LABEL: [u8; 48] = [0; 48];
 
 // ===== 解析工作区 =====
 static mut REG_BUF: [u8; REG_CAP] = [0; REG_CAP];
@@ -189,6 +208,24 @@ unsafe fn cstr_len(s: *const u8) -> usize {
 
 pub(crate) unsafe fn count() -> usize { APP_N }
 
+pub(crate) static mut HDR_BUF: [u8; 48] = [0; 48];
+
+/// 列表上方一行分组说明: "快应用 N · 已隐藏 M" (随 tick 原地刷新)
+pub(crate) unsafe fn header_text() -> &'static [u8] {
+    let n = view_count();
+    let mut hid = 0usize;
+    let mut v = 0usize;
+    while v < n {
+        let i = view_at(v);
+        if i != usize::MAX && !visible(i) { hid += 1; }
+        v += 1;
+    }
+    let mut w = W::new(core::ptr::addr_of_mut!(HDR_BUF) as *mut u8, 48);
+    w.s("快应用 ".as_bytes()).n(n as u32).s(" / 已隐藏 ".as_bytes()).n(hid as u32).end();
+    let len = cstr_len(core::ptr::addr_of!(HDR_BUF) as *const u8);
+    core::slice::from_raw_parts(core::ptr::addr_of!(HDR_BUF) as *const u8, len + 1)
+}
+
 pub(crate) unsafe fn msg() -> &'static [u8] {
     let n = cstr_len(core::ptr::addr_of!(APP_MSG) as *const u8);
     core::slice::from_raw_parts(core::ptr::addr_of!(APP_MSG) as *const u8, n + 1)
@@ -208,6 +245,34 @@ pub(crate) unsafe fn visible(i: usize) -> bool {
 pub(crate) unsafe fn invalidate() { APP_LOADED = 0; }
 
 pub(crate) unsafe fn has_req() -> bool { REQ_OP != 0 }
+
+pub(crate) unsafe fn reapply_pending() -> bool { REQ_REAPPLY != 0 }
+
+/// 请求重放隐藏名单(tick 里做; 事件回调里不做文件/桌面操作)
+pub(crate) unsafe fn request_reapply() { REQ_REAPPLY = 1; }
+
+/// 包名集合指纹: 与顺序无关、且不含显示/隐藏来源 —— 只有"装/卸了应用"才会变,
+/// Chaos 自己改隐藏状态(同一条目换注册表文件)不会触发。
+unsafe fn reg_sig() -> u32 {
+    let mut acc = 0u32;
+    let mut i = 0usize;
+    while i < APP_N {
+        let p = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * 44);
+        let mut h = 2166136261u32;   // FNV-1a
+        let mut k = 0usize;
+        while k < 43 {
+            let c = read_volatile(p.add(k));
+            if c == 0 { break; }
+            h = (h ^ c as u32).wrapping_mul(16777619);
+            k += 1;
+        }
+        acc = acc.wrapping_add(h.rotate_left(7));
+        i += 1;
+    }
+    // 条目数也计入(同包名重复出现时集合指纹不会变, 但数量会变)
+    acc ^ (APP_N as u32).wrapping_mul(2654435761)
+}
+
 
 /// 列表被截断时禁止一切改写
 unsafe fn write_blocked() -> bool { TRUNC != 0 || OVERSIZE != 0 || PARSE_BAD != 0 }
@@ -319,47 +384,6 @@ pub(crate) unsafe fn do_op() {
 }
 
 /// 一键批量: 把当前批的方向对应的全部条目拷进队列(快照), tick 里逐个执行。
-pub(crate) unsafe fn request_batch(hide_all: bool) {
-    if REQ_BATCH != 0 || REQ_OP != 0 || APP_LOADED == 0 { return; }
-    if write_blocked() { wmsg("列表不完整, 禁止改写\0"); return; }
-    BATCH_N = 0;
-    BATCH_CURSOR = 0;
-    BATCH_DONE = 0;
-    BATCH_FAIL = 0;
-    BATCH_NOREG = 0;
-    let mut i = 0usize;
-    while i < APP_N && BATCH_N < APP_MAX {
-        let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i));
-        let want = if hide_all { 0u8 } else { 1u8 };
-        // 重复包名只操作一次: 固件会为重复条目建多个桌面记录, 退出时二次释放 -> 黑屏。
-        if read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i)) != 0 {
-            i += 1; continue;
-        }
-        if src == want {
-            // 排除名单不参与任何一键操作
-            if read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0 {
-                i += 1; continue;
-            }
-            let pp = core::ptr::addr_of!(E_PKG) as *const u8;
-            let dp = (core::ptr::addr_of_mut!(BATCH_PKG) as *mut u8).add(BATCH_N * 44);
-            let mut k = 0usize;
-            while k < 43 { let c = read_volatile(pp.add(i * 44 + k)); write_volatile(dp.add(k), c); if c == 0 { break; } k += 1; }
-            write_volatile(dp.add(43), 0);
-            // 锁定位在入队时快照(批量循环里 capture 会重置 E_*, 不能再回头查)
-            write_volatile((core::ptr::addr_of_mut!(BATCH_LOCK) as *mut u8).add(BATCH_N),
-                read_volatile((core::ptr::addr_of!(E_LOCK) as *const u8).add(i)));
-            BATCH_N += 1;
-        }
-        i += 1;
-    }
-    if BATCH_N == 0 {
-        wmsg("没有可操作应用\0");
-        return;
-    }
-    REQ_BATCH = if hide_all { 1 } else { 2 };
-    crate::log::kv(if hide_all { "批量隐藏开始, 队列 " } else { "批量显示开始, 队列 " }, BATCH_N as u32);
-}
-
 pub(crate) unsafe fn batch_pending() -> bool { REQ_BATCH != 0 }
 
 /// tick: 执行批量队列。每个条目一次 capture+写回(单条 op 的完整流程),
@@ -401,6 +425,7 @@ pub(crate) unsafe fn do_batch() {
     crate::log::kv("批量完成, 成功 ", BATCH_DONE as u32);
     if BATCH_NOREG != 0 { crate::log::kv("批量完成, 需重启 ", BATCH_NOREG as u32); }
     if BATCH_FAIL != 0 { crate::log::kv("批量完成, 失败 ", BATCH_FAIL as u32); }
+    sel_clear();
     reload();
 }
 
@@ -584,6 +609,8 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
     let mut pkg_over = false;
     let mut hidden = 0u8;
     let mut locked = 0u8;
+    let mut ver = [0u8; 24];
+    let mut icon = [0u8; 32];
     let mut key = [0u8; 20];
     *p += 1; // '{'
     loop {
@@ -729,6 +756,13 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
             } else if !s_value_skip(base, len, p) {
                 return 2;
             }
+        } else if known && (key_is(key.as_ptr(), b"versionName\0")
+            || key_is(key.as_ptr(), b"version\0") || key_is(key.as_ptr(), b"ver\0")) {
+            let r = s_string_read(base, len, ver.as_mut_ptr(), 24, p);
+            if r == 2 { return 2; }
+        } else if known && key_is(key.as_ptr(), b"icon\0") {
+            let r = s_string_read(base, len, icon.as_mut_ptr(), 32, p);
+            if r == 2 { return 2; }
         } else if known && key_is(key.as_ptr(), b"hideFlag\0") {
             hidden = if s_peek(base, len, *p) == b't' { 1 } else { 0 };
             if !s_value_skip(base, len, p) { return 2; }
@@ -767,6 +801,10 @@ unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
     E_LEN[i] = (end - start) as u32;
     E_SRC[i] = src;
     E_LOCK[i] = locked;
+    let mut kv = 0usize;
+    while kv < 24 { E_VER[i][kv] = ver[kv]; kv += 1; }
+    let mut ki = 0usize;
+    while ki < 32 { E_ICON[i][ki] = icon[ki]; ki += 1; }
     // 隐藏注册表里的对象视作已隐藏(hideFlag 仅为固件约定, 展示态以所在文件为准)
     let _ = hidden;
     APP_N += 1;
@@ -904,7 +942,7 @@ unsafe fn build_view() {
         let du = read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i));
         let ex = if excl_index(pkg_ptr(i)) != usize::MAX { 1u8 } else { 0u8 };
         write_volatile((core::ptr::addr_of_mut!(E_EXCL) as *mut u8).add(i), ex);
-        if ex == 0 && du == 0 && VIEW_N < APP_MAX {
+        if du == 0 && VIEW_N < APP_MAX {
             write_volatile((core::ptr::addr_of_mut!(VIEW_IDX) as *mut u8).add(VIEW_N), i as u8);
             VIEW_N += 1;
         }
@@ -952,42 +990,6 @@ pub(crate) unsafe fn sort_view_visible_first() {
 }
 
 /// 页7 顺序: 排除项在前; 稳定排序。
-pub(crate) unsafe fn build_excl_view() {
-    EXCL_VIEW_N = 0;
-    let mut i = 0usize;
-    while i < APP_N && i < APP_MAX {
-        if !is_dup(i) {
-            write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(EXCL_VIEW_N), i as u8);
-            EXCL_VIEW_N += 1;
-        }
-        i += 1;
-    }
-    let mut a = 1usize;
-    while a < EXCL_VIEW_N {
-        let cur = read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(a));
-        let mut b = a;
-        while b > 0 {
-            let prev = read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(b - 1));
-            if (excl_on(prev as usize) as u8) >= (excl_on(cur as usize) as u8) { break; }
-            write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), prev);
-            b -= 1;
-        }
-        write_volatile((core::ptr::addr_of_mut!(EXCL_VIEW) as *mut u8).add(b), cur);
-        a += 1;
-    }
-}
-
-pub(crate) unsafe fn is_dup(i: usize) -> bool {
-    i < APP_N && read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i)) != 0
-}
-
-pub(crate) unsafe fn excl_view_count() -> usize { EXCL_VIEW_N }
-
-pub(crate) unsafe fn excl_view_at(v: usize) -> usize {
-    if v >= EXCL_VIEW_N { return usize::MAX; }
-    read_volatile((core::ptr::addr_of!(EXCL_VIEW) as *const u8).add(v)) as usize
-}
-
 unsafe fn excl_checksum(b: *const u8) -> u32 {
     let mut s = 0u32;
     let mut i = EXCL_HDR;
@@ -1133,10 +1135,6 @@ unsafe fn eset(s: &str) {
     put_str(core::ptr::addr_of_mut!(EXCL_MSG) as *mut u8, s.as_bytes());
 }
 
-pub(crate) unsafe fn excl_msg() -> &'static [u8] {
-    core::slice::from_raw_parts(core::ptr::addr_of!(EXCL_MSG) as *const u8, 48)
-}
-
 /// 事件回调里只登记请求, 真正读写由 tick 做。
 pub(crate) unsafe fn request_excl(i: usize) {
     if REQ_EXCL != 0 || APP_LOADED == 0 || i >= APP_N { return; }
@@ -1158,40 +1156,6 @@ pub(crate) unsafe fn do_excl() {
     }
     build_view();
 }
-
-pub(crate) unsafe fn excl_label() -> &'static [u8] {
-    let d = core::ptr::addr_of_mut!(EXCL_LABEL) as *mut u8;
-    let mut n = put_lit(d, "排除项管理 (".as_bytes());
-    n += put_u32(d.add(n), EXCL_N as u32);
-    n += put_lit(d.add(n), ")\0".as_bytes());
-    core::slice::from_raw_parts(d, n)
-}
-
-pub(crate) unsafe fn excl_hint() -> &'static [u8] {
-    let d = core::ptr::addr_of_mut!(EXCL_HINT) as *mut u8;
-    if EXCL_MODE != 0 {
-        return {
-            let mut n = put_lit(d, "点一行 = 隐藏/显示该应用\0".as_bytes());
-            core::slice::from_raw_parts(d, n)
-        };
-    }
-    let mut n = put_lit(d, "勾选 = 不参与一键 (已排除 ".as_bytes());
-    n += put_u32(d.add(n), EXCL_N as u32);
-    n += put_lit(d.add(n), ")\0".as_bytes());
-    core::slice::from_raw_parts(d, n)
-}
-
-pub(crate) unsafe fn excl_mode() -> u32 { EXCL_MODE }
-
-pub(crate) unsafe fn toggle_excl_mode() { EXCL_MODE = if EXCL_MODE == 0 { 1 } else { 0 }; }
-
-pub(crate) unsafe fn mode_label() -> &'static [u8] {
-    let d = core::ptr::addr_of_mut!(MODE_LABEL) as *mut u8;
-    let s = if EXCL_MODE == 0 { "模式: 管理排除项\0" } else { "模式: 管理显隐\0" };
-    let n = put_lit(d, s.as_bytes());
-    core::slice::from_raw_parts(d, n)
-}
-
 
 /// (重)读两份注册表, 重建展示列表。
 pub(crate) unsafe fn reload() {
@@ -1263,6 +1227,14 @@ pub(crate) unsafe fn reload() {
     if read_volatile(core::ptr::addr_of!(EXCL_MSG) as *const u8) == 0 {
         eset("点一行切换排除状态\0");
     }
+    // 包名集合变了 = 设备上新装/卸载了应用(Chaos 自己改隐藏状态不会变指纹)。
+    // 普通隐藏模式下图标会被新应用注册顺带复原, 这里自动重放一次隐藏名单。
+    let sig = reg_sig();
+    if REG_SEEN != 0 && sig != REG_SIG {
+        REQ_REAPPLY = 1;
+    }
+    REG_SIG = sig;
+    REG_SEEN = 1;
     APP_LOADED = 1;
 }
 
@@ -1409,30 +1381,17 @@ unsafe fn keep_apply_all() -> usize {
 
 pub(crate) unsafe fn apply_mode_ensure() {
     if APPLY_LOADED != 0 { return; }
-    let m = cfg_mode_read();
-    if m == 2 {
-        // 旧版单字节配置(或缺失): 默认回到普通模式, 但保留已有的隐藏名单,
-        // 不再"清空一次用户配置"; 深度模式遗留的隐藏状态由名单继续维持。
-        APPLY_MODE = 1;
-        cfg_mode_save();
-        keep_load();
-    } else {
-        APPLY_MODE = m;
-        keep_load();
-    }
+    // 统一为深度隐藏: 隐藏 = 条目在 apps.json_hide + 节点 bit0 + 无图标。
+    // 普通/深度两套模式合并后不再读配置; 旧 keep 名单在 deep_apply_all 里迁移。
+    APPLY_MODE = 0;
+    keep_load();
     APPLY_LOADED = 1;
 }
 
-pub(crate) unsafe fn apply_mode_is_keep() -> bool {
-    apply_mode_ensure();
-    APPLY_MODE != 0
-}
+pub(crate) unsafe fn apply_mode_is_keep() -> bool { false }
 
 /// 开关态: true = 深度隐藏(条目不在 apps.json)。
-pub(crate) unsafe fn deep_on() -> bool {
-    apply_mode_ensure();
-    APPLY_MODE == 0
-}
+pub(crate) unsafe fn deep_on() -> bool { true }
 
 /// 页1 开关行文案: 只写名称, 开关态由行右侧部件表达。
 pub(crate) unsafe fn apply_mode_label() -> &'static [u8] {
@@ -1535,28 +1494,193 @@ pub(crate) unsafe fn do_mode_apply() {
     }
 }
 
+static mut SNAP: [[u8; PKG_CAP]; APP_MAX] = [[0; PKG_CAP]; APP_MAX];
+
+/// 深度隐藏的统一重放: 隐藏表(以及旧版 keep 名单)里的每个应用,
+/// ①若还在 apps.json 里就搬进 apps.json_hide; ②把节点 bit0 置 1 并摘图标。
+/// 返回 (命中节点数, 迁移条目数, 隐藏表条目数)。
+unsafe fn deep_apply_all() -> (usize, usize, usize) {
+    let mut n = 0usize;
+    APP_N = 0;
+    if load_file(HID_PATH.as_ptr()) {
+        if parse_registry(1) == 0 {
+            let base = core::ptr::addr_of!(E_PKG) as *const u8;
+            let mut i = 0usize;
+            while i < APP_N && n < APP_MAX {
+                let dst = (core::ptr::addr_of_mut!(SNAP) as *mut u8).add(n * PKG_CAP);
+                cpy_n(dst, base.add(i * PKG_CAP), PKG_CAP);
+                n += 1;
+                i += 1;
+            }
+        }
+    }
+    keep_load();
+    let mut k = 0usize;
+    while k < KEEP_N && n < APP_MAX {
+        let p = KEEP_BUF.as_ptr().add(4 + k * PKG_CAP);
+        let mut dup = false;
+        let mut j = 0usize;
+        while j < n {
+            if cstr_eq((core::ptr::addr_of!(SNAP) as *const u8).add(j * PKG_CAP), p) { dup = true; break; }
+            j += 1;
+        }
+        if !dup {
+            let dst = (core::ptr::addr_of_mut!(SNAP) as *mut u8).add(n * PKG_CAP);
+            cpy_n(dst, p, PKG_CAP);
+            n += 1;
+        }
+        k += 1;
+    }
+    let mut found = 0usize;
+    let mut moved = 0usize;
+    let mut i = 0usize;
+    while i < n {
+        let p = (core::ptr::addr_of!(SNAP) as *const u8).add(i * PKG_CAP);
+        if capture(p, 0) {
+            if move_vis_to_hide(p) { moved += 1; }
+        }
+        let node = find_node(p);
+        if node != 0 {
+            set_node_hidden(node, true);
+            let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+            if id != 0 { fw_api::app_launcher_del(id); found += 1; }
+        }
+        i += 1;
+    }
+    if KEEP_N != 0 { KEEP_N = 0; let _ = keep_save(); }
+    reload();
+    (found, moved, n)
+}
+
+/// tick: 重放隐藏名单 —— 进页时发现注册表包名集合变化(新装应用)会自动触发,
+/// 也可由应用管理页的"重新应用隐藏"按钮触发。
+///
+/// 先补注册表节点再重放隐藏: 深度隐藏把条目搬进 apps.json_hide 后, 重启时固件
+/// 不会为这些应用建注册表节点, 于是既无法启动也无法置隐藏位。这里走固件自己的
+/// "手机重同步"路径(proxyquickapp 应用表 → quickapp_register_app)把缺的节点补回来,
+/// 只补查不到的, 已在册的应用一律不动。普通模式下通常没有缺节点, 这一步是空转。
+pub(crate) unsafe fn do_reapply() {
+    if REQ_REAPPLY == 0 { return; }
+    REQ_REAPPLY = 0;
+
+    // 深度隐藏: 先把缺的注册表节点补回来, 再把隐藏表里的条目统一搬回隐藏态。
+    let (total, rebuilt) = fw_api::quickapp_resync_missing();
+    if rebuilt > 0 {
+        crate::log::kv("补建快应用节点, 应用表合计 ", total);
+        crate::log::kv("补建快应用节点, 本次新建 ", rebuilt);
+    }
+    let (found, moved, n) = deep_apply_all();
+    let d = core::ptr::addr_of_mut!(APP_MSG) as *mut u8;
+    let mut w = put_lit(d, "已重新应用隐藏 ".as_bytes());
+    w += put_u32(d.add(w), found as u32);
+    w += put_lit(d.add(w), "/".as_bytes());
+    w += put_u32(d.add(w), n as u32);
+    if moved > 0 {
+        w += put_lit(d.add(w), " 迁移 ".as_bytes());
+        w += put_u32(d.add(w), moved as u32);
+    }
+    if rebuilt > 0 {
+        w += put_lit(d.add(w), " 补建 ".as_bytes());
+        w += put_u32(d.add(w), rebuilt);
+    }
+    write_volatile(d.add(w), 0);
+    MSG_KEEP = 1;
+    crate::log::kv("重新应用隐藏, 命中 ", found as u32);
+    if moved > 0 { crate::log::kv("重新应用隐藏, 迁移 ", moved as u32); }
+}
+
 /// 开机补偿: 模块加载后由维护定时器(UI 线程)调用。只对保留条目模式生效,
 /// 把 Chaos 隐藏名单里的应用重新置位并摘图标; 找不到节点时有限次重试。
 pub(crate) unsafe fn boot_apply() {
     if BOOT_APPLIED != 0 { return; }
     apply_mode_ensure();
     excl_ensure();
-    if APPLY_MODE == 0 { BOOT_APPLIED = 1; return; }
-    if KEEP_N == 0 { BOOT_APPLIED = 1; return; }
-    if BOOT_TRIES == 0 { crate::log::kv("开机补偿开始, 名单 ", KEEP_N as u32); }
-    // 注册表可能比模块晚就绪: 每秒试一次, 最多 5 分钟。
-    // 不能只试 120 拍就放弃, 否则关机前的隐藏名单会因节点未就绪而失效。
+    if BOOT_TRIES == 0 { crate::log::line("开机补偿: 深度隐藏重放开始"); }
     BOOT_WAIT = BOOT_WAIT.wrapping_add(1);
+    // 注册表/应用表可能比模块晚就绪: 每 40 拍试一次, 最多 5 分钟。
     if BOOT_WAIT % 40 != 0 { return; }
-    let found = keep_apply_all();
     BOOT_TRIES = BOOT_TRIES.wrapping_add(1);
-    if found >= KEEP_N {
+    let _ = fw_api::quickapp_resync_missing();
+    let (found, moved, n) = deep_apply_all();
+    if n == 0 || found >= n || BOOT_TRIES >= 300 {
         BOOT_APPLIED = 1;
-        crate::log::line("开机补偿: 隐藏名单已全部应用");
-    } else if BOOT_TRIES >= 300 {
-        BOOT_APPLIED = 1;
-        crate::log::line("开机补偿: 超时, 部分应用未找到节点");
+        crate::log::kv("开机补偿: 隐藏条目 ", n as u32);
+        crate::log::kv("开机补偿: 命中 ", found as u32);
+        if moved > 0 { crate::log::kv("开机补偿: 迁移 ", moved as u32); }
     }
+}
+
+/// 固件运行期注册表的指纹(包名集合 + 节点数 / app_id)。
+///
+/// 与 reg_sig() 读文件不同, 这里读的是**内存 APP_REGISTRY 链**: 应用注册/退出会改它,
+/// Chaos 自己改隐藏位不会。换绑重连、手机重发 rpk_info 后固件重注册应用, 这个指纹必变。
+unsafe fn reg_sig_rt() -> u32 {
+    let head = crate::mem::rd32(fw_api::APP_REGISTRY as *const u32);
+    if head == 0 || crate::mem::safe_ptr(head) == false { return 0; }
+    let mut node = crate::mem::rd32((head + 4) as *const u32);
+    let mut h = 0u32;
+    let mut n = 0u32;
+    let mut guard = 0u32;
+    while crate::mem::safe_ptr(node) && node != head && guard < 512 {
+        guard += 1;
+        let np = crate::mem::rd32((node + 0x08) as *const u32) as *const u8;
+        if crate::mem::safe_ptr(np as u32) {
+            let mut k = 0usize;
+            while k < 44 {
+                let c = read_volatile(np.add(k));
+                if c == 0 { break; }
+                h = h.wrapping_mul(131).wrapping_add(c as u32);
+                k += 1;
+            }
+        }
+        n = n.wrapping_add(1);
+        node = crate::mem::rd32((node + 4) as *const u32);
+    }
+    h.wrapping_mul(31).wrapping_add(n)
+}
+
+/// 运行期隐藏看门狗(维护定时器里调)。
+///
+/// 为什么需要: 普通隐藏(APPLY_MODE=1)的隐藏状态是**运行期**的 —— 隐藏名单在
+/// /data/chaos/appmgr_keep.bin, 生效靠 node+0x3C bit0 + 摘图标。任何一次固件重注册
+/// (换绑新手机后手机重下发 rpk_info、重装、升级)都会建出新节点, bit0 默认 0,
+/// 图标就被 add 回来了; 开机补偿只在开机跑一次, 页1 的自动重放又要求页面打开。
+/// 所以换绑后所有隐藏应用会一起冒出来。
+///
+/// 这里低频巡检两条: ①注册表包名集合变了 -> 整名单重放(补 bit + 摘图标);
+/// ②兜底逐项查 bit0, 防止集合没变但节点被重建的情况。
+pub(crate) unsafe fn watch_keep() {
+    apply_mode_ensure();
+    excl_ensure();
+    WATCH_WAIT = WATCH_WAIT.wrapping_add(1);
+    // 维护定时器快拍 50ms / 慢拍 1s: 4 拍 = 快时 0.2s、慢时 4s, 足够挡住重注册。
+    if WATCH_WAIT % 4 != 0 { return; }
+    if WATCH_BUSY != 0 { return; }
+    WATCH_BUSY = 1;
+
+    let sig = reg_sig_rt();
+    if WATCH_SEEN == 0 {
+        WATCH_SEEN = 1;
+        WATCH_SIG = sig;
+    } else if sig != WATCH_SIG {
+        // 重装/换绑时固件是一条条重注册的, 注册期间指纹每拍都在变。
+        // 先记下来等这一批注册完(指纹安静一拍)再统一重放, 避免逐条重放打满 UI 线程。
+        WATCH_SIG = sig;
+        WATCH_CHG = 1;
+    } else if WATCH_CHG != 0 {
+        WATCH_CHG = 0;
+        let _ = fw_api::quickapp_resync_missing();
+        let (found, moved, _n) = deep_apply_all();
+        if found != 0 || moved != 0 {
+            crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
+            if moved != 0 { crate::log::kv("看门狗: 迁移回隐藏表 ", moved as u32); }
+        }
+    } else if WATCH_WAIT % 240 == 0 {
+        // 兜底: 集合没变但节点被重建/bit0 被清, 每分钟(慢拍 4 分钟)整表重放一次。
+        let (found, _moved, _n) = deep_apply_all();
+        if found != 0 { crate::log::kv("看门狗: 周期补隐藏 ", found as u32); }
+    }
+    WATCH_BUSY = 0;
 }
 
 // ===== 改写 =====
@@ -1896,4 +2020,600 @@ unsafe fn excl_dedupe() {
             a += 1;
         }
     }
+}
+
+// ===== 应用详情 / 批量选择 / 卸载(2026-11 界面重构) =====
+//
+// 详情页: 名称/包名/大小/版本/隐藏态 + 隐藏-显示切换 + 卸载(二次确认)。
+// 卸载按 SmartHome 的做法: 删六个目录 + 从两份注册表里摘条目 + 摘桌面图标,
+// 不走固件的卸载命令, 也不需要重启。
+// 批量页: 勾选集合, 支持全选/取消全选、隐藏选中、显示选中、删除选中。
+
+
+// 快应用在各固件版本里落盘位置不完全一致; 逐个候选求和/删除, 不存在的自然贡献 0。
+// 依据: 固件字符串 "/data/app/%s/%s"(图标)、"/data/quickapp/"(config/rpk_info)、
+// "data/quickapp/system"、"/data/quickapp/cache"; SmartHome 另外尝试 /data/ 下。
+const APP_DIRS: [&[u8]; 4] = [
+    b"/data/app/",
+    b"/data/quickapp/app/",
+    b"/data/app/quickapp/",
+    b"/data/quickapp/",
+];
+const SUB_DIRS: [&[u8]; 8] = [
+    b"/data/quickapp/system/",
+    b"/data/quickapp/cache/",
+    b"/data/quickapp/files/",
+    b"/data/quickapp/mass/",
+    b"/data/app/system/",
+    b"/data/cache/",
+    b"/data/files/",
+    b"/data/mass/",
+];
+
+unsafe fn mk_path3(root: &[u8], mid: &[u8], pkg: *const u8, suffix: &[u8]) -> usize {
+    let buf = core::ptr::addr_of_mut!(D_WORK) as *mut u8;
+    let cap = 300usize;
+    let mut o = 0usize;
+    let mut i = 0usize;
+    // 整段拷贝 root(包括结尾的 /), 之前少拷最后一个字节, 拼出来是 "/data/appcom.x"
+    while i < root.len() && o + 1 < cap { write_volatile(buf.add(o), root[i]); o += 1; i += 1; }
+    i = 0;
+    while i < mid.len() && o + 1 < cap { write_volatile(buf.add(o), mid[i]); o += 1; i += 1; }
+    if o > 0 && read_volatile(buf.add(o - 1)) != b'/' && o + 1 < cap {
+        write_volatile(buf.add(o), b'/'); o += 1;
+    }
+    let mut k = 0usize;
+    while o + 1 < cap {
+        let c = read_volatile(pkg.add(k));
+        if c == 0 { break; }
+        write_volatile(buf.add(o), c); o += 1; k += 1;
+    }
+    let mut j = 0usize;
+    while j < suffix.len() && o + 1 < cap { write_volatile(buf.add(o), suffix[j]); o += 1; j += 1; }
+    write_volatile(buf.add(o), 0);
+    o
+}
+
+unsafe fn path_exists(path: *const u8) -> bool {
+    let dp = fw_api::opendir(path);
+    if dp != 0 { fw_api::closedir(dp); return true; }
+    let fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
+    if fd >= 0 { fw_api::close(fd); return true; }
+    false
+}
+
+static mut D_WORK: [u8; 300] = [0; 300];
+static mut D_SIZE: u32 = 0;
+static mut D_VERBUF: [u8; 3000] = [0; 3000];
+
+static mut D_IDX: usize = usize::MAX;
+static mut D_PKG: [u8; PKG_CAP] = [0; PKG_CAP];
+static mut D_NAME: [u8; 32] = [0; 32];
+static mut D_HIDDEN: u8 = 0;
+static mut D_BYTES: u32 = 0;
+static mut HITS: u32 = 0;
+static mut D_VER: [u8; 24] = [0; 24];
+static mut D_CONFIRM: u32 = 0;
+// 0 = 从应用管理进详情(隐藏/显示按钮), 1 = 从排除项页进详情(排除/取消排除按钮)
+static mut D_EXCL: u32 = 0;
+
+static mut SEL: [u8; APP_MAX] = [0; APP_MAX];
+static mut SEL_N: usize = 0;
+static mut SEL_DEL_CONFIRM: u32 = 0;
+
+static mut DEL_PKG: [[u8; PKG_CAP]; APP_MAX] = [[0; PKG_CAP]; APP_MAX];
+static mut DEL_N: usize = 0;
+static mut DEL_CUR: usize = 0;
+static mut DEL_OK: usize = 0;
+static mut DEL_FAIL: usize = 0;
+static mut REQ_DEL: u32 = 0;
+
+unsafe fn cpy_n(dst: *mut u8, src: *const u8, cap: usize) {
+    let mut k = 0usize;
+    while k < cap {
+        let c = read_volatile(src.add(k));
+        write_volatile(dst.add(k), c);
+        if c == 0 { return; }
+        k += 1;
+    }
+    write_volatile(dst.add(cap - 1), 0);
+}
+
+unsafe fn file_bytes(path: *const u8) -> u32 {
+    let fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
+    if fd < 0 { return 0; }
+    let sz = fw_api::lseek(fd, 0, fw_api::seek::END);
+    fw_api::close(fd);
+    if sz < 0 { 0 } else { sz as u32 }
+}
+
+unsafe fn calc_walk(plen: usize, depth: u32) {
+    let dp = fw_api::opendir((core::ptr::addr_of!(D_WORK) as *const u8));
+    if dp == 0 { return; }
+    let buf = core::ptr::addr_of_mut!(D_WORK) as *mut u8;
+    let mut iter = 0usize;
+    loop {
+        if iter >= 400 { break; }
+        iter += 1;
+        let de = fw_api::readdir(dp);
+        if de == 0 { break; }
+        let dt = crate::mem::rd8(de as *const u8);
+        let nm = (de + 1) as *const u8;
+        let n1 = read_volatile(nm);
+        let n2 = read_volatile(nm.add(1));
+        let n3 = read_volatile(nm.add(2));
+        if n1 == b'.' && (n2 == 0 || (n2 == b'.' && n3 == 0)) { continue; }
+        let mut o = plen;
+        if o > 0 && read_volatile(buf.add(o - 1)) != b'/' {
+            if o + 1 >= 300 { continue; }
+            write_volatile(buf.add(o), b'/'); o += 1;
+        }
+        let mut k = 0usize;
+        while o + 1 < 300 {
+            let c = read_volatile(nm.add(k));
+            if c == 0 { break; }
+            write_volatile(buf.add(o), c); o += 1; k += 1;
+        }
+        write_volatile(buf.add(o), 0);
+        if dt == crate::state::DT_REG {
+            D_BYTES = D_BYTES.saturating_add(file_bytes(buf as *const u8));
+        } else if depth < 6 {
+            // 目录项类型未知(0)时不能只当文件: 先试当目录打开
+            let dp2 = fw_api::opendir(buf as *const u8);
+            if dp2 != 0 {
+                fw_api::closedir(dp2);
+                calc_walk(o, depth + 1);
+            } else {
+                D_BYTES = D_BYTES.saturating_add(file_bytes(buf as *const u8));
+            }
+        }
+        write_volatile(buf.add(plen), 0);
+    }
+    fw_api::closedir(dp);
+}
+
+unsafe fn del_walk(plen: usize, depth: u32) {
+    let dp = fw_api::opendir((core::ptr::addr_of!(D_WORK) as *const u8));
+    if dp == 0 { return; }
+    let buf = core::ptr::addr_of_mut!(D_WORK) as *mut u8;
+    let mut iter = 0usize;
+    loop {
+        if iter >= 400 { break; }
+        iter += 1;
+        let de = fw_api::readdir(dp);
+        if de == 0 { break; }
+        let dt = crate::mem::rd8(de as *const u8);
+        let nm = (de + 1) as *const u8;
+        let n1 = read_volatile(nm);
+        let n2 = read_volatile(nm.add(1));
+        let n3 = read_volatile(nm.add(2));
+        if n1 == b'.' && (n2 == 0 || (n2 == b'.' && n3 == 0)) { continue; }
+        let mut o = plen;
+        if o > 0 && read_volatile(buf.add(o - 1)) != b'/' {
+            if o + 1 >= 300 { continue; }
+            write_volatile(buf.add(o), b'/'); o += 1;
+        }
+        let mut k = 0usize;
+        while o + 1 < 300 {
+            let c = read_volatile(nm.add(k));
+            if c == 0 { break; }
+            write_volatile(buf.add(o), c); o += 1; k += 1;
+        }
+        write_volatile(buf.add(o), 0);
+        if dt == crate::state::DT_REG {
+            if fw_api::fs_remove(buf as *const u8) < 0 { DEL_FAIL += 1; }
+        } else if depth < 6 {
+            let dp2 = fw_api::opendir(buf as *const u8);
+            if dp2 != 0 {
+                fw_api::closedir(dp2);
+                del_walk(o, depth + 1);
+            }
+            if fw_api::fs_remove(buf as *const u8) < 0 { DEL_FAIL += 1; }
+        }
+        write_volatile(buf.add(plen), 0);
+    }
+    fw_api::closedir(dp);
+}
+
+unsafe fn scan_size(pkg: *const u8) {
+    D_BYTES = 0;
+    HITS = 0;
+    let mut i = 0usize;
+    while i < APP_DIRS.len() {
+        let plen = mk_path3(APP_DIRS[i], b"", pkg, b"");
+        if path_exists(core::ptr::addr_of!(D_WORK) as *const u8) { HITS += 1; calc_walk(plen, 0); }
+        i += 1;
+    }
+    let mut j = 0usize;
+    while j < SUB_DIRS.len() {
+        let plen = mk_path3(SUB_DIRS[j], b"", pkg, b"");
+        if path_exists(core::ptr::addr_of!(D_WORK) as *const u8) { HITS += 1; calc_walk(plen, 0); }
+        j += 1;
+    }
+    // 旧版本目录: 优先 app/ 与 system/ 下的 <pkg>.old
+    let olds: [&[u8]; 3] = [b"/data/app/", b"/data/quickapp/system/", b"/data/app/system/"];
+    let mut k = 0usize;
+    while k < olds.len() {
+        let plen = mk_path3(olds[k], b"", pkg, b".old");
+        if path_exists(core::ptr::addr_of!(D_WORK) as *const u8) { HITS += 1; calc_walk(plen, 0); }
+        k += 1;
+    }
+    D_SIZE = D_BYTES;
+    crate::log::kv("详情大小(字节) ", D_BYTES);
+    crate::log::kv("命中的目录数 ", HITS);
+}
+
+unsafe fn rm_app_dirs(pkg: *const u8) {
+    let mut i = 0usize;
+    while i < APP_DIRS.len() {
+        let plen = mk_path3(APP_DIRS[i], b"", pkg, b"");
+        del_walk(plen, 0);
+        let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+        i += 1;
+    }
+    let mut j = 0usize;
+    while j < SUB_DIRS.len() {
+        let plen = mk_path3(SUB_DIRS[j], b"", pkg, b"");
+        del_walk(plen, 0);
+        let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+        j += 1;
+    }
+    let olds: [&[u8]; 3] = [b"/data/app/", b"/data/quickapp/system/", b"/data/app/system/"];
+    let mut k = 0usize;
+    while k < olds.len() {
+        let plen = mk_path3(olds[k], b"", pkg, b".old");
+        del_walk(plen, 0);
+        let _ = fw_api::fs_remove((core::ptr::addr_of!(D_WORK) as *const u8));
+        k += 1;
+    }
+}
+
+/// 从 rpk_info.json 里取该应用的 versionName(取不到就空)。
+unsafe fn scan_version(pkg: *const u8) {
+    // 1) 注册表条目里就带 versionName(SmartHome 也是读这个, 不再依赖 rpk_info.json)
+    let ebase = core::ptr::addr_of!(E_PKG) as *const u8;
+    let mut ei = 0usize;
+    while ei < APP_N {
+        if cstr_eq(ebase.add(ei * PKG_CAP), pkg) {
+            let vp = (core::ptr::addr_of!(E_VER) as *const u8).add(ei * 24);
+            if read_volatile(vp) != 0 {
+                let dst = core::ptr::addr_of_mut!(D_VER) as *mut u8;
+                let mut k = 0usize;
+                while k < 23 {
+                    let c = read_volatile(vp.add(k));
+                    write_volatile(dst.add(k), c);
+                    if c == 0 { break; }
+                    k += 1;
+                }
+                write_volatile(dst.add(23), 0);
+                return;
+            }
+            break;
+        }
+        ei += 1;
+    }
+    write_volatile((core::ptr::addr_of_mut!(D_VER) as *mut u8).add(0), 0);
+    let mut path: *const u8 = b"/data/app/quickapp/rpk_info.json\0".as_ptr();
+    let mut fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
+    if fd < 0 {
+        path = b"/quickapp/rpk_info.json\0".as_ptr();
+        fd = fw_api::open(path, fw_api::oflag::RDONLY, 0);
+        if fd < 0 { return; }
+    }
+    let buf = core::ptr::addr_of_mut!(D_VERBUF) as *mut u8;
+    let n = fw_api::read(fd, buf, 3000);
+    fw_api::close(fd);
+    if n <= 0 { return; }
+    let len = n as usize;
+    let mut i = 0usize;
+    let mut hit = usize::MAX;
+    while i + 1 < len {
+        if read_volatile(buf.add(i)) == b'"' {
+            // 包名串匹配(package / packageName 的值)
+            let mut k = 0usize;
+            loop {
+                let c = read_volatile(pkg.add(k));
+                if c == 0 { break; }
+                if read_volatile(buf.add(i + 1 + k)) != c { break; }
+                k += 1;
+            }
+            let mut e = i + 1 + k;
+            while e < len { let c = read_volatile(buf.add(e)); if c == b' ' { e += 1; } else { break; } }
+            if k > 0 && read_volatile(pkg.add(k)) == 0 && read_volatile(buf.add(i + 1 + k)) == b'"' {
+                hit = i;
+                break;
+            }
+            let _ = e;
+        }
+        i += 1;
+    }
+    if hit == usize::MAX { return; }
+    // 在包名之后找 "versionName"
+    let lit: &[u8] = b"\"versionName\"";
+    let mut j = hit;
+    let end = if hit + 512 < len { hit + 512 } else { len };
+    while j + lit.len() < end {
+        let mut ok = true;
+        let mut k = 0usize;
+        while k < lit.len() {
+            if read_volatile(buf.add(j + k)) != lit[k] { ok = false; break; }
+            k += 1;
+        }
+        if ok {
+            let mut q = j + lit.len();
+            while q < len {
+                let c = read_volatile(buf.add(q));
+                if c == b':' { q += 1; break; }
+                if c == b'"' { return; }
+                q += 1;
+            }
+            while q < len { let c = read_volatile(buf.add(q)); if c == b'"' { q += 1; break; } q += 1; }
+            let out = core::ptr::addr_of_mut!(D_VER) as *mut u8;
+            let mut k = 0usize;
+            while q < len && k < 23 {
+                let c = read_volatile(buf.add(q));
+                if c == 0 || c == b'"' { break; }
+                write_volatile(out.add(k), c); k += 1; q += 1;
+            }
+            write_volatile(out.add(k), 0);
+            return;
+        }
+        j += 1;
+    }
+}
+
+pub(crate) unsafe fn detail_open(i: usize) { detail_open_ctx(i, 0) }
+
+pub(crate) unsafe fn detail_open_ctx(i: usize, excl: u32) {
+    D_IDX = usize::MAX;
+    D_CONFIRM = 0;
+    D_EXCL = excl;
+    if i >= APP_N { return; }
+    D_IDX = i;
+    cpy_n(core::ptr::addr_of_mut!(D_PKG) as *mut u8, pkg_ptr(i), PKG_CAP);
+    cpy_n(core::ptr::addr_of_mut!(D_NAME) as *mut u8, entry_primary(i), 32);
+    D_HIDDEN = if visible(i) { 0 } else { 1 };
+    scan_size(core::ptr::addr_of!(D_PKG) as *const u8);
+    scan_version(core::ptr::addr_of!(D_PKG) as *const u8);
+}
+
+pub(crate) unsafe fn detail_excl_ctx() -> bool { D_EXCL != 0 }
+
+pub(crate) unsafe fn detail_valid() -> bool { D_IDX != usize::MAX && D_IDX < APP_N }
+pub(crate) unsafe fn detail_hidden() -> bool { D_HIDDEN != 0 }
+pub(crate) unsafe fn detail_bytes() -> u32 { D_SIZE }
+pub(crate) unsafe fn detail_confirm() -> bool { D_CONFIRM != 0 }
+pub(crate) unsafe fn detail_name() -> &'static [u8] {
+    let p = core::ptr::addr_of!(D_NAME) as *const u8;
+    core::slice::from_raw_parts(p, cstr_len(p) + 1)
+}
+pub(crate) unsafe fn detail_pkg() -> &'static [u8] {
+    let p = core::ptr::addr_of!(D_PKG) as *const u8;
+    core::slice::from_raw_parts(p, cstr_len(p) + 1)
+}
+pub(crate) unsafe fn detail_ver() -> &'static [u8] {
+    let p = core::ptr::addr_of!(D_VER) as *const u8;
+    core::slice::from_raw_parts(p, cstr_len(p) + 1)
+}
+
+/// 详情页里切换隐藏/显示: 复用单击流程(REQ_OP), tick 里执行。
+pub(crate) unsafe fn detail_excl_on() -> bool { detail_valid() && excl_on(D_IDX) }
+
+pub(crate) unsafe fn detail_excl_label() -> &'static [u8] {
+    if detail_excl_on() { "取消排除\0".as_bytes() } else { "加入排除\0".as_bytes() }
+}
+
+pub(crate) unsafe fn detail_toggle_excl() {
+    if detail_valid() { request_excl(D_IDX); }
+}
+
+pub(crate) unsafe fn detail_toggle_hide() { if detail_valid() { click(D_IDX); } }
+
+pub(crate) unsafe fn detail_toggle() {
+    if !detail_valid() { return; }
+    if D_EXCL != 0 {
+        request_excl(D_IDX);
+    } else {
+        click(D_IDX);
+    }
+}
+
+/// 详情页主操作按钮文案(随入口变化)
+pub(crate) unsafe fn detail_action_label() -> &'static [u8] {
+    if D_EXCL != 0 {
+        if excl_on(D_IDX) { "移出排除\0".as_bytes() } else { "加入排除\0".as_bytes() }
+    } else if D_HIDDEN != 0 {
+        "取消隐藏\0".as_bytes()
+    } else {
+        "隐藏应用\0".as_bytes()
+    }
+}
+
+/// 详情页操作完成后刷新(列表已 reload, 按包名找回新下标)。
+pub(crate) unsafe fn detail_refresh() {
+    D_CONFIRM = 0;
+    let mut i = 0usize;
+    let base = core::ptr::addr_of!(E_PKG) as *const u8;
+    while i < APP_N {
+        if cstr_eq(base.add(i * PKG_CAP), core::ptr::addr_of!(D_PKG) as *const u8) {
+            D_IDX = i;
+            D_HIDDEN = if visible(i) { 0 } else { 1 };
+            return;
+        }
+        i += 1;
+    }
+    D_IDX = usize::MAX;
+}
+
+/// 卸载确认: 第一次点击=armed, 第二次才执行。返回 true = 已执行。
+pub(crate) unsafe fn detail_uninstall_click() -> bool {
+    if D_CONFIRM == 0 { D_CONFIRM = 1; return false; }
+    D_CONFIRM = 0;
+    uninstall_pkg(core::ptr::addr_of!(D_PKG) as *const u8, core::ptr::addr_of!(D_NAME) as *const u8)
+}
+
+/// 真正卸载: 摘图标 → 删六个目录 → 从两份注册表摘条目 → reload。
+unsafe fn uninstall_pkg(pkg: *const u8, name: *const u8) -> bool {
+    if write_blocked() { wmsg_keep("列表不完整, 禁止卸载\0"); return false; }
+    let node = find_node(pkg);
+    if node != 0 {
+        let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+        if id != 0 { fw_api::app_launcher_del(id); }
+    }
+    DEL_FAIL = 0;
+    rm_app_dirs(pkg);
+    let _ = remove_all_pkg(pkg, 0);
+    let _ = remove_all_pkg(pkg, 1);
+    let mut w = W::new(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, 96);
+    w.s("已卸载 ".as_bytes()).s(cstr_slice(name));
+    if DEL_FAIL != 0 { w.s(", 部分文件删除失败".as_bytes()); }
+    w.s("\0".as_bytes());
+    w.end();
+    MSG_KEEP = 1;
+    crate::log::cstr(core::ptr::addr_of!(APP_MSG) as *const u8);
+    reload();
+    true
+}
+
+/// 批量选择: E 下标为键(页面用视图下标换算)。
+pub(crate) unsafe fn sel_clear() { let p = core::ptr::addr_of_mut!(SEL) as *mut u8; let mut i=0; while i<APP_MAX { write_volatile(p.add(i),0); i+=1; } SEL_N = 0; }
+pub(crate) unsafe fn sel_count() -> usize { SEL_N }
+pub(crate) unsafe fn sel_has(i: usize) -> bool { i < APP_MAX && read_volatile((core::ptr::addr_of!(SEL) as *const u8).add(i)) != 0 }
+pub(crate) unsafe fn excluded(i: usize) -> bool {
+    i < APP_MAX && read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0
+}
+
+/// 批量页只算未被排除的应用
+pub(crate) unsafe fn batch_total() -> usize {
+    let n = view_count();
+    let mut v = 0usize;
+    let mut c = 0usize;
+    while v < n {
+        let i = view_at(v);
+        if i != usize::MAX && !excluded(i) { c += 1; }
+        v += 1;
+    }
+    c
+}
+
+pub(crate) unsafe fn sel_toggle(i: usize) {
+    if i >= APP_N { return; }
+    if read_volatile((core::ptr::addr_of!(E_EXCL) as *const u8).add(i)) != 0 { return; }
+    if read_volatile((core::ptr::addr_of!(E_LOCK) as *const u8).add(i)) != 0 { return; }
+    let p = (core::ptr::addr_of_mut!(SEL) as *mut u8).add(i);
+    let v = read_volatile(p);
+    if v == 0 { write_volatile(p, 1); SEL_N += 1; } else { write_volatile(p, 0); SEL_N -= 1; }
+}
+
+/// 全选/取消全选当前视图(排除锁定与排除项)。
+pub(crate) unsafe fn sel_toggle_all() {
+    if SEL_N != 0 { sel_clear(); return; }
+    let n = view_count();
+    let mut v = 0usize;
+    while v < n {
+        let i = view_at(v);
+        if i != usize::MAX { sel_toggle(i); }
+        v += 1;
+    }
+}
+
+/// 把选中项排进批量队列; kind: 1=隐藏 2=显示。
+pub(crate) unsafe fn batch_request_sel(hide: bool) -> usize {
+    if REQ_BATCH != 0 || REQ_OP != 0 || SEL_N == 0 { return 0; }
+    if write_blocked() { wmsg_keep("列表不完整, 禁止改写\0"); return 0; }
+    BATCH_N = 0; BATCH_CURSOR = 0; BATCH_DONE = 0; BATCH_FAIL = 0; BATCH_NOREG = 0;
+    let n = view_count();
+    let mut v = 0usize;
+    while v < n && BATCH_N < APP_MAX {
+        let i = view_at(v);
+        if i != usize::MAX && sel_has(i) {
+            let want = if hide { 0u8 } else { 1u8 };
+            let src = read_volatile((core::ptr::addr_of!(E_SRC) as *const u8).add(i));
+            if src == want {
+                let pp = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * PKG_CAP);
+                let dp = (core::ptr::addr_of_mut!(BATCH_PKG) as *mut u8).add(BATCH_N * PKG_CAP);
+                cpy_n(dp, pp, PKG_CAP);
+                write_volatile((core::ptr::addr_of_mut!(BATCH_LOCK) as *mut u8).add(BATCH_N), 0);
+                BATCH_N += 1;
+            }
+        }
+        v += 1;
+    }
+    if BATCH_N == 0 { wmsg_keep("选中的应用已经是目标状态\0"); return 0; }
+    REQ_BATCH = if hide { 1 } else { 2 };
+    BATCH_N
+}
+
+pub(crate) unsafe fn sel_del_confirmed() -> bool { SEL_DEL_CONFIRM != 0 }
+pub(crate) unsafe fn sel_del_arm() { SEL_DEL_CONFIRM = 1; }
+pub(crate) unsafe fn sel_del_disarm() { SEL_DEL_CONFIRM = 0; }
+
+/// 删除选中: 入队, tick 里逐条卸载(一拍照一个)。
+pub(crate) unsafe fn batch_request_del() -> usize {
+    if REQ_DEL != 0 || SEL_N == 0 { return 0; }
+    if write_blocked() { wmsg_keep("列表不完整, 禁止卸载\0"); return 0; }
+    DEL_N = 0; DEL_CUR = 0; DEL_OK = 0; DEL_FAIL = 0;
+    let n = view_count();
+    let mut v = 0usize;
+    while v < n && DEL_N < APP_MAX {
+        let i = view_at(v);
+        if i != usize::MAX && sel_has(i) {
+            if read_volatile((core::ptr::addr_of!(E_LOCK) as *const u8).add(i)) == 0 {
+                let pp = (core::ptr::addr_of!(E_PKG) as *const u8).add(i * PKG_CAP);
+                cpy_n((core::ptr::addr_of_mut!(DEL_PKG) as *mut u8).add(DEL_N * PKG_CAP), pp, PKG_CAP);
+                DEL_N += 1;
+            }
+        }
+        v += 1;
+    }
+    if DEL_N == 0 { wmsg_keep("没有可卸载的应用\0"); return 0; }
+    REQ_DEL = 1;
+    SEL_DEL_CONFIRM = 0;
+    DEL_N
+}
+
+pub(crate) unsafe fn del_pending() -> bool { REQ_DEL != 0 }
+
+pub(crate) unsafe fn do_del_batch() {
+    if REQ_DEL == 0 { return; }
+    if DEL_CUR < DEL_N {
+        let p = (core::ptr::addr_of!(DEL_PKG) as *const u8).add(DEL_CUR * PKG_CAP);
+        DEL_CUR += 1;
+        let node = find_node(p);
+        if node != 0 {
+            let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16) as u32;
+            if id != 0 { fw_api::app_launcher_del(id); }
+        }
+        rm_app_dirs(p);
+        let _ = remove_all_pkg(p, 0);
+        let _ = remove_all_pkg(p, 1);
+        DEL_OK += 1;
+        return;   // 一拍一个
+    }
+    REQ_DEL = 0;
+    let mut w = W::new(core::ptr::addr_of_mut!(APP_MSG) as *mut u8, 96);
+    w.s("已卸载 ".as_bytes()).n(DEL_OK as u32).s(" 个\0".as_bytes());
+    w.end();
+    MSG_KEEP = 1;
+    sel_clear();
+    crate::log::kv("批量卸载完成 ", DEL_OK as u32);
+    reload();
+}
+
+static mut D_FMT: [u8; 96] = [0; 96];
+
+/// 详情页第二行: "12.3 MB · v1.2.3"(版本取不到时显示"版本未知")。
+pub(crate) unsafe fn detail_fmt() -> *const u8 {
+    let d = core::ptr::addr_of_mut!(D_FMT) as *mut u8;
+    let mut w = W::new(d, 96);
+    w.sz(D_SIZE);
+    let vp = core::ptr::addr_of!(D_VER) as *const u8;
+    if read_volatile(vp) != 0 {
+        w.s(" · v".as_bytes()).s(cstr_slice(vp));
+    } else {
+        w.s(" · 版本未知".as_bytes());
+    }
+    w.s("\0".as_bytes());
+    w.end();
+    d
 }

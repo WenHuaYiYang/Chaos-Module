@@ -115,6 +115,190 @@ pub(crate) unsafe fn build_rows(
     Ok(prev)
 }
 
+// ===== 紧凑按钮块(一行放多个按钮) =====
+
+/// 单个按钮块的标准尺寸。行控件默认按"双排列表行"占高, 四五个按钮就会把
+/// 480 高的屏铺满, 所以按钮一律显式给宽高、走这些常量。
+pub(crate) const TILE_W: u32 = 160;
+pub(crate) const TILE_H: u32 = 64;
+/// 整行(328)减去两个按钮和中间 8px 缝: 160*2+8
+const TILE_ROW_W: u32 = 328;
+/// 半宽按钮居中到父容器中心需要的横向补偿(左边块的中心比内容中心小 84)
+const TILE_CENTER_DX: i32 = 84;
+
+unsafe fn tile_base(ctx: &PageCtx, slot: usize, text: &[u8], w: u32, h: u32) -> u32 {
+    if slot >= fw_api::MAX_ROWS_PER_PAGE || text.is_empty() { return 0; }
+    let r = fw_api::row_create(ctx.content, text.as_ptr(), fw_api::NONE_PTR, 0);
+    if r == 0 { return 0; }
+    write_volatile(ctx.rows.add(slot), r);
+    fw_api::obj_set_size_wh(r, w, h);
+    cardify(r);
+    fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::RADIUS, h / 2, 0);
+    fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
+    r
+}
+
+/// 把按钮块染成主操作(蓝底白字)或危险操作(深底红字)。
+pub(crate) unsafe fn tile_primary(row: u32) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if row == 0 { return; }
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, C_ACCENT, 0);
+    let lb = fw_api::obj_get_child(row, 0);
+    if lb != 0 { fw_api::obj_set_local_style_prop(lb, ps::TEXT_COLOR, 0xFFFFFF, 0); }
+}
+
+static mut P_EXCL_LB: [u32; 40] = [0; 40];
+static mut P_STATE_LB: [u32; 40] = [0; 40];
+static mut LAST_MSG: [u8; 64] = [0; 64];
+static mut LAST_HDR: [u8; 64] = [0; 64];
+
+/// 文本是否变化; 变化时把新文本存进 cache(供下次比较)。避免每 tick 重设同一段文字。
+pub(crate) unsafe fn text_changed(cache: *mut u8, txt: *const u8, cap: usize) -> bool {
+    let mut i = 0usize;
+    let mut diff = false;
+    loop {
+        let b = core::ptr::read_volatile(txt.add(i));
+        let a = core::ptr::read_volatile(cache.add(i));
+        if a != b { diff = true; }
+        if b == 0 || i + 1 >= cap { break; }
+        i += 1;
+    }
+    if diff {
+        let mut j = 0usize;
+        while j <= i && j + 1 < cap {
+            core::ptr::write_volatile(cache.add(j), core::ptr::read_volatile(txt.add(j)));
+            j += 1;
+        }
+        if j + 1 < cap { core::ptr::write_volatile(cache.add(j), 0); }
+    }
+    diff
+}
+
+/// 在副标题胶囊右侧追加“排除状态”胶囊: 已排除=红, 未排除=灰。
+pub(crate) unsafe fn add_excl_pill(row: u32, sub_lab: u32, i: usize, skip: bool) -> u32 {
+    if skip || sub_lab == 0 { return 0; }
+    let p = fw_api::label_create(row);
+    if p == 0 { return 0; }
+    let (txt, col, bg): (&[u8], u32, u32) = if crate::appmgr::excl_on(i) {
+        ("已排除\0".as_bytes(), C_DANGER, 0x4D1613)
+    } else {
+        ("未排除\0".as_bytes(), C_SECONDARY, 0x3A3A3E)
+    };
+    fw_api::label_set_text(p, txt.as_ptr());
+    pill(p, col, bg, txt);
+    // 与第一个胶囊垂直居中对齐
+    fw_api::obj_align_to(p, sub_lab, fw_api::align::OUT_RIGHT_MID, 8, 0);
+    p
+}
+
+pub(crate) unsafe fn set_excl_pill(p: u32, i: usize) {
+    if p == 0 { return; }
+    let (txt, col, bg): (&[u8], u32, u32) = if crate::appmgr::excl_on(i) {
+        ("已排除\0".as_bytes(), C_DANGER, 0x4D1613)
+    } else {
+        ("未排除\0".as_bytes(), C_SECONDARY, 0x3A3A3E)
+    };
+    fw_api::label_set_text(p, txt.as_ptr());
+    pill(p, col, bg, txt);
+}
+
+/// 把副标题标签做成彩色小胶囊(状态药丸): 角色 tint 底色 + 角色色文字。
+pub(crate) fn pill_w(txt: &[u8]) -> u32 {
+    let mut w = 30u32;
+    let mut i = 0usize;
+    while i < txt.len() {
+        let b = txt[i];
+        if b == 0 { break; }
+        if b >= 0xE0 { w += 34; i += 3; }
+        else if b >= 0xC0 { w += 30; i += 2; }
+        else { w += 16; i += 1; }
+    }
+    if w < 132 { 132 } else if w > 236 { 236 } else { w }
+}
+
+pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if lab == 0 { return; }
+    fw_api::obj_style_color_a70(lab, col, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::BG_COLOR, bg, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::BG_OPA, 255, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::RADIUS, 100, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_0, 1, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_1, 1, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 0, 0);
+    // 上下只留 4: 24px 字体 + 8 内边距 = 32, 能装进 34 高的胶囊, 文字不会被裁/滚动
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_2, 4, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 4, 0);
+    // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
+    fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
+    fw_api::obj_set_size_wh(lab, pill_w(txt), 34);
+    fw_api::obj_clear_scrollable(lab);
+}
+
+pub(crate) unsafe fn tile_danger(row: u32) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if row == 0 { return; }
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2A, 0);
+    let lb = fw_api::obj_get_child(row, 0);
+    if lb != 0 { fw_api::obj_set_local_style_prop(lb, ps::TEXT_COLOR, C_DANGER, 0); }
+}
+
+/// 在基准行下方左侧建一个按钮块(必须左对齐, 否则半宽块会被居中而整体右移)
+pub(crate) unsafe fn build_tile_below(
+    ctx: &PageCtx, prev: u32, slot: usize, text: &[u8], w: u32, h: u32,
+) -> u32 {
+    let r = tile_base(ctx, slot, text, w, h);
+    if r != 0 { fw_api::obj_align_to(r, prev, fw_api::align::OUT_BOTTOM_LEFT, 0, 8); }
+    r
+}
+
+/// 在基准按钮块右侧建一个按钮块
+pub(crate) unsafe fn build_tile_right(
+    ctx: &PageCtx, base: u32, slot: usize, text: &[u8], w: u32, h: u32,
+) -> u32 {
+    let r = tile_base(ctx, slot, text, w, h);
+    if r != 0 { fw_api::obj_align_to(r, base, fw_api::align::OUT_RIGHT_MID, 8, 0); }
+    r
+}
+
+/// 把整行宽度(328)的控件挂到"左边半宽按钮块"下方时, 需要向右补
+/// (内容中心 - 左块中心)=84, 否则会整体偏左半个按钮。
+pub(crate) unsafe fn build_row_under_left(
+    ctx: &PageCtx, left_tile: u32, slot: usize, spec: &RowSpec,
+) -> u32 {
+    let r = build_row(ctx, left_tile, slot, spec);
+    if r != 0 {
+        fw_api::obj_align_to(r, left_tile, fw_api::align::OUT_BOTTOM_MID,
+            TILE_CENTER_DX, 8);
+    }
+    r
+}
+
+/// 行建立后压高度(用于状态/信息行, 默认双排高度太占屏)
+pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
+    if row != 0 { fw_api::obj_set_size_wh(row, TILE_ROW_W, h); }
+}
+
+/// 卡片样式：圆角 + 深灰底色 + 左右内边距。只改外观，不动滚动与点击。
+/// 卡片外观交给固件原生行自己画(Chaos 原本的灰底卡片就是它), 这里只关滚动。
+pub(crate) unsafe fn cardify(row: u32) {
+    if row == 0 { return; }
+    no_scroll(row);
+}
+
+/// 关掉对象及其后代(两层)的 SCROLLABLE: 文字超长时裁剪, 不让整行跟手划动。
+pub(crate) unsafe fn no_scroll(obj: u32) {
+    if obj == 0 { return; }
+    fw_api::obj_clear_scrollable(obj);
+    let mut i = 0u32;
+    while i < 4 {
+        let c = fw_api::obj_get_child(obj, i);
+        if c == 0 { break; }
+        fw_api::obj_clear_scrollable(c);
+        i += 1;
+    }
+}
+
 // ===== Page trait =====
 
 /// 页面行为接口。页面知道自己是谁, 不需要外部传 pid。
@@ -773,153 +957,6 @@ unsafe fn cstr_len(s: *const u8) -> usize {
     while read_volatile(s.add(n)) != 0 { n += 1; }
     n
 }
-
-// ===== 页7: 排除项管理 =====
-//
-// 从页1 行3 进入。列表显示**全部**应用(含已隐藏), 勾选 = 加入排除名单;
-// 排除项不参与页1 的一键隐藏/显示, 且在页1 列表里不出现。
-// 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
-
-/// 单条切换后只改复选框与状态文本, 不重建整页(避免列表跳回顶部)。
-unsafe fn refresh_appmgr_rows() {
-    let rows = crate::appmgr::rows_ptr();
-    let n = crate::appmgr::view_count();
-    let mut v = 0usize;
-    while v < n {
-        let i = crate::appmgr::view_at(v);
-        if i == usize::MAX { break; }
-        let r = read_volatile(rows.add(v));
-        if r != 0 {
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
-        }
-        v += 1;
-    }
-    if AM_MSG_ROW != 0 {
-        fw_api::row_update(AM_MSG_ROW, fw_api::NONE_PTR,
-            crate::appmgr::msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
-    }
-}
-
-unsafe fn refresh_excl_rows() {
-    let rows = crate::appmgr::rows_ptr();
-    let mode = crate::appmgr::excl_mode();
-    let n = crate::appmgr::count();
-    let mut i = 0usize;
-    while i < n {
-        if mode != 0 && !crate::appmgr::excl_on(i) { i += 1; continue; }
-        let r = read_volatile(rows.add(i));
-        if r != 0 {
-            let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
-            let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
-        }
-        i += 1;
-    }
-    if EX_HINT_ROW != 0 {
-        fw_api::row_update(EX_HINT_ROW, fw_api::NONE_PTR,
-            crate::appmgr::excl_hint().as_ptr(), fw_api::NONE_PTR, 0, 0);
-    }
-    if EX_MSG_ROW != 0 {
-        let m = if mode == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() };
-        fw_api::row_update(EX_MSG_ROW, fw_api::NONE_PTR,
-            m.as_ptr(), fw_api::NONE_PTR, 0, 0);
-    }
-}
-
-pub(crate) struct ExclPage;
-
-static mut AM_MSG_ROW: u32 = 0;
-static mut EX_HINT_ROW: u32 = 0;
-static mut EX_MSG_ROW: u32 = 0;
-
-impl Page for ExclPage {
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "排除项管理\0".as_bytes()); }
-    }
-
-    fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            crate::appmgr::ensure();
-            crate::appmgr::rows_reset();
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::clickable("返回\0".as_bytes())),
-                (1, RowSpec::display(crate::appmgr::excl_hint(), core::ptr::null())),
-                (2, RowSpec::clickable(crate::appmgr::mode_label())),
-                (3, RowSpec::display(if crate::appmgr::excl_mode() == 0 { crate::appmgr::excl_msg() } else { crate::appmgr::msg() }, core::ptr::null())),
-            ])?;
-            EX_HINT_ROW = read_volatile(ctx.rows.add(1));
-            EX_MSG_ROW = read_volatile(ctx.rows.add(3));
-            let mut prev = read_volatile(ctx.rows.add(3));
-            if prev == 0 { prev = ctx.title; }
-            let rows = crate::appmgr::rows_ptr();
-            let mode = crate::appmgr::excl_mode();
-            // 排除项在前, 稳定排序
-            crate::appmgr::build_excl_view();
-            let n = crate::appmgr::excl_view_count();
-            let mut v = 0usize;
-            while v < n {
-                let i = crate::appmgr::excl_view_at(v);
-                v += 1;
-                if i == usize::MAX { break; }
-                // 管理显隐模式下只列排除项; 非排除项在页1 管理
-                if mode != 0 && !crate::appmgr::excl_on(i) { continue; }
-                let sub = if mode == 0 { crate::appmgr::pkg_ptr(i) } else { core::ptr::null() };
-                let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), sub, fw_api::trailing::CHECKBOX);
-                if r == 0 { return Err(PageError::RowFailed(i)); }
-                write_volatile(rows.add(i), r);
-                fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(i + 12), 0, 0); }
-                fw_api::obj_align_to(r, prev, 14, 0, 8);
-                prev = r;
-                // 复选框: 排除模式 = 是否排除; 显隐模式 = 是否可见(勾=显示中)
-                let on = if mode == 0 { crate::appmgr::excl_on(i) } else { crate::appmgr::visible(i) };
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, on as u8);
-            }
-            Ok(())
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            if idx == 0 {
-                nav_back();
-            } else if idx == 2 {
-                crate::appmgr::toggle_excl_mode();
-                render_req(7);
-            } else if idx >= 12 {
-                let i = idx - 12;
-                if crate::appmgr::excl_mode() == 0 {
-                    crate::appmgr::request_excl(i);
-                } else {
-                    crate::appmgr::click(i);
-                }
-            }
-        }
-    }
-
-    fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::excl_has_req() || crate::appmgr::has_req() }
-    }
-
-    fn tick(&self) {
-        unsafe {
-            let mut dirty = false;
-            if crate::appmgr::excl_has_req() {
-                crate::appmgr::do_excl();
-                dirty = true;
-            }
-            if crate::appmgr::has_req() {
-                crate::appmgr::do_op();
-                dirty = true;
-            }
-            if dirty { refresh_excl_rows(); }
-        }
-    }
-}
-
 
 // ===== 页17: 运行日志 =====
 // 直接显示一段文字，不再逐行建列表。只读尾部 2KB，截到最后一个换行后的 512B。
@@ -1773,6 +1810,209 @@ impl Page for IconSubPage {
 
 pub(crate) struct AppMgrPage;
 
+// UI 令牌: 与蓝牙音频模块同一套配色(白 / 次要灰 / 强调蓝 / 成功绿 / 警告琥珀 / 危险红)。
+#[allow(dead_code)]
+const C_SECONDARY: u32 = 0x8E_8E93;
+const C_ACCENT: u32 = 0x2D_7CF6;
+#[allow(dead_code)]
+const C_SUCCESS: u32 = 0x30_D158;
+const C_WARNING: u32 = 0xFF_9F0A;
+const C_DANGER: u32 = 0xFF_453A;
+
+/// 状态文字: 已隐藏=警告琥珀, 显示中=强调蓝。
+const C_HIDDEN: u32 = C_WARNING;
+const C_HIDDEN_TINT: u32 = 0x4A3008;
+const C_VISIBLE_TINT: u32 = 0x10284D;
+const C_VISIBLE: u32 = C_ACCENT;
+
+static mut AM_STATUS_HID: [u8; 12] = [0; 12];
+static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
+
+/// 列表行原地刷新(页1/页30 共用): 行数没变就逐行改副标题与颜色, 不重建整页,
+/// 这样列表滚动位置不会跳回顶部, 也不会在快速连点时销毁/重建行对象。
+/// 返回 false = 行数或句柄对不上, 调用方需要整页重建。
+static mut ROW_STATE: [u8; 40] = [0xFF; 40];
+
+unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
+    if list_building() { return true; } // 还在分批建行, 先不刷
+    let n = crate::appmgr::ui_rows() as usize;
+    let rows = crate::appmgr::rows_ptr();
+    for v in 0..n {
+        let i = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
+        if i == 0xFFFF || i >= crate::appmgr::APP_MAX { return false; }
+        let r = core::ptr::read_volatile(rows.add(v));
+        if r == 0 { return false; }
+        let vis = crate::appmgr::visible(i);
+        let picked = selected_mode && crate::appmgr::sel_has(i);
+        let st = (vis as u8) | ((picked as u8) << 1);
+        let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
+        if core::ptr::read_volatile(cache.add(v)) == st { continue; }
+        core::ptr::write_volatile(cache.add(v), st);
+        // 副标题必须继续传占位符: 传空会让固件把行退化成单行(标题垂直居中), 而且会打隐藏标志
+        let ph: [u8; 3] = [0xc2, 0xa0, 0];
+        fw_api::row_update(r, fw_api::NONE_PTR,
+            crate::appmgr::entry_primary(i), ph.as_ptr(), 0, 0);
+        // 无论固件怎么排, 标题统一钉在左上 (与左边距一致)
+        let title = crate::mem::rd32((r + 0x3c) as *const u32);
+        if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 10, 10); }
+        let sp = core::ptr::read_volatile((core::ptr::addr_of!(P_STATE_LB) as *const u32).add(v));
+        let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
+        if sp != 0 {
+            fw_api::label_set_text(sp, stxt.as_ptr());
+            fw_api::obj_clear_flag(sp, 0x01);
+            if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
+            else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
+        }
+        if selected_mode {
+            let title = crate::mem::rd32((r + 0x3c) as *const u32);
+            if title != 0 {
+                fw_api::obj_style_color_a70(title, if picked { C_ACCENT } else { 0xFFFFFF }, 0);
+            }
+        }
+        let p = core::ptr::read_volatile((core::ptr::addr_of!(P_EXCL_LB) as *const u32).add(v));
+        if p != 0 { set_excl_pill(p, i); }
+    }
+    true
+}
+
+/// 状态行原地刷新(页1 的"已隐藏 N / 显示中 M"提示)
+unsafe fn refresh_msg_row() {
+    let r = core::ptr::read_volatile(core::ptr::addr_of!(AM_MSG_ROW));
+    if r != 0 {
+        fw_api::row_update(r, fw_api::NONE_PTR,
+            crate::appmgr::msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
+
+// ---- 列表分批建立 ----
+// 打开页面时一次建几十行会长时间占住 UI 线程；这里先建首屏几行, 其余的每次 tick 续几行。
+// kind: 1 = 页1(无复选框), 2 = 页30(带复选框)。副标题用调用方传进来的状态文案。
+static mut LB_KIND: u32 = 0;
+static mut LB_V: u32 = 0;
+static mut LB_N: u32 = 0;
+static mut LB_PREV: u32 = 0;
+static mut LB_CONTENT: u32 = 0;
+static mut LB_FIRST: u32 = 0;
+static mut LB_DELAY: u32 = 0;
+static mut LB_SUB_VIS: u32 = 0;
+static mut LB_SUB_HID: u32 = 0;
+// 列表第 v 行对应的应用下标(批量页跳过排除项后, 行号 != 视图号)
+static mut LB_APP: [u16; 64] = [0xFFFF; 64];
+
+static mut LIST_REBUILD: u8 = 0;
+
+const LB_FIRST_CHUNK: u32 = 0;
+const LB_TICK_CHUNK: u32 = 5;
+
+pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
+
+unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub_hid: *const u8) {
+    LB_KIND = kind;
+    LB_V = 0;
+    LB_N = crate::appmgr::view_count() as u32;
+    LB_PREV = prev;
+    LB_CONTENT = content;
+    LB_FIRST = 1;
+    LB_SUB_VIS = sub_vis as u32;
+    LB_SUB_HID = sub_hid as u32;
+    {
+        let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
+        let mut i = 0usize;
+        while i < 40 { core::ptr::write_volatile(cache.add(i), 0xFF); i += 1; }
+        let pl = core::ptr::addr_of_mut!(P_EXCL_LB) as *mut u32;
+        let mut i = 0usize;
+        while i < 40 { core::ptr::write_volatile(pl.add(i), 0); i += 1; }
+        let lm = core::ptr::addr_of_mut!(LAST_MSG) as *mut u8;
+        let lh = core::ptr::addr_of_mut!(LAST_HDR) as *mut u8;
+        let mut i = 0usize;
+        while i < 64 { core::ptr::write_volatile(lm.add(i), 0xFF); core::ptr::write_volatile(lh.add(i), 0xFF); i += 1; }
+        let mut z = 0usize;
+        let sp_ = core::ptr::addr_of_mut!(P_STATE_LB) as *mut u32;
+        let ep_ = core::ptr::addr_of_mut!(P_EXCL_LB) as *mut u32;
+        while z < 40 { core::ptr::write_volatile(sp_.add(z), 0); core::ptr::write_volatile(ep_.add(z), 0); z += 1; }
+    }
+    LIST_REBUILD = 0;
+    LB_DELAY = 3;
+    {
+        let a = core::ptr::addr_of_mut!(LB_APP) as *mut u16;
+        let mut i = 0usize;
+        while i < 64 { core::ptr::write_volatile(a.add(i), 0xFFFF); i += 1; }
+    }
+    let expected = if kind == 2 { crate::appmgr::batch_total() as u32 } else { LB_N };
+    crate::appmgr::set_ui_rows(expected);
+    crate::log::kv("应用总数 ", crate::appmgr::count() as u32);
+    crate::log::kv("可见列表条目数 ", LB_N);
+    list_build_chunk(LB_FIRST_CHUNK);
+}
+
+unsafe fn list_build_chunk(limit: u32) {
+    let rows = crate::appmgr::rows_ptr();
+    let mut k = 0u32;
+    while k < limit && LB_V < LB_N {
+        let v = LB_V as usize;
+        let i = crate::appmgr::view_at(v);
+        if i == usize::MAX { LB_V = LB_N; break; }
+        // 批量页跳过被排除的应用(直接不建行, 不留空白)
+        if LB_KIND == 2 && crate::appmgr::excluded(i) { LB_V += 1; continue; }
+        let app = core::ptr::addr_of_mut!(LB_APP) as *mut u16;
+        core::ptr::write_volatile(app.add(v), i as u16);
+        let vis = crate::appmgr::visible(i);
+        // 批量页也不再使用复选框: 和页 1 一样用行 + 胶囊, 选中态靠标题变色
+        let trailing = 0;
+        // 页 1 本来就是两行行型, 副标题用不换行空格占位即可;
+        // 批量页的复选框行会被固件当成单行(标题垂直居中), 用真实字形占位把它撑成两行,
+        // 这个占位稍后被胶囊完全盖住
+        // 批量页把状态文本直接交给固件副标题(有真实文字 -> 行是两行行型, 标题在左上),
+        // 之后把这个副标题本身做成胶囊; 页 1 仍是占位 + 自建胶囊
+        let picked = LB_KIND == 2 && crate::appmgr::sel_has(i);
+        let stxt: &[u8] = if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
+        let sub_ph: &[u8] = b"\xc2\xa0\0";
+        let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
+            sub_ph.as_ptr(), trailing);
+        if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
+        write_volatile(rows.add(v), r);
+        fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
+        fw_api::obj_set_size_wh(r, 320, 100);
+        fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
+        cardify(r);
+        // 页 1 自建胶囊; 批量页直接用固件副标题当胶囊(保持可见文本, 行才不会退化单行)
+        let sp = fw_api::label_create(r);
+        if sp != 0 {
+            fw_api::label_set_text(sp, stxt.as_ptr());
+            if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
+            else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
+            else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
+            // 锚在固件自己排出来的第二行(副标签)上: 垂直居中于该行, 水平用 dx 拉回左边距。
+            // 第二行一定在卡片内部, 所以胶囊不会再掉到卡片外面。
+            let sub = crate::mem::rd32((r + 0x40) as *const u32);
+            let base = if sub != 0 { sub } else { r };
+            let w = pill_w(stxt) as i32;
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(150 - w / 2), 0);
+        }
+        P_STATE_LB[v] = sp;
+        let exp = add_excl_pill(r, sp, i, false);
+        P_EXCL_LB[v] = exp;
+        // 批量页: 选中的应用名称变色
+        if LB_KIND == 2 {
+            let title = crate::mem::rd32((r + 0x3c) as *const u32);
+            if title != 0 {
+                fw_api::obj_style_color_a70(title, if picked { C_ACCENT } else { 0xFFFFFF }, 0);
+            }
+        }
+        if LB_KIND == 1 {
+            let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
+            core::ptr::write_volatile(cache.add(v), (vis as u8) | 0);
+        }
+        let ddx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
+        fw_api::obj_align_to(r, LB_PREV, 14, ddx, 10);
+        LB_FIRST = 0;
+        LB_PREV = r;
+        LB_V += 1;
+        k += 1;
+    }
+}
+
 impl Page for AppMgrPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用管理\0".as_bytes()); }
@@ -1781,103 +2021,104 @@ impl Page for AppMgrPage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             crate::appmgr::ensure();
-            crate::appmgr::rows_reset();   // 旧对象树已随上次 content 销毁, 丢旧句柄
-            // 顶部五行(走 ctx.rows 槽 0..4)
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe9\x9a\x90\xe8\x97\x8f\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键隐藏全部
-                (1, RowSpec::clickable(b"\xe4\xb8\x80\xe9\x94\xae\xe6\x98\xbe\xe7\xa4\xba\xe5\x85\xa8\xe9\x83\xa8\0")), // 一键显示全部
-                (2, RowSpec::display(crate::appmgr::msg(), core::ptr::null())),
-                (3, RowSpec::clickable(crate::appmgr::excl_label())), // 排除项管理(第7页)
-                (4, RowSpec::switch(crate::appmgr::apply_mode_label())), // 深度隐藏(全局)
-            ])?;
+            crate::appmgr::rows_reset();
+            // 顶部: 批量操作(整宽) + 状态行 + 重新应用隐藏
+            let t0 = build_tile_below(ctx, ctx.title, 0,
+                "批量操作 >\0".as_bytes(), TILE_ROW_W, TILE_H);
+            if t0 == 0 { return Err(PageError::RowFailed(0)); }
+            let s2 = build_row(ctx, t0, 2,
+                &RowSpec::display(crate::appmgr::msg(), core::ptr::null()));
+            row_shrink(s2, 56);
             AM_MSG_ROW = read_volatile(ctx.rows.add(2));
-            // 勾选(=可见)在前, 隐藏在后
-            crate::appmgr::sort_view_visible_first();
-            // 补写开关初态(开关态 = 深度隐藏是否开启)
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::appmgr::deep_on() as u8);
-            // 条目行(过滤掉排除项; 事件槽 = 视图下标 + 12; 句柄存 appmgr::APP_ROWS)
-            let mut prev = read_volatile(ctx.rows.add(4));
-            if prev == 0 { prev = ctx.title; }
-            let rows = crate::appmgr::rows_ptr();
-            let n = crate::appmgr::view_count();
-            let mut v = 0usize;
-            while v < n {
-                let i = crate::appmgr::view_at(v);
-                if i == usize::MAX { break; }
-                let r = fw_api::row_create(ctx.content,
-                    crate::appmgr::entry_primary(i), crate::appmgr::pkg_ptr(i),
-                    fw_api::trailing::CHECKBOX);
-                if r == 0 { return Err(PageError::RowFailed(v)); }
-                write_volatile(rows.add(v), r);
-                fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);   // 事件槽 = 视图下标 + 12
-                // 复选框自己也挂一份(点到圈上也算点这一行, 与图标页同款)
-                let tobj = fw_api::row_trailing(r);
-                if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(v + 12), 0, 0); }
-                fw_api::obj_align_to(r, prev, 14, 0, 8);
-                prev = r;
-                // 勾选态: 勾 = 当前可见(原地补写)
-                // secondary 必须原样再传: row_update 对 secondary=NULL 的语义是"清空并隐藏"
-                // 已存在的副标签(0x0C4C8904 反编译实证), 传 NONE 会把 row_create 建出的包名洗掉
-                fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                    crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
-                v += 1;
+            if s2 != 0 {
+                let t3 = build_tile_below(ctx, s2, 3,
+                    "重新应用隐藏\0".as_bytes(), 328, 56);
+                tile_primary(t3);
             }
+            crate::appmgr::sort_view_visible_first();
+
+            // 状态文案(静态缓冲, 供每行的副标签使用)
+            put_str(core::ptr::addr_of_mut!(AM_STATUS_HID) as *mut u8, "已隐藏\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(AM_STATUS_VIS) as *mut u8, "显示中\0".as_bytes());
+
+            // 条目行: 先建首屏, 其余由 tick 分批续建
+            let mut prev = read_volatile(ctx.rows.add(3));
+            if prev == 0 { prev = ctx.title; }
+
+            // 分组说明行: "快应用 N / 已隐藏 M"
+            let hdr = fw_api::row_create(ctx.content,
+                crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0);
+            if hdr != 0 {
+                row_shrink(hdr, 44);
+                fw_api::obj_align_to(hdr, prev, 14, 0, 14);
+                let hl = crate::mem::rd32((hdr + ROW_SUB_LB) as *const u32);
+                if hl != 0 { fw_api::obj_style_color_a70(hl, C_SECONDARY, 0); }
+                prev = hdr;
+                AM_HDR_ROW = hdr;
+            }
+            list_begin(1, prev, ctx.content,
+                core::ptr::addr_of!(AM_STATUS_VIS) as *const u8,
+                core::ptr::addr_of!(AM_STATUS_HID) as *const u8);
             Ok(())
         }
     }
 
     fn on_click(&self, idx: usize) {
+        // 页1 顶部按钮槽位不变: 0=批量, 1=排除项, 3=重新应用隐藏
         unsafe {
-            // 槽0/1/3 = 顶部按钮(ctx.rows); 槽4 是开关(只走 on_switch);
-            // 条目事件槽 = 视图下标 + 12。
-            // (0..11 被 ctx.rows 占用: 不错开的话点条目会被派发成点按钮 —— 2026-10-15 修)
             if idx == 0 {
-                crate::appmgr::request_batch(true);
-                render_req(1);
-            } else if idx == 1 {
-                crate::appmgr::request_batch(false);
-                render_req(1);
+                nav_goto(30, 0);            // 批量操作
             } else if idx == 3 {
-                nav_goto(7, 0);
+                crate::appmgr::request_reapply();
+                render_req(1);
             } else if idx >= 12 {
                 let v = idx - 12;
-                if v < crate::appmgr::view_count() {
-                    let e = crate::appmgr::view_at(v);
-                    if e != usize::MAX { crate::appmgr::click(e); }
+                if v < crate::appmgr::ui_rows() as usize {
+                    let e = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
+                    if e != 0xFFFF && e < crate::appmgr::APP_MAX {
+                        crate::appmgr::detail_open(e);
+                        nav_goto(29, 0);    // 应用详情
+                    }
                 }
             }
         }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 4 }
-
-    fn on_switch(&self, idx: usize) {
-        if idx == 4 {
-            unsafe {
-                crate::appmgr::toggle_apply_mode();
-                render_req(1);
-            }
-        }
-    }
-
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() || crate::appmgr::batch_pending() || crate::appmgr::mode_pending() }
+        unsafe {
+            list_building() || crate::appmgr::has_req() || crate::appmgr::batch_pending()
+                || crate::appmgr::reapply_pending()
+        }
     }
 
     fn tick(&self) {
         unsafe {
-            if crate::appmgr::mode_pending() {
-                crate::appmgr::do_mode_apply();
-                render_req(1);
+            if list_building() {
+                if LB_DELAY > 0 { LB_DELAY -= 1; }
+                else { list_build_chunk(LB_TICK_CHUNK); }
+            }
+            if crate::appmgr::reapply_pending() {
+                crate::appmgr::do_reapply();
             } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
-                render_req(1);
             } else if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
-                render_req(1);
             }
+            // 只改了隐藏位/名单时逐行原地刷新, 行数变了(卸载、重扫)才整页重建。
+            // 整页重建会销毁行对象, 列表滚动位置会跳回顶部。
+            if text_changed(core::ptr::addr_of_mut!(LAST_MSG) as *mut u8,
+                crate::appmgr::msg().as_ptr(), 64) {
+                refresh_msg_row();
+            }
+            let h = core::ptr::read_volatile(core::ptr::addr_of!(AM_HDR_ROW));
+            if h != 0 && text_changed(core::ptr::addr_of_mut!(LAST_HDR) as *mut u8,
+                crate::appmgr::header_text().as_ptr(), 64) {
+                fw_api::row_update(h, fw_api::NONE_PTR,
+                    crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0, 0);
+            }
+            // 行句柄失效时不再整页重建: 重建会销毁 40 个对象并再次触发本 tick, 形成每帧重建的卡顿。
+            // 行数真的变了(卸载/重扫)由对应操作自己 render_req。
+            let _ = refresh_list_rows(false);
         }
     }
 }
@@ -1933,11 +2174,13 @@ impl Page for VibPage {
     }
 }
 
+static mut AM_MSG_ROW: u32 = 0;
+static mut AM_HDR_ROW: u32 = 0;
+
 // ===== 分发表 =====
 
 static PAGE_INFO: InfoPage = InfoPage;
 static PAGE_APPMGR: AppMgrPage = AppMgrPage;
-static PAGE_EXCL: ExclPage = ExclPage;
 static PAGE_WF_LIST_8: WatchfaceListPage = WatchfaceListPage { pid: 8 };
 static PAGE_WF_LIST_9: WatchfaceListPage = WatchfaceListPage { pid: 9 };
 static PAGE_WF_MGMT: WfMgmtPage = WfMgmtPage;
@@ -2142,7 +2385,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.0.8\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.0\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2150,7 +2393,6 @@ impl Page for AboutPage {
                 (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (6, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
                 (7, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
-                (8, RowSpec::clickable("开放源代码许可\0".as_bytes())),
             ])?;
             Ok(())
         }
@@ -2177,10 +2419,6 @@ impl Page for AboutPage {
             if idx == 0 {
                 DBG_CLICKS += 1;
                 if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
-            } else if idx == 8 {
-                // 行 8 才是"开放源代码许可"(行 6 是 @wzx, 行 7 是不可点的许可证展示行)。
-                // 判据按 build_rows 的 slot 走, 插行时必须跟着挪。
-                nav_goto(20, 0);
             }
         }
     }
@@ -2324,135 +2562,6 @@ impl Page for BlurZonePage {
             if idx >= crate::blur_zone::REGION_N { return; }
             if crate::blur_zone::set(idx, !crate::blur_zone::on(idx)) {
                 crate::background_home::remount();
-            }
-        }
-    }
-}
-
-// ===== 页20: 关于 -> 开放源代码许可 =====
-pub(crate) struct LicensesPage;
-static PAGE_LICENSESP: LicensesPage = LicensesPage;
-
-impl Page for LicensesPage {
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "开放源代码许可\0".as_bytes()); }
-    }
-
-    fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
-                    "MPL-2.0 license\0".as_bytes().as_ptr())),
-            ]).map(|_| ())
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            if idx == 0 {
-                MPL_PAGE = 0;
-                nav_goto(21, 0);
-            }
-        }
-    }
-}
-
-// ===== 页21: MIBAND10PRO-TUNMODULE / MPL-2.0 许可正文 =====
-pub(crate) struct MplLicensePage;
-static PAGE_LICENSE_MPLP: MplLicensePage = MplLicensePage;
-static MPL_TEXT: &[u8] = include_bytes!("../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
-const MPL_PAGE_LINES: usize = 8;
-static mut MPL_PAGE: usize = 0;
-static mut MPL_VIEW: [u8; 4096] = [0; 4096];
-static mut MPL_STATUS: [u8; 48] = [0; 48];
-
-fn mpl_line_count() -> usize {
-    let mut lines = 1usize;
-    for &c in MPL_TEXT {
-        if c == b'\n' { lines += 1; }
-    }
-    lines
-}
-
-fn mpl_page_count() -> usize {
-    (mpl_line_count() + MPL_PAGE_LINES - 1) / MPL_PAGE_LINES
-}
-
-unsafe fn mpl_render_page() {
-    let pages = mpl_page_count();
-    if MPL_PAGE >= pages { MPL_PAGE = pages - 1; }
-    let target_line = MPL_PAGE * MPL_PAGE_LINES;
-    let mut line = 0usize;
-    let mut start = 0usize;
-    let mut i = 0usize;
-    while i < MPL_TEXT.len() && line < target_line {
-        if MPL_TEXT[i] == b'\n' { line += 1; }
-        i += 1;
-        start = i;
-    }
-    let mut end = start;
-    line = 0;
-    while end < MPL_TEXT.len() && line < MPL_PAGE_LINES {
-        if MPL_TEXT[end] == b'\n' { line += 1; }
-        end += 1;
-    }
-    let out = core::ptr::addr_of_mut!(MPL_VIEW) as *mut u8;
-    let count = core::cmp::min(end - start, 4095);
-    for i in 0..count { write_volatile(out.add(i), MPL_TEXT[start + i]); }
-    write_volatile(out.add(count), 0);
-
-    let status = core::ptr::addr_of_mut!(MPL_STATUS) as *mut u8;
-    let mut buf = [0u8; 48];
-    let mut w = crate::text::W::new(buf.as_mut_ptr(), buf.len());
-    w.s("第 ".as_bytes());
-    w.n((MPL_PAGE + 1) as u32);
-    w.s("/".as_bytes());
-    w.n(pages as u32);
-    w.s(" 页".as_bytes());
-    w.end();
-    let len = w.len();
-    for i in 0..len { write_volatile(status.add(i), buf[i]); }
-    write_volatile(status.add(len), 0);
-}
-
-impl Page for MplLicensePage {
-    fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "MPL-2.0 license\0".as_bytes()); }
-    }
-
-    fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            mpl_render_page();
-            let pages = mpl_page_count();
-            let specs: [(usize, RowSpec); 3] = [
-                (0, RowSpec::clickable(if MPL_PAGE > 0 { "上一页\0".as_bytes() } else { "已到首页\0".as_bytes() })),
-                (1, RowSpec::clickable(if MPL_PAGE + 1 < pages { "下一页\0".as_bytes() } else { "已到末页\0".as_bytes() })),
-                (2, RowSpec::display(
-                    core::slice::from_raw_parts(core::ptr::addr_of!(MPL_STATUS) as *const u8,
-                        cstr_len(core::ptr::addr_of!(MPL_STATUS) as *const u8) + 1),
-                    core::ptr::null())),
-            ];
-            let prev = build_rows(ctx, ctx.title, &specs)?;
-            let label = fw_api::label_create(ctx.content);
-            if label != 0 {
-                fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
-                fw_api::label_set_text(label, core::ptr::addr_of!(MPL_VIEW) as *const u8);
-                fw_api::obj_set_size_wh(label, 320, 320);
-                fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
-            }
-            Ok(())
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            let pages = mpl_page_count();
-            if idx == 0 && MPL_PAGE > 0 {
-                MPL_PAGE -= 1;
-                render_req(21);
-            } else if idx == 1 && MPL_PAGE + 1 < pages {
-                MPL_PAGE += 1;
-                render_req(21);
             }
         }
     }
@@ -2758,6 +2867,271 @@ impl Page for KeyboardPage {
     fn on_click(&self, _idx: usize) {}
 }
 
+// ===== 页29: 应用管理 -> 应用详情(P0 占位) =====
+/// 把以 NUL 结尾的静态缓冲当 &[u8] 用(RowSpec 吃切片, 不收裸指针)。
+unsafe fn cstr_static(p: *const u8) -> &'static [u8] {
+    let mut n = 0usize;
+    while read_volatile(p.add(n)) != 0 { n += 1; }
+    core::slice::from_raw_parts(p, n + 1)
+}
+
+pub(crate) struct AppDetailPage;
+static PAGE_DETAILP: AppDetailPage = AppDetailPage;
+
+static mut DT_LBL_SHOW: [u8; 24] = [0; 24];
+static mut DT_LBL_HIDE: [u8; 24] = [0; 24];
+static mut DT_LBL_UN: [u8; 32] = [0; 32];
+static mut DT_LBL_UN2: [u8; 32] = [0; 32];
+
+impl Page for AppDetailPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "应用详情\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            if !crate::appmgr::detail_valid() {
+                let r = build_row(ctx, ctx.title, 0,
+                    &RowSpec::tap("应用不存在, 返回\0".as_bytes(), core::ptr::null()));
+                if r == 0 { return Err(PageError::RowFailed(0)); }
+                return Ok(());
+            }
+            put_str(core::ptr::addr_of_mut!(DT_LBL_SHOW) as *mut u8, "显示该应用\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(DT_LBL_HIDE) as *mut u8, "隐藏该应用\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(DT_LBL_UN) as *mut u8, "卸载应用\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(DT_LBL_UN2) as *mut u8, "确认卸载?\0".as_bytes());
+
+            let toggle: &[u8] = crate::appmgr::detail_action_label();
+            let un: &[u8] = if crate::appmgr::detail_confirm() {
+                cstr_static(core::ptr::addr_of!(DT_LBL_UN2) as *const u8)
+            } else {
+                cstr_static(core::ptr::addr_of!(DT_LBL_UN) as *const u8)
+            };
+            let r0 = build_row(ctx, ctx.title, 0,
+                &RowSpec::display(crate::appmgr::detail_name(),
+                    crate::appmgr::detail_pkg().as_ptr()));
+            if r0 == 0 { return Err(PageError::RowFailed(0)); }
+            fw_api::obj_set_size_wh(r0, 320, 88);
+            fw_api::obj_align_to(r0, ctx.title, 14, 0, 10);
+            cardify(r0);
+            let r1 = build_row(ctx, r0, 1,
+                &RowSpec::display(cstr_static(crate::appmgr::detail_fmt()),
+                    core::ptr::null()));
+            if r1 == 0 { return Err(PageError::RowFailed(1)); }
+            fw_api::obj_set_size_wh(r1, 320, 56);
+            fw_api::obj_align_to(r1, r0, 14, 0, 10);
+            cardify(r1);
+            // 隐藏/显示 | 排除/取消排除 并排, 卸载整宽一行
+            let t2 = build_tile_below(ctx, r1, 2, toggle, TILE_W, TILE_H);
+            if t2 == 0 { return Err(PageError::RowFailed(2)); }
+            tile_primary(t2);
+            let xt = crate::appmgr::detail_excl_label();
+            let t3 = build_tile_right(ctx, t2, 3, xt, TILE_W, TILE_H);
+            let t4 = build_tile_below(ctx, t2, 4, un, TILE_ROW_W, 56);
+            tile_danger(t4);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if !crate::appmgr::detail_valid() {
+                if idx == 0 { nav_back(); }
+                return;
+            }
+            if idx == 2 {
+                crate::appmgr::detail_toggle_hide();
+                render_req(29);
+            } else if idx == 3 {
+                crate::appmgr::detail_toggle_excl();
+                render_req(29);
+            } else if idx == 4 {
+                if crate::appmgr::detail_uninstall_click() {
+                    // 已卸载: 回到应用管理列表
+                    nav_back();
+                    render_req(1);
+                } else {
+                    render_req(29);
+                }
+            }
+        }
+    }
+
+    fn needs_tick(&self) -> bool {
+        unsafe { crate::appmgr::has_req() || crate::appmgr::excl_has_req() }
+    }
+
+    fn tick(&self) {
+        unsafe {
+            let mut dirty = false;
+            if crate::appmgr::has_req() {
+                crate::appmgr::do_op();
+                dirty = true;
+            }
+            if crate::appmgr::excl_has_req() {
+                crate::appmgr::do_excl();
+                dirty = true;
+            }
+            if dirty {
+                crate::appmgr::detail_refresh();
+                render_req(29);
+            }
+        }
+    }
+}
+
+// ===== 页30: 应用管理 -> 批量操作 =====
+pub(crate) struct BatchPage;
+static PAGE_BATCHP: BatchPage = BatchPage;
+
+static mut B_SEL_TXT: [u8; 48] = [0; 48];
+static mut B_ST_HID: [u8; 12] = [0; 12];
+static mut B_ST_VIS: [u8; 12] = [0; 12];
+static mut B_LBL_ALL: [u8; 32] = [0; 32];
+static mut B_LBL_UNSEL: [u8; 32] = [0; 32];
+static mut B_LBL_DEL: [u8; 32] = [0; 32];
+static mut B_LBL_DEL2: [u8; 32] = [0; 32];
+static mut B_COUNT_ROW: u32 = 0;
+
+unsafe fn b_sel_text() -> *const u8 {
+    let d = core::ptr::addr_of_mut!(B_SEL_TXT) as *mut u8;
+    let mut w = W::new(d, 48);
+    w.s("已选 ".as_bytes()).n(crate::appmgr::sel_count() as u32)
+        .s(" / 共 ".as_bytes()).n(crate::appmgr::batch_total() as u32)
+        .s("\0".as_bytes());
+    w.end();
+    d
+}
+
+/// 批量页的"已选 N / 共 M"行原地刷新
+unsafe fn refresh_batch_count_row() {
+    let r = core::ptr::read_volatile(core::ptr::addr_of!(B_COUNT_ROW));
+    if r != 0 {
+        fw_api::row_update(r, fw_api::NONE_PTR,
+            cstr_static(b_sel_text()).as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
+impl Page for BatchPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "批量操作\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            crate::appmgr::rows_reset();
+            put_str(core::ptr::addr_of_mut!(B_ST_HID) as *mut u8, "已隐藏\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(B_ST_VIS) as *mut u8, "显示中\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(B_LBL_ALL) as *mut u8, "全选\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(B_LBL_DEL) as *mut u8, "删除选中\0".as_bytes());
+            put_str(core::ptr::addr_of_mut!(B_LBL_DEL2) as *mut u8, "确认删除?\0".as_bytes());
+            let _ = &B_LBL_UNSEL;
+
+            let all: &[u8] = if crate::appmgr::sel_count() == 0 {
+                cstr_static(core::ptr::addr_of!(B_LBL_ALL) as *const u8)
+            } else {
+                // "取消全选"
+                put_str(core::ptr::addr_of_mut!(B_LBL_UNSEL) as *mut u8, "取消全选\0".as_bytes());
+                cstr_static(core::ptr::addr_of!(B_LBL_UNSEL) as *const u8)
+            };
+            let del: &[u8] = if crate::appmgr::sel_del_confirmed() {
+                cstr_static(core::ptr::addr_of!(B_LBL_DEL2) as *const u8)
+            } else {
+                cstr_static(core::ptr::addr_of!(B_LBL_DEL) as *const u8)
+            };
+            // 顶部: 已选统计 + 四个操作按钮并排两行, 返回交给标题栏返回键
+            let s0 = build_row(ctx, ctx.title, 0,
+                &RowSpec::display(cstr_static(b_sel_text()), core::ptr::null()));
+            if s0 == 0 { return Err(PageError::RowFailed(0)); }
+            row_shrink(s0, 56);
+            B_COUNT_ROW = s0;
+            let t1 = build_tile_below(ctx, s0, 1, all, TILE_W, TILE_H);
+            if t1 == 0 { return Err(PageError::RowFailed(1)); }
+            let t2 = build_tile_right(ctx, t1, 2, "隐藏选中\0".as_bytes(), TILE_W, TILE_H);
+            tile_primary(t2);
+            let t3 = build_tile_below(ctx, t1, 3, "显示选中\0".as_bytes(), TILE_W, TILE_H);
+            if t3 == 0 { return Err(PageError::RowFailed(3)); }
+            let t4 = build_tile_right(ctx, t3, 4, del, TILE_W, TILE_H);
+            tile_danger(t4);
+
+            // 勾选行: 先建首屏, 其余由 tick 分批续建
+            crate::appmgr::sort_view_visible_first();
+            list_begin(2, t3, ctx.content,
+                core::ptr::addr_of!(B_ST_VIS) as *const u8,
+                core::ptr::addr_of!(B_ST_HID) as *const u8);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx == 1 {
+                crate::appmgr::sel_toggle_all();
+                if !refresh_list_rows(true) { render_req(30); }
+                refresh_batch_count_row();
+            } else if idx == 2 {
+                crate::appmgr::batch_request_sel(true);
+                render_req(30);
+            } else if idx == 3 {
+                crate::appmgr::batch_request_sel(false);
+                render_req(30);
+            } else if idx == 4 {
+                if crate::appmgr::sel_del_confirmed() {
+                    crate::appmgr::batch_request_del();
+                } else {
+                    crate::appmgr::sel_del_arm();
+                }
+                render_req(30);
+            } else if idx == 5 {
+                crate::appmgr::sel_del_disarm();
+                nav_back();
+            } else if idx >= 12 {
+                let v = idx - 12;
+                if v < crate::appmgr::ui_rows() as usize {
+                    let e = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
+                    if e != 0xFFFF && e < crate::appmgr::APP_MAX { crate::appmgr::sel_toggle(e); }
+                    if !refresh_list_rows(true) { render_req(30); }
+                    refresh_batch_count_row();
+                }
+            }
+        }
+    }
+
+    fn needs_tick(&self) -> bool {
+        unsafe {
+            list_building() || crate::appmgr::batch_pending() || crate::appmgr::del_pending()
+                || crate::appmgr::has_req()
+        }
+    }
+
+    fn tick(&self) {
+        unsafe {
+            if list_building() {
+                if LB_DELAY > 0 { LB_DELAY -= 1; }
+                else { list_build_chunk(LB_TICK_CHUNK); }
+            }
+            if crate::appmgr::has_req() {
+                crate::appmgr::do_op();
+            } else if crate::appmgr::batch_pending() {
+                crate::appmgr::do_batch();
+            } else if crate::appmgr::del_pending() {
+                crate::appmgr::do_del_batch();
+            }
+            // 同上: 勾选/状态变化只原地刷新, 不再自动整页重建
+            let _ = refresh_list_rows(true);
+            refresh_batch_count_row();
+        }
+    }
+}
+
+pub(crate) struct RemovedPage;
+static PAGE_REMOVED: RemovedPage = RemovedPage;
+impl Page for RemovedPage {
+    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "已移除\0".as_bytes()); } }
+    fn render(&self, _ctx: &PageCtx) -> PageResult { Ok(()) }
+    fn on_click(&self, _idx: usize) {}
+}
+
 pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_INFO,       // 0
     &PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
@@ -2766,7 +3140,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
     &PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
-    &PAGE_EXCL,       // 7  应用管理 -> 排除项管理(原文件查看退役)
+    &PAGE_REMOVED,    // 7  已移除(排除项页)
     &PAGE_WF_LIST_8,  // 8
     &PAGE_WF_LIST_9,  // 9
     &PAGE_WF_MGMT,    // 10
@@ -2779,8 +3153,8 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_LOG,          // 17 设置 -> 运行日志
     &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
     &PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
-    &PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
-    &PAGE_LICENSE_MPLP, // 21 MIBAND10PRO-TUNMODULE / MPL-2.0
+    &PAGE_REMOVED,      // 20 已移除(开源许可列表)
+    &PAGE_REMOVED,      // 21 已移除(MPL 全文)
     &PAGE_SYSVERP,      // 22 系统关于页面修改 -> 系统版本显示
     &PAGE_KEYBOARDP,    // 23 通用英文数字键盘
     &PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改
@@ -2788,4 +3162,6 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_DEVNAMEP,     // 26 系统关于页面修改 -> 设备名称
     &PAGE_DEVMODELP,    // 27 系统关于页面修改 -> 手环型号
     &PAGE_APPLIST,      // 28 系统美化 -> 应用列表设置(桌面缩放/排距/内缩)
+    &PAGE_DETAILP,      // 29 应用管理 -> 应用详情(P0 占位)
+    &PAGE_BATCHP,       // 30 应用管理 -> 批量操作(P0 占位)
 ];

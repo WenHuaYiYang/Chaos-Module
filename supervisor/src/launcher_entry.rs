@@ -45,9 +45,15 @@ pub(crate) unsafe fn tick() {
         return;
     }
     APPLY_REQUEST = false;
+    // 先清两遍再添加：桌面记录按 app_id 建，重复的 add 会留下多个图标
+    // (实测重装后出现两个 Chaos 图标)。del 只摘图标不动注册表，清两遍可
+    // 把历史遗留的重复记录一并收掉，再 add 保证只剩一个。
     if ENABLED {
+        fw_api::app_launcher_del(APP_ID);
+        fw_api::app_launcher_del(APP_ID);
         fw_api::app_launcher_add(APP_ID);
     } else {
+        fw_api::app_launcher_del(APP_ID);
         fw_api::app_launcher_del(APP_ID);
     }
 }
