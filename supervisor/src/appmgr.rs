@@ -353,7 +353,13 @@ unsafe fn apply_pkg(hide: bool, pkg: *const u8) -> bool {
 }
 
 unsafe fn apply_immediate(hide: bool) -> bool {
-    apply_pkg(hide, core::ptr::addr_of!(REQ_PKG) as *const u8)
+    let pkg = core::ptr::addr_of!(REQ_PKG) as *const u8;
+    // 深度隐藏重启后节点缺失: 显示前先按包名补建节点, 否则 app_launcher_add 找不到记录。
+    if !hide && find_node(pkg) == 0 {
+        let ok = fw_api::quickapp_register_pkg(pkg);
+        crate::log::kv("显示应用-补建节点 ", if ok { 1 } else { 0 });
+    }
+    apply_pkg(hide, pkg)
 }
 
 /// tick: 执行挂起的隐藏/显示, 完成后重读列表(调用方随后 render_req)
@@ -401,7 +407,8 @@ pub(crate) unsafe fn do_batch() {
         BATCH_CURSOR += 1;
         if ok {
             BATCH_DONE += 1;
-            // 文件已改; 节点不存在时只能等重启, 单独计数并明确告诉用户。
+            // 显示时节点可能缺失(深度隐藏重启过): 先按包名补建再摘/加图标。
+            if !hide && find_node(bp) == 0 { let _ = fw_api::quickapp_register_pkg(bp); }
             if !apply_pkg(hide, bp) { BATCH_NOREG += 1; }
         } else {
             BATCH_FAIL += 1;

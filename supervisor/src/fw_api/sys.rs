@@ -431,6 +431,41 @@ pub unsafe fn quickapp_launch_app(pkg: *const u8) -> i32 {
     let f: unsafe extern "C" fn(*const u8, *const u8) -> i32 = transmute(0x0C54_81E5usize);
     f(pkg, core::ptr::null())
 }
+/// 只给**指定包名**补注册表节点（不碰其它应用）。
+///
+/// 深度隐藏重启后节点缺失, 单点「显示应用」若直接 `app_launcher_add` 会失败；
+/// 这里在 proxyquickapp 已装表里按包名找到该项, 用 `quickapp_register_app`
+/// 建节点（会加图标, 调用方随后 `apply_pkg(false)` 会先 del 再 add, 不会重复）。
+pub unsafe fn quickapp_register_pkg(pkg: *const u8) -> bool {
+    let n = quickapp_app_count();
+    if n <= 0 { return false; }
+    let n = if n > 512 { 512 } else { n };
+    let mut i = 0i32;
+    while i < n {
+        let mut info = [0u8; 0x2c];
+        if quickapp_app_item(i as u32, info.as_mut_ptr()) == 0 {
+            let key = crate::mem::rd32(info.as_ptr() as *const u32);
+            if key != 0 && crate::mem::safe_ptr(key) && cstr_same(key as *const u8, pkg) {
+                let id = crate::mem::rd16(QUICKAPP_NEXT_ID as *const u16);
+                return quickapp_register_app(id, info.as_ptr()) == 0;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+unsafe fn cstr_same(a: *const u8, b: *const u8) -> bool {
+    let mut k = 0usize;
+    while k < 256 {
+        let x = *a.add(k);
+        if x != *b.add(k) { return false; }
+        if x == 0 { return true; }
+        k += 1;
+    }
+    false
+}
+
 
 /// 遍历已装应用表，**只给注册表里查不到的 app 补节点**，返回 `(扫描数, 补建数)`。
 ///
