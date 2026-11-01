@@ -133,8 +133,26 @@ unsafe fn tile_base(ctx: &PageCtx, slot: usize, text: &[u8], w: u32, h: u32) -> 
     write_volatile(ctx.rows.add(slot), r);
     fw_api::obj_set_size_wh(r, w, h);
     cardify(r);
+    fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::RADIUS, h / 2, 0);
     fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
     r
+}
+
+/// 把按钮块染成主操作(蓝底白字)或危险操作(深底红字)。
+pub(crate) unsafe fn tile_primary(row: u32) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if row == 0 { return; }
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, C_ACCENT, 0);
+    let lb = fw_api::obj_get_child(row, 0);
+    if lb != 0 { fw_api::obj_set_local_style_prop(lb, ps::TEXT_COLOR, 0xFFFFFF, 0); }
+}
+
+pub(crate) unsafe fn tile_danger(row: u32) {
+    use crate::fw_api::fwaddr::p65_style as ps;
+    if row == 0 { return; }
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2A, 0);
+    let lb = fw_api::obj_get_child(row, 0);
+    if lb != 0 { fw_api::obj_set_local_style_prop(lb, ps::TEXT_COLOR, C_DANGER, 0); }
 }
 
 /// 在基准行下方左侧建一个按钮块(必须左对齐, 否则半宽块会被居中而整体右移)
@@ -177,13 +195,13 @@ pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
 pub(crate) unsafe fn cardify(row: u32) {
     use crate::fw_api::fwaddr::p65_style as ps;
     if row == 0 { return; }
-    fw_api::obj_set_local_style_prop(row, ps::RADIUS, 22, 0);
-    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2D, 0);
+    fw_api::obj_set_local_style_prop(row, ps::RADIUS, 16, 0);
+    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2A, 0);
     fw_api::obj_set_local_style_prop(row, ps::BG_OPA, 255, 0);
     fw_api::obj_set_local_style_prop(row, ps::PAD_0, 10, 0);
     fw_api::obj_set_local_style_prop(row, ps::PAD_1, 10, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_2, 16, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_3, 16, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_2, 18, 0);
+    fw_api::obj_set_local_style_prop(row, ps::PAD_3, 18, 0);
     // 卡片内边距让文字更容易超宽/超高; 行和它的标签都不许再自己滚
     no_scroll(row);
 }
@@ -960,9 +978,9 @@ impl Page for ExclPage {
                 if r == 0 { return Err(PageError::RowFailed(i)); }
                 write_volatile(rows.add(i), r);
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                fw_api::obj_align_to(r, prev, 14, 0, 10);
+                fw_api::obj_align_to(r, prev, 9, 0, 10);
                 prev = r;
-                row_shrink(r, 100);
+                fw_api::obj_set_size_wh(r, 320, 100);
                 cardify(r);
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
                 let col = if mode == 0 {
@@ -1969,10 +1987,9 @@ unsafe fn list_build_chunk(limit: u32) {
         if lab != 0 {
             fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
         }
-        row_shrink(r, 100);
+        fw_api::obj_set_size_wh(r, 320, 100);
         cardify(r);
-        let dx = if LB_KIND == 2 && LB_FIRST != 0 { TILE_CENTER_DX } else { 0 };
-        fw_api::obj_align_to(r, LB_PREV, 14, dx, 10);
+        fw_api::obj_align_to(r, LB_PREV, 9, 0, 10);
         LB_FIRST = 0;
         LB_PREV = r;
         if LB_KIND == 2 {
@@ -2003,8 +2020,9 @@ impl Page for AppMgrPage {
             row_shrink(s2, 56);
             AM_MSG_ROW = read_volatile(ctx.rows.add(2));
             if s2 != 0 {
-                let _ = build_tile_below(ctx, s2, 3,
+                let t3 = build_tile_below(ctx, s2, 3,
                     "重新应用隐藏\0".as_bytes(), 328, 56);
+                tile_primary(t3);
             }
             crate::appmgr::sort_view_visible_first();
 
@@ -2020,8 +2038,10 @@ impl Page for AppMgrPage {
             let hdr = fw_api::row_create(ctx.content,
                 crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0);
             if hdr != 0 {
-                row_shrink(hdr, 48);
-                fw_api::obj_align_to(hdr, prev, 14, 0, 8);
+                row_shrink(hdr, 44);
+                fw_api::obj_align_to(hdr, prev, 14, 0, 14);
+                let hl = crate::mem::rd32((hdr + ROW_SUB_LB) as *const u32);
+                if hl != 0 { fw_api::obj_style_color_a70(hl, C_SECONDARY, 0); }
                 prev = hdr;
                 AM_HDR_ROW = hdr;
             }
@@ -2345,7 +2365,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.6\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.7\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -3005,18 +3025,22 @@ impl Page for AppDetailPage {
                 &RowSpec::display(crate::appmgr::detail_name(),
                     crate::appmgr::detail_pkg().as_ptr()));
             if r0 == 0 { return Err(PageError::RowFailed(0)); }
-            row_shrink(r0, 88);
+            fw_api::obj_set_size_wh(r0, 320, 88);
+            fw_api::obj_align_to(r0, ctx.title, 9, 0, 10);
             cardify(r0);
             let r1 = build_row(ctx, r0, 1,
                 &RowSpec::display(cstr_static(crate::appmgr::detail_fmt()),
                     core::ptr::null()));
             if r1 == 0 { return Err(PageError::RowFailed(1)); }
-            row_shrink(r1, 56);
+            fw_api::obj_set_size_wh(r1, 320, 56);
+            fw_api::obj_align_to(r1, r0, 9, 0, 10);
             cardify(r1);
             // 隐藏/显示 与 卸载 并排一行, 返回交给标题栏的返回键
             let t2 = build_tile_below(ctx, r1, 2, toggle, TILE_W, TILE_H);
             if t2 == 0 { return Err(PageError::RowFailed(2)); }
-            let _ = build_tile_right(ctx, t2, 3, un, TILE_W, TILE_H);
+            tile_primary(t2);
+            let t3 = build_tile_right(ctx, t2, 3, un, TILE_W, TILE_H);
+            tile_danger(t3);
             Ok(())
         }
     }
@@ -3135,10 +3159,12 @@ impl Page for BatchPage {
             B_COUNT_ROW = s0;
             let t1 = build_tile_below(ctx, s0, 1, all, TILE_W, TILE_H);
             if t1 == 0 { return Err(PageError::RowFailed(1)); }
-            let _ = build_tile_right(ctx, t1, 2, "隐藏选中\0".as_bytes(), TILE_W, TILE_H);
+            let t2 = build_tile_right(ctx, t1, 2, "隐藏选中\0".as_bytes(), TILE_W, TILE_H);
+            tile_primary(t2);
             let t3 = build_tile_below(ctx, t1, 3, "显示选中\0".as_bytes(), TILE_W, TILE_H);
             if t3 == 0 { return Err(PageError::RowFailed(3)); }
-            let _ = build_tile_right(ctx, t3, 4, del, TILE_W, TILE_H);
+            let t4 = build_tile_right(ctx, t3, 4, del, TILE_W, TILE_H);
+            tile_danger(t4);
 
             // 勾选行: 先建首屏, 其余由 tick 分批续建
             crate::appmgr::sort_view_visible_first();
