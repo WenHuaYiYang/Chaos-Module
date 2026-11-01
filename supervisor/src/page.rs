@@ -226,8 +226,9 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     fw_api::obj_set_local_style_prop(lab, ps::PAD_0, 1, 0);
     fw_api::obj_set_local_style_prop(lab, ps::PAD_1, 1, 0);
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 0, 0);
-    fw_api::obj_set_local_style_prop(lab, ps::PAD_2, 8, 0);
-    fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 8, 0);
+    // 上下只留 4: 24px 字体 + 8 内边距 = 32, 能装进 34 高的胶囊, 文字不会被裁/滚动
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_2, 4, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 4, 0);
     // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
     fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
     fw_api::obj_set_size_wh(lab, pill_w(txt), 34);
@@ -2005,6 +2006,10 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
             else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
         if sp != 0 {
             fw_api::label_set_text(sp, stxt.as_ptr());
+            if selected_mode {
+                let face = fw_api::style_get_font(crate::state::FW_STYLE_MISANS_REG_24);
+                if face != 0 { fw_api::obj_set_style_text_font(sp, face, 0); }
+            }
             // row_update 对副标签的处理会把它打上隐藏标志, 清掉才能看见
             fw_api::obj_clear_flag(sp, 0x01);
             if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
@@ -2120,8 +2125,13 @@ unsafe fn list_build_chunk(limit: u32) {
             fw_api::label_create(r)
         };
         if sp != 0 {
-            if LB_KIND != 2 { fw_api::label_set_text(sp, stxt.as_ptr()); }
-            else { fw_api::obj_set_size_wh(sp, pill_w(stxt), 40); }
+            if LB_KIND == 2 {
+                // 固件副标题字体比自建标签大, 先换成 24px 系统字体, 再用 34 高的胶囊尺寸
+                let face = fw_api::style_get_font(crate::state::FW_STYLE_MISANS_REG_24);
+                if face != 0 { fw_api::obj_set_style_text_font(sp, face, 0); }
+            } else {
+                fw_api::label_set_text(sp, stxt.as_ptr());
+            }
             if picked { pill(sp, C_ACCENT, C_VISIBLE_TINT, stxt); }
             else if vis { pill(sp, C_VISIBLE, C_VISIBLE_TINT, stxt); }
             else { pill(sp, C_HIDDEN, C_HIDDEN_TINT, stxt); }
@@ -2133,8 +2143,8 @@ unsafe fn list_build_chunk(limit: u32) {
             // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
             let w = pill_w(stxt) as i32;
             if LB_KIND == 2 {
-                // 批量页锚行本体(行宽已知 320): 左边距 10, 底边距 10
-                fw_api::obj_align_to(sp, r, fw_api::align::CENTER, -(150 - w / 2), 22);
+                // 批量页: OUT_BOTTOM_MID 以行底为基准, dy=-10 -> 底边距 10; dx 使左边距 10
+                fw_api::obj_align_to(sp, r, fw_api::align::OUT_BOTTOM_MID, -(150 - w / 2), -10);
             } else {
                 // 页 1 锚副标题行: 纵向贴底(下边距刚好), 左边距 10
                 fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(150 - w / 2), 0);
@@ -2530,7 +2540,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.42\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.43\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
