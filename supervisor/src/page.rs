@@ -2088,10 +2088,12 @@ unsafe fn list_build_chunk(limit: u32) {
         let vis = crate::appmgr::visible(i);
         // 批量页保留复选框(批量选择的标识); 复选框会压缩第二行宽度, 偏移量按 118 算
         let trailing = if LB_KIND == 2 { fw_api::trailing::CHECKBOX } else { 0 };
-        // 副标题给一个真实字形的占位(不换行空格会被固件当成空, 行退化成单行、标题垂直居中),
-        // 行恢复成两行行型后标题自然回到左上; 这个占位稍后被胶囊完全盖住
+        // 页 1 本来就是两行行型, 副标题用不换行空格占位即可;
+        // 批量页的复选框行会被固件当成单行(标题垂直居中), 用真实字形占位把它撑成两行,
+        // 这个占位稍后被胶囊完全盖住
+        let sub_ph: &[u8] = if LB_KIND == 2 { b"M\0" } else { b"\xc2\xa0\0" };
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
-            b"M\0".as_ptr(), trailing);
+            sub_ph.as_ptr(), trailing);
         if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
         fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
@@ -2511,7 +2513,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.34\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.35\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
