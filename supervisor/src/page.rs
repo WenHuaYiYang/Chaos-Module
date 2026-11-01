@@ -998,7 +998,7 @@ impl Page for ExclPage {
                 if r == 0 { return Err(PageError::RowFailed(i)); }
                 write_volatile(rows.add(i), r);
                 fw_api::obj_add_event(r, row_ev_fn(i + 12), 7, 0);
-                fw_api::obj_align_to(r, prev, 9, 0, 10);
+                fw_api::obj_align_to(r, prev, 14, 0, 10);
                 prev = r;
                 fw_api::obj_set_size_wh(r, 320, 100);
                 cardify(r);
@@ -2026,7 +2026,7 @@ unsafe fn list_build_chunk(limit: u32) {
         }
         fw_api::obj_set_size_wh(r, 320, 100);
         cardify(r);
-        fw_api::obj_align_to(r, LB_PREV, 9, 0, 10);
+        fw_api::obj_align_to(r, LB_PREV, 14, 0, 10);
         LB_FIRST = 0;
         LB_PREV = r;
         if LB_KIND == 2 {
@@ -2405,7 +2405,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.8\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.11\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -3066,14 +3066,14 @@ impl Page for AppDetailPage {
                     crate::appmgr::detail_pkg().as_ptr()));
             if r0 == 0 { return Err(PageError::RowFailed(0)); }
             fw_api::obj_set_size_wh(r0, 320, 88);
-            fw_api::obj_align_to(r0, ctx.title, 9, 0, 10);
+            fw_api::obj_align_to(r0, ctx.title, 14, 0, 10);
             cardify(r0);
             let r1 = build_row(ctx, r0, 1,
                 &RowSpec::display(cstr_static(crate::appmgr::detail_fmt()),
                     core::ptr::null()));
             if r1 == 0 { return Err(PageError::RowFailed(1)); }
             fw_api::obj_set_size_wh(r1, 320, 56);
-            fw_api::obj_align_to(r1, r0, 9, 0, 10);
+            fw_api::obj_align_to(r1, r0, 14, 0, 10);
             cardify(r1);
             // 隐藏/显示 与 卸载 并排一行, 返回交给标题栏的返回键
             let t2 = build_tile_below(ctx, r1, 2, toggle, TILE_W, TILE_H);
