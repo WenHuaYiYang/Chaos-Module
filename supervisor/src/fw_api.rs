@@ -54,29 +54,8 @@ pub const MAX_PAGE_ID: usize = 9;
 /// （根因示例：槽位扩到 12 而销毁仍清 0..9 → 悬空句柄 → use-after-free）。
 pub const MAX_ROWS_PER_PAGE: usize = crate::state::MAX_ROWS_PER_PAGE;
 
-/// 对齐枚举（LVGL v9 `lv_align_t` 的取值，与固件自带界面用的常量同值）
-pub mod align {
-    pub const DEFAULT: u32 = 0;
-    pub const TOP_LEFT: u32 = 1;
-    pub const TOP_MID: u32 = 2;
-    pub const TOP_RIGHT: u32 = 3;
-    /// 在父对象内水平、垂直居中；键盘按键文字使用。
-    pub const CENTER: u32 = 8;
-    pub const OUT_BOTTOM_LEFT: u32 = 13;
-    /// 放在基准下方并水平居中 行/文本纵向串链用的就是这个
-    pub const OUT_BOTTOM_MID: u32 = 14;
-    pub const OUT_BOTTOM_RIGHT: u32 = 15;
-    /// 放在基准右侧并垂直居中。滚轮并排用的就是这个值 —— 真机可正常渲染的那一版
-    /// 时/分两轮都靠它串成一行, 所以它是实测值不是手册换算值。
-    pub const OUT_RIGHT_MID: u32 = 19;
-    /// 系统页面给 `lvx_object_align` 传的字面值，配 `(对象, 7, x, 0)` 把控件按 x 摆在
-    /// 父容器里 —— 闹钟页的两个滚轮(60/190)与它们之间的冒号标签(160)用的都是这一个值。
-    /// 只照抄、不解释: 本仓库这套对齐常量与 LVGL 公开枚举对不上，按手册名反推已经错过一次。
-    pub const X_ANCHOR: u32 = 7;
-    /// 底部水平居中。系统闹钟页给确认按钮传的就是这个值，配 `(0, -16)` 表示
-    /// 水平居中、离父容器底边 16px。值取自闹钟页字面量，不是按手册换算。
-    pub const BOTTOM_MID: u32 = 5;
-}
+/// 原生对象对齐参数；单独成模块，使主机回归测试使用同一份实际常量。
+pub mod align;
 
 /// 事件码（与固件自带界面的 `EVENT_*` 常量同值）
 pub mod ev {

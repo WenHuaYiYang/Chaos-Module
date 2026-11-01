@@ -50,6 +50,13 @@ mod t043 {
     /// `lvx_page_title_create(root, title, mode, cb, udata)`：系统同款页标题栏。
     pub const PAGE_TITLE_CREATE: u32 = 0x0C4C_A6C5;
 
+    /// p67 / 3.101.043 静态核对：文件 0x4C84C8 跳转到 PSRAM 0x1C02CBE9。
+    pub const OBJ_SET_SCROLL_DIR: u32 = 0x0C58_84C9;
+
+    /// p67 / 3.101.043 静态核对：文件 0xA00BB0 跳转到 SRAM 执行地址 0x002BD925。
+    /// 禁止把镜像副本 0x47790 简单加 flash 基址当入口；搬运关系见 docs/KEYBOARD.md。
+    pub const OBJ_SET_LOCAL_STYLE_PROP: u32 = 0x0CAC_0BB1;
+
     /// `lvx_zoom_picker_create(parent)`：系统同款滚轮选择器（时间设置那两个轮就是它）。
     pub const ZOOM_PICKER_CREATE: u32 = 0x0CA6_7835;
 

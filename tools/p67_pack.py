@@ -22,7 +22,7 @@ import struct
 from pathlib import Path
 
 MAGIC = 0x1234A55A
-VERSION = 0x00010006
+VERSION = 0x00010007
 HDR = 0xA8
 PAIR_OFF = 0xA8
 PAIRS = 11
