@@ -277,15 +277,9 @@ pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
 }
 
 /// 卡片样式：圆角 + 深灰底色 + 左右内边距。只改外观，不动滚动与点击。
+/// 卡片外观交给固件原生行自己画(Chaos 原本的灰底卡片就是它), 这里只关滚动。
 pub(crate) unsafe fn cardify(row: u32) {
-    use crate::fw_api::fwaddr::p65_style as ps;
     if row == 0 { return; }
-    fw_api::obj_set_local_style_prop(row, ps::RADIUS, 16, 0);
-    fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2A, 0);
-    fw_api::obj_set_local_style_prop(row, ps::BG_OPA, 255, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_2, 18, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_3, 18, 0);
-    // 卡片内边距让文字更容易超宽/超高; 行和它的标签都不许再自己滚
     no_scroll(row);
 }
 
@@ -2477,7 +2471,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.15\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.16\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
