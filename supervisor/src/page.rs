@@ -185,7 +185,8 @@ pub(crate) unsafe fn add_excl_pill(row: u32, sub_lab: u32, i: usize, skip: bool)
     };
     fw_api::label_set_text(p, txt.as_ptr());
     pill(p, col, bg, txt);
-    fw_api::obj_align_to(p, sub_lab, 19, 4, 0);
+    // 与第一个胶囊垂直居中对齐
+    fw_api::obj_align_to(p, sub_lab, fw_api::align::OUT_RIGHT_MID, 4, 0);
     p
 }
 
@@ -227,7 +228,7 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 10, 0);
     // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
     fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
-    fw_api::obj_set_width(lab, pill_w(txt) as i32);
+    let _ = txt;
     fw_api::obj_clear_scrollable(lab);
 }
 
@@ -282,8 +283,6 @@ pub(crate) unsafe fn cardify(row: u32) {
     fw_api::obj_set_local_style_prop(row, ps::RADIUS, 16, 0);
     fw_api::obj_set_local_style_prop(row, ps::BG_COLOR, 0x2A2A2A, 0);
     fw_api::obj_set_local_style_prop(row, ps::BG_OPA, 255, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_0, 10, 0);
-    fw_api::obj_set_local_style_prop(row, ps::PAD_1, 10, 0);
     fw_api::obj_set_local_style_prop(row, ps::PAD_2, 18, 0);
     fw_api::obj_set_local_style_prop(row, ps::PAD_3, 18, 0);
     // 卡片内边距让文字更容易超宽/超高; 行和它的标签都不许再自己滚
@@ -2037,8 +2036,8 @@ static mut LB_SUB_HID: u32 = 0;
 
 static mut LIST_REBUILD: u8 = 0;
 
-const LB_FIRST_CHUNK: u32 = 6;
-const LB_TICK_CHUNK: u32 = 4;
+const LB_FIRST_CHUNK: u32 = 2;
+const LB_TICK_CHUNK: u32 = 3;
 
 pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
 
@@ -2478,7 +2477,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.13\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.14\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
