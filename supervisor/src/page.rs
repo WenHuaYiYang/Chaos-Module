@@ -230,7 +230,7 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 8, 0);
     // TEXT_ALIGN = 94, CENTER = 2 (蓝牙模块验证过的属性号)
     fw_api::obj_set_local_style_prop(lab, 94, 2, 0);
-    fw_api::obj_set_size_wh(lab, pill_w(txt), 32);
+    fw_api::obj_set_size_wh(lab, pill_w(txt), 34);
     fw_api::obj_clear_scrollable(lab);
 }
 
@@ -2104,7 +2104,11 @@ unsafe fn list_build_chunk(limit: u32) {
             // 第二行一定在卡片内部, 所以胶囊不会再掉到卡片外面。
             let sub = crate::mem::rd32((r + 0x40) as *const u32);
             let base = if sub != 0 { sub } else { r };
-            fw_api::obj_align_to(sp, base, fw_api::align::OUT_BOTTOM_LEFT, 18, 0);
+            // 副标签的“中心”在卡片内(实测正确), 但它的底边比卡片低, 所以只能用 CENTER 再水平偏移。
+            // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
+            let w = pill_w(stxt) as i32;
+            let half = if LB_KIND == 2 { 118 } else { 142 };
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(half - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
         let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
@@ -2496,7 +2500,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.29\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.30\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
