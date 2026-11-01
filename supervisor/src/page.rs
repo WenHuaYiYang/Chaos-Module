@@ -1975,12 +1975,11 @@ static mut ROW_STATE: [u8; 40] = [0xFF; 40];
 
 unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
     if list_building() { return true; } // 还在分批建行, 先不刷
-    let n = crate::appmgr::view_count();
-    if n as u32 != crate::appmgr::ui_rows() { return false; }
+    let n = crate::appmgr::ui_rows() as usize;
     let rows = crate::appmgr::rows_ptr();
     for v in 0..n {
-        let i = crate::appmgr::view_at(v);
-        if i == usize::MAX { return false; }
+        let i = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
+        if i == 0xFFFF || i >= crate::appmgr::APP_MAX { return false; }
         let r = core::ptr::read_volatile(rows.add(v));
         if r == 0 { return false; }
         let vis = crate::appmgr::visible(i);
@@ -2038,6 +2037,8 @@ static mut LB_FIRST: u32 = 0;
 static mut LB_DELAY: u32 = 0;
 static mut LB_SUB_VIS: u32 = 0;
 static mut LB_SUB_HID: u32 = 0;
+// 列表第 v 行对应的应用下标(批量页跳过排除项后, 行号 != 视图号)
+static mut LB_APP: [u16; 64] = [0xFFFF; 64];
 
 static mut LIST_REBUILD: u8 = 0;
 
@@ -2073,7 +2074,13 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub
     }
     LIST_REBUILD = 0;
     LB_DELAY = 3;
-    crate::appmgr::set_ui_rows(LB_N);
+    {
+        let a = core::ptr::addr_of_mut!(LB_APP) as *mut u16;
+        let mut i = 0usize;
+        while i < 64 { core::ptr::write_volatile(a.add(i), 0xFFFF); i += 1; }
+    }
+    let expected = if kind == 2 { crate::appmgr::batch_total() as u32 } else { LB_N };
+    crate::appmgr::set_ui_rows(expected);
     crate::log::kv("应用总数 ", crate::appmgr::count() as u32);
     crate::log::kv("可见列表条目数 ", LB_N);
     list_build_chunk(LB_FIRST_CHUNK);
@@ -2086,6 +2093,10 @@ unsafe fn list_build_chunk(limit: u32) {
         let v = LB_V as usize;
         let i = crate::appmgr::view_at(v);
         if i == usize::MAX { LB_V = LB_N; break; }
+        // 批量页跳过被排除的应用(直接不建行, 不留空白)
+        if LB_KIND == 2 && crate::appmgr::excluded(i) { LB_V += 1; continue; }
+        let app = core::ptr::addr_of_mut!(LB_APP) as *mut u16;
+        core::ptr::write_volatile(app.add(v), i as u16);
         let vis = crate::appmgr::visible(i);
         // 批量页也不再使用复选框: 和页 1 一样用行 + 胶囊, 选中态靠标题变色
         let trailing = 0;
@@ -2105,8 +2116,6 @@ unsafe fn list_build_chunk(limit: u32) {
         fw_api::obj_set_size_wh(r, 320, 100);
         fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
-        // 批量页不显示被排除的应用: 隐藏整行, 不参与布局也不可点击
-        if LB_KIND == 2 && crate::appmgr::excluded(i) { fw_api::obj_add_flag(r, 0x01); }
         // 页 1 自建胶囊; 批量页直接用固件副标题当胶囊(保持可见文本, 行才不会退化单行)
         let sp = fw_api::label_create(r);
         if sp != 0 {
@@ -2204,9 +2213,9 @@ impl Page for AppMgrPage {
                 render_req(1);
             } else if idx >= 12 {
                 let v = idx - 12;
-                if v < crate::appmgr::view_count() {
-                    let e = crate::appmgr::view_at(v);
-                    if e != usize::MAX {
+                if v < crate::appmgr::ui_rows() as usize {
+                    let e = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
+                    if e != 0xFFFF && e < crate::appmgr::APP_MAX {
                         crate::appmgr::detail_open(e);
                         nav_goto(29, 0);    // 应用详情
                     }
@@ -3350,9 +3359,9 @@ impl Page for BatchPage {
                 nav_back();
             } else if idx >= 12 {
                 let v = idx - 12;
-                if v < crate::appmgr::view_count() {
-                    let e = crate::appmgr::view_at(v);
-                    if e != usize::MAX { crate::appmgr::sel_toggle(e); }
+                if v < crate::appmgr::ui_rows() as usize {
+                    let e = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
+                    if e != 0xFFFF && e < crate::appmgr::APP_MAX { crate::appmgr::sel_toggle(e); }
                     if !refresh_list_rows(true) { render_req(30); }
                     refresh_batch_count_row();
                 }
