@@ -12,9 +12,22 @@
 
 ## 一条命令
 
+首次构建先安装图标依赖（建议使用 Python 3.12 的项目虚拟环境；已有 `.venv` 无需重建）：
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r tools/requirements-build.txt
+```
+
+之后直接执行，不需要激活虚拟环境：
+
 ```bash
 python3 tools/build.py
 ```
+
+脚本会在编译前检查 Pillow：优先使用启动脚本的 Python，缺依赖时自动尝试项目
+`.venv/bin/python`（Windows 为 `.venv/Scripts/python.exe`）。若两者均不可用，
+立即报告依赖安装方法，不会先编译模块。依赖只安装在所选环境内，无需修改系统 Python。
 
 输出：
 
@@ -107,7 +120,7 @@ PATH=/tmp/bin:$PATH python3 tools/build.py --no-icons
 | 现象 | 原因 |
 |---|---|
 | `linker 'cc' not found` | 缺宿主 C 链接器，见上一节 |
-| `ModuleNotFoundError: PIL` | 缺 Pillow，加 `--no-icons` |
+| `ModuleNotFoundError: PIL` / 图标 Python 检查失败 | 按上文在项目 `.venv` 中安装 `tools/requirements-build.txt`，然后重跑原命令；仅需复用既有图标时可用 `--no-icons` |
 | 生成的 ko 很小 / `insmod` 成功但没反应 | 少了 `-T merge_sections.ld`，`.text` 为 0 |
 | 容器头校验失败 | `p67_pack.VERSION` 与解析结果不一致，检查 `inspect()` 输出 |
 | 预览图尺寸报错 | `tools/p67-preview.block` 必须是 336×480 |
