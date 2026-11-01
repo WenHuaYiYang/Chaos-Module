@@ -983,7 +983,7 @@ unsafe fn build_view() {
         let du = read_volatile((core::ptr::addr_of!(E_DUP) as *const u8).add(i));
         let ex = if excl_index(pkg_ptr(i)) != usize::MAX { 1u8 } else { 0u8 };
         write_volatile((core::ptr::addr_of_mut!(E_EXCL) as *mut u8).add(i), ex);
-        if ex == 0 && du == 0 && VIEW_N < APP_MAX {
+        if du == 0 && VIEW_N < APP_MAX {
             write_volatile((core::ptr::addr_of_mut!(VIEW_IDX) as *mut u8).add(VIEW_N), i as u8);
             VIEW_N += 1;
         }
@@ -2508,6 +2508,18 @@ pub(crate) unsafe fn detail_ver() -> &'static [u8] {
 }
 
 /// 详情页里切换隐藏/显示: 复用单击流程(REQ_OP), tick 里执行。
+pub(crate) unsafe fn detail_excl_on() -> bool { detail_valid() && excl_on(D_IDX) }
+
+pub(crate) unsafe fn detail_excl_label() -> &'static [u8] {
+    if detail_excl_on() { "取消排除\0".as_bytes() } else { "加入排除\0".as_bytes() }
+}
+
+pub(crate) unsafe fn detail_toggle_excl() {
+    if detail_valid() { request_excl(D_IDX); }
+}
+
+pub(crate) unsafe fn detail_toggle_hide() { if detail_valid() { click(D_IDX); } }
+
 pub(crate) unsafe fn detail_toggle() {
     if !detail_valid() { return; }
     if D_EXCL != 0 {
