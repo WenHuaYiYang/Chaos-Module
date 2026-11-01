@@ -2452,34 +2452,18 @@ pub(crate) unsafe fn detail_uninstall_click() -> bool {
     uninstall_pkg(core::ptr::addr_of!(D_PKG) as *const u8, core::ptr::addr_of!(D_NAME) as *const u8)
 }
 
-/// 详情页「打开应用」: 确保目标在注册表里有节点(深度隐藏重启后没有),
-/// 拿 app_id 后调 `quickapp_launch_app(app_id, NULL)`。
+/// 详情页「打开应用」: 按包名调 `quickapp_launch_app(pkg, NULL)`。
+/// 深度隐藏只影响 launcher 的注册表/图标, 应用本身仍装着, 已装表里能查到。
 /// 返回 true = 已发起启动。
 pub(crate) unsafe fn detail_launch() -> bool {
     if !detail_valid() { return false; }
     let pkg = core::ptr::addr_of!(D_PKG) as *const u8;
-    let mut node = find_node(pkg);
-    if node == 0 {
-        // 深度隐藏把条目搬进 apps.json_hide, 重启后没有节点:
-        // 按 proxyquickapp 已装表补建(只补缺的), 补完再按隐藏状态摘掉图标。
-        let (total, rebuilt) = fw_api::quickapp_resync_missing();
-        log::kv("打开应用-补建节点, 应用表合计 ", total as u32);
-        log::kv("打开应用-本次补建 ", rebuilt);
-        node = find_node(pkg);
-        if node != 0 && D_HIDDEN != 0 {
-            let _ = apply_pkg(true, pkg);
-        }
-    }
-    if node == 0 {
-        wmsg_keep("找不到该应用, 无法打开\0");
+    let rc = fw_api::quickapp_launch_app(pkg);
+    if rc < 0 {
+        wmsg_keep("启动失败, 应用可能未安装\0");
         return false;
     }
-    let id = crate::mem::rd16((node + fw_api::APPN_ID) as *const u16);
-    if id == 0 {
-        wmsg_keep("应用 ID 无效, 无法打开\0");
-        return false;
-    }
-    fw_api::quickapp_launch_app(id) >= 0
+    true
 }
 
 /// 真正卸载: 摘图标 → 删六个目录 → 从两份注册表摘条目 → reload。
