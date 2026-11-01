@@ -1998,10 +1998,6 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
         core::ptr::write_volatile(cache.add(v), st);
         fw_api::row_update(r, fw_api::NONE_PTR,
             crate::appmgr::entry_primary(i), fw_api::NONE_PTR, 0, sel);
-        if selected_mode {
-            let title = crate::mem::rd32((r + 0x3c) as *const u32);
-            if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 18, 8); }
-        }
         let sp = core::ptr::read_volatile((core::ptr::addr_of!(P_STATE_LB) as *const u32).add(v));
         let stxt: &[u8] = if picked { "已选\0".as_bytes() }
             else if vis { "显示中\0".as_bytes() } else { "已隐藏\0".as_bytes() };
@@ -2092,8 +2088,10 @@ unsafe fn list_build_chunk(limit: u32) {
         let vis = crate::appmgr::visible(i);
         // 批量页保留复选框(批量选择的标识); 复选框会压缩第二行宽度, 偏移量按 118 算
         let trailing = if LB_KIND == 2 { fw_api::trailing::CHECKBOX } else { 0 };
+        // 副标题给一个真实字形的占位(不换行空格会被固件当成空, 行退化成单行、标题垂直居中),
+        // 行恢复成两行行型后标题自然回到左上; 这个占位稍后被胶囊完全盖住
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
-            b"\xc2\xa0\0".as_ptr(), trailing);
+            b"M\0".as_ptr(), trailing);
         if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
         fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
@@ -2116,22 +2114,12 @@ unsafe fn list_build_chunk(limit: u32) {
             // 锚在固件自己排出来的第二行(副标签)上: 垂直居中于该行, 水平用 dx 拉回左边距。
             // 第二行一定在卡片内部, 所以胶囊不会再掉到卡片外面。
             let sub = crate::mem::rd32((r + 0x40) as *const u32);
-            if LB_KIND == 2 {
-                // 复选框行被固件当成单行, 标题是垂直居中的; 手动挪到左上, 和页 1 一致
-                let title = crate::mem::rd32((r + 0x3c) as *const u32);
-                if title != 0 { fw_api::obj_align_to(title, r, fw_api::align::TOP_LEFT, 18, 8); }
-            }
             let base = if sub != 0 { sub } else { r };
             // 副标签的“中心”在卡片内(实测正确), 但它的底边比卡片低, 所以只能用 CENTER 再水平偏移。
             // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
             let w = pill_w(stxt) as i32;
             let half = if LB_KIND == 2 { 118 } else { 142 };
-            if sub != 0 {
-                fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(half - w / 2), 0);
-            } else {
-                // 没有副标签(复选框单行): 胶囊挂在行中心再下移, 落在标题下面的空白区
-                fw_api::obj_align_to(sp, r, fw_api::align::CENTER, -(half - w / 2), 22);
-            }
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(half - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
         let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
@@ -2523,7 +2511,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.33\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.34\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
