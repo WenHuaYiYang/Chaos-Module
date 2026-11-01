@@ -942,7 +942,8 @@ unsafe fn refresh_excl_rows() {
                 excl_sub(i), 0, 0);
             let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
             if lab != 0 {
-                fw_api::obj_style_color_a70(lab, if crate::appmgr::visible(i) { C_VISIBLE } else { C_HIDDEN }, 0);
+                if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 7); }
+                else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 7); }
             }
         }
         i += 1;
@@ -1004,7 +1005,8 @@ impl Page for ExclPage {
                 fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, sub, 0, 0);
                 let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
                 if lab != 0 {
-                    fw_api::obj_style_color_a70(lab, if crate::appmgr::visible(i) { C_VISIBLE } else { C_HIDDEN }, 0);
+                    if crate::appmgr::visible(i) { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 7); }
+                    else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 7); }
                 }
             }
             Ok(())
@@ -1915,8 +1917,6 @@ static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
 /// 列表行原地刷新(页1/页30 共用): 行数没变就逐行改副标题与颜色, 不重建整页,
 /// 这样列表滚动位置不会跳回顶部, 也不会在快速连点时销毁/重建行对象。
 /// 返回 false = 行数或句柄对不上, 调用方需要整页重建。
-static mut ROW_STATE: [u8; 40] = [0xFF; 40];
-
 unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
     if list_building() { return true; } // 还在分批建行, 先不刷
     let n = crate::appmgr::view_count();
@@ -1934,15 +1934,12 @@ unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
             core::ptr::addr_of!(AM_STATUS_HID) as *const u8
         };
         let sel = if selected_mode && crate::appmgr::sel_has(i) { 1u8 } else { 0u8 };
-        let st = (vis as u8) | (sel << 1);
-        let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
-        if core::ptr::read_volatile(cache.add(v)) == st { continue; }
-        core::ptr::write_volatile(cache.add(v), st);
         fw_api::row_update(r, fw_api::NONE_PTR,
             crate::appmgr::entry_primary(i), sub, 0, sel);
         let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
         if lab != 0 {
-            fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
+            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 3); }
+            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 3); }
         }
     }
     true
@@ -1984,11 +1981,6 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub
     LB_FIRST = 1;
     LB_SUB_VIS = sub_vis as u32;
     LB_SUB_HID = sub_hid as u32;
-    {
-        let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
-        let mut i = 0usize;
-        while i < 40 { core::ptr::write_volatile(cache.add(i), 0xFF); i += 1; }
-    }
     crate::appmgr::set_ui_rows(LB_N);
     list_build_chunk(LB_FIRST_CHUNK);
 }
@@ -2013,7 +2005,8 @@ unsafe fn list_build_chunk(limit: u32) {
         }
         let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
         if lab != 0 {
-            fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
+            if vis { pill(lab, C_VISIBLE, C_VISIBLE_TINT, 3); }
+            else { pill(lab, C_HIDDEN, C_HIDDEN_TINT, 3); }
         }
         fw_api::obj_set_size_wh(r, 320, 100);
         cardify(r);
@@ -2393,7 +2386,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.9\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.8\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
