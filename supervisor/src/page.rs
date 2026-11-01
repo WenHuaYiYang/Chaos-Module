@@ -2127,8 +2127,9 @@ unsafe fn list_build_chunk(limit: u32) {
             // 副标签的“中心”在卡片内(实测正确), 但它的底边比卡片低, 所以只能用 CENTER 再水平偏移。
             // 批量页带复选框, 副标签可用宽度更窄, 偏移量按行宽减去复选框宽度算。
             let w = pill_w(stxt) as i32;
-            let half = if LB_KIND == 2 { 118 } else { 142 };
-            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(half - w / 2), -10);
+            // 纵向保持贴第二行底部(下边距刚好), 只把左边距收小到和它一致
+            let half = if LB_KIND == 2 { 118 } else { 150 };
+            fw_api::obj_align_to(sp, base, fw_api::align::CENTER, -(half - w / 2), 0);
         }
         P_STATE_LB[v] = sp;
         let exp = add_excl_pill(r, sp, i, LB_KIND == 2);
@@ -2520,7 +2521,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.37\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.38\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
