@@ -122,6 +122,12 @@ static mut E_EXCL: [u8; APP_MAX] = [0; APP_MAX];
 // 页1 过滤视图: VIEW_IDX[v] = 完整列表下标; 已排除的条目不出现在页1。
 static mut VIEW_IDX: [u8; APP_MAX] = [0; APP_MAX];
 static mut VIEW_N: usize = 0;
+// 页1/页30 上次建出来的行数。行数没变就逐行原地刷新, 不整页重建
+// (重建会销毁行对象, 列表滚动位置也会跳回顶部)。
+static mut UI_ROWS: u32 = 0;
+
+pub(crate) unsafe fn set_ui_rows(n: u32) { UI_ROWS = n; }
+pub(crate) unsafe fn ui_rows() -> u32 { UI_ROWS }
 
 // 页7 的展示顺序: 排除项优先, 其余保持原顺序。
 static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];

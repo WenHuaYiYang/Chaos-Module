@@ -837,27 +837,7 @@ unsafe fn cstr_len(s: *const u8) -> usize {
 // 排除项不参与页1 的一键隐藏/显示, 且在页1 列表里不出现。
 // 行0=返回 行1=说明 行2=状态; 条目事件槽 = 条目下标 + 12(与页1 错开 ctx.rows)。
 
-/// 单条切换后只改复选框与状态文本, 不重建整页(避免列表跳回顶部)。
-unsafe fn refresh_appmgr_rows() {
-    let rows = crate::appmgr::rows_ptr();
-    let n = crate::appmgr::view_count();
-    let mut v = 0usize;
-    while v < n {
-        let i = crate::appmgr::view_at(v);
-        if i == usize::MAX { break; }
-        let r = read_volatile(rows.add(v));
-        if r != 0 {
-            fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                crate::appmgr::pkg_ptr(i), 0, crate::appmgr::visible(i) as u8);
-        }
-        v += 1;
-    }
-    if AM_MSG_ROW != 0 {
-        fw_api::row_update(AM_MSG_ROW, fw_api::NONE_PTR,
-            crate::appmgr::msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
-    }
-}
-
+// (旧版 refresh_appmgr_rows 已由 refresh_list_rows 取代)
 unsafe fn refresh_excl_rows() {
     let rows = crate::appmgr::rows_ptr();
     let mode = crate::appmgr::excl_mode();
@@ -1837,6 +1817,44 @@ const C_VISIBLE: u32 = 0x4A_9EFF;
 static mut AM_STATUS_HID: [u8; 12] = [0; 12];
 static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
 
+/// 列表行原地刷新(页1/页30 共用): 行数没变就逐行改副标题与颜色, 不重建整页,
+/// 这样列表滚动位置不会跳回顶部, 也不会在快速连点时销毁/重建行对象。
+/// 返回 false = 行数或句柄对不上, 调用方需要整页重建。
+unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
+    let n = crate::appmgr::view_count();
+    if n as u32 != crate::appmgr::ui_rows() { return false; }
+    let rows = crate::appmgr::rows_ptr();
+    for v in 0..n {
+        let i = crate::appmgr::view_at(v);
+        if i == usize::MAX { return false; }
+        let r = core::ptr::read_volatile(rows.add(v));
+        if r == 0 { return false; }
+        let vis = crate::appmgr::visible(i);
+        let sub = if vis {
+            core::ptr::addr_of!(AM_STATUS_VIS) as *const u8
+        } else {
+            core::ptr::addr_of!(AM_STATUS_HID) as *const u8
+        };
+        let sel = if selected_mode && crate::appmgr::sel_has(i) { 1u8 } else { 0u8 };
+        fw_api::row_update(r, fw_api::NONE_PTR,
+            crate::appmgr::entry_primary(i), sub, 0, sel);
+        let lab = crate::mem::rd32((r + ROW_SUB_LB) as *const u32);
+        if lab != 0 {
+            fw_api::obj_style_color_a70(lab, if vis { C_VISIBLE } else { C_HIDDEN }, 0);
+        }
+    }
+    true
+}
+
+/// 状态行原地刷新(页1 的"已隐藏 N / 显示中 M"提示)
+unsafe fn refresh_msg_row() {
+    let r = core::ptr::read_volatile(core::ptr::addr_of!(AM_MSG_ROW));
+    if r != 0 {
+        fw_api::row_update(r, fw_api::NONE_PTR,
+            crate::appmgr::msg().as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
+}
+
 impl Page for AppMgrPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用管理\0".as_bytes()); }
@@ -1870,6 +1888,7 @@ impl Page for AppMgrPage {
             if prev == 0 { prev = ctx.title; }
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::view_count();
+            crate::appmgr::set_ui_rows(n as u32);
             let mut v = 0usize;
             while v < n {
                 let i = crate::appmgr::view_at(v);
@@ -1937,7 +1956,10 @@ impl Page for AppMgrPage {
             } else if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
             }
-            render_req(1);
+            // 只改了隐藏位/名单时逐行原地刷新, 行数变了(卸载、重扫)才整页重建。
+            // 整页重建会销毁行对象, 列表滚动位置会跳回顶部。
+            refresh_msg_row();
+            if !refresh_list_rows(false) { render_req(1); }
         }
     }
 }
@@ -2202,7 +2224,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.2\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.3\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2929,6 +2951,7 @@ static mut B_LBL_ALL: [u8; 32] = [0; 32];
 static mut B_LBL_UNSEL: [u8; 32] = [0; 32];
 static mut B_LBL_DEL: [u8; 32] = [0; 32];
 static mut B_LBL_DEL2: [u8; 32] = [0; 32];
+static mut B_COUNT_ROW: u32 = 0;
 
 unsafe fn b_sel_text() -> *const u8 {
     let d = core::ptr::addr_of_mut!(B_SEL_TXT) as *mut u8;
@@ -2938,6 +2961,15 @@ unsafe fn b_sel_text() -> *const u8 {
         .s("\0".as_bytes());
     w.end();
     d
+}
+
+/// 批量页的"已选 N / 共 M"行原地刷新
+unsafe fn refresh_batch_count_row() {
+    let r = core::ptr::read_volatile(core::ptr::addr_of!(B_COUNT_ROW));
+    if r != 0 {
+        fw_api::row_update(r, fw_api::NONE_PTR,
+            cstr_static(b_sel_text()).as_ptr(), fw_api::NONE_PTR, 0, 0);
+    }
 }
 
 impl Page for BatchPage {
@@ -2972,6 +3004,7 @@ impl Page for BatchPage {
                 &RowSpec::display(cstr_static(b_sel_text()), core::ptr::null()));
             if s0 == 0 { return Err(PageError::RowFailed(0)); }
             row_shrink(s0, 56);
+            B_COUNT_ROW = s0;
             let t1 = build_tile_below(ctx, s0, 1, all, TILE_W, TILE_H);
             if t1 == 0 { return Err(PageError::RowFailed(1)); }
             let _ = build_tile_right(ctx, t1, 2, "隐藏选中\0".as_bytes(), TILE_W, TILE_H);
@@ -2984,6 +3017,7 @@ impl Page for BatchPage {
             let mut first = true;
             let rows = crate::appmgr::rows_ptr();
             let n = crate::appmgr::view_count();
+            crate::appmgr::set_ui_rows(n as u32);
             let mut v = 0usize;
             while v < n {
                 let i = crate::appmgr::view_at(v);
@@ -3022,7 +3056,8 @@ impl Page for BatchPage {
         unsafe {
             if idx == 1 {
                 crate::appmgr::sel_toggle_all();
-                render_req(30);
+                if !refresh_list_rows(true) { render_req(30); }
+                refresh_batch_count_row();
             } else if idx == 2 {
                 crate::appmgr::batch_request_sel(true);
                 render_req(30);
@@ -3044,7 +3079,8 @@ impl Page for BatchPage {
                 if v < crate::appmgr::view_count() {
                     let e = crate::appmgr::view_at(v);
                     if e != usize::MAX { crate::appmgr::sel_toggle(e); }
-                    render_req(30);
+                    if !refresh_list_rows(true) { render_req(30); }
+                    refresh_batch_count_row();
                 }
             }
         }
@@ -3066,7 +3102,9 @@ impl Page for BatchPage {
             } else if crate::appmgr::del_pending() {
                 crate::appmgr::do_del_batch();
             }
-            render_req(30);
+            // 状态/勾选变化原地刷新；删除会让行数变化，那时才整页重建
+            if !refresh_list_rows(true) { render_req(30); }
+            refresh_batch_count_row();
         }
     }
 }
