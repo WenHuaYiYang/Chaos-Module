@@ -2649,6 +2649,11 @@ pub(crate) unsafe fn detail_fmt() -> *const u8 {
     } else {
         w.s(" · 版本未知".as_bytes());
     }
+    // 顺便把快应用代理的“已装应用表”数量显示出来: 0 表示 proxyquickapp 没起来,
+    // 补节点/打开都会失败。这样不用看日志也能判断。
+    let n = fw_api::quickapp_app_count();
+    w.s(" · 表".as_bytes());
+    w.n(if n > 0 { n as u32 } else { 0 });
     w.s("\0".as_bytes());
     w.end();
     d

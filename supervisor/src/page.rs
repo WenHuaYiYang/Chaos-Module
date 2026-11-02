@@ -964,7 +964,7 @@ pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
 const LOG_VIEW_CAP: usize = 48 * 1024;
-const LOG_PAGE_LINES: usize = 8;
+const LOG_PAGE_LINES: usize = 4;
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
 static mut LOG_TEXT: [u8; 4096] = [0; 4096];
 static mut LOG_LINE_OFF: [u32; 1024] = [0; 1024];
@@ -1026,7 +1026,7 @@ unsafe fn log_page_load() {
     } else {
         let mut b = [0u8; 48];
         let mut w = crate::text::W::new(b.as_mut_ptr(), 48);
-        w.s("共 ".as_bytes());
+        w.s("v1.1.6 共 ".as_bytes());
         w.n(count as u32);
         w.s(" 行 第 ".as_bytes());
         w.n((LOG_PAGE + 1) as u32);
@@ -1065,7 +1065,7 @@ impl Page for LogPage {
             let prev = if rp.is_null() { 0 } else { read_volatile(rp.add(5)) };
             let lab = fw_api::label_create(ctx.content);
             if lab != 0 {
-                fw_api::style_apply(lab, crate::FW_STYLE_HR_NAME, 255, 0);
+                fw_api::style_apply(lab, crate::FW_STYLE_MISANS_REG_24, 255, 0);
                 fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
                 fw_api::obj_set_size_wh(lab, 320, 320);
                 fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
@@ -2385,7 +2385,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.5\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.6\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
