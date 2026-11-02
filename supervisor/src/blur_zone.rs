@@ -1,4 +1,4 @@
-// 模糊区域开关 —— "系统模糊"背景替换/透明化的**分区域门控**。
+// 模糊区域开关 —— "系统模糊"所有模式(包括 Corona)共用的分区域门控。
 //
 // 背景 hook 的四个目标面(fw_api::background_home_targets 的槽位, 顺序固定):
 //   0 = 启动器(桌面列表)   1 = 控制中心
@@ -13,6 +13,7 @@
 //   * 静态背景(mode 1): 关闭的槽位不 attach SCENE 图像、不 enable 透明卡片;
 //   * 完全透明(mode 3): 关闭的槽位不置 BG_OPA=0、不扫子树;
 //   * 通知中心(slot 3): 关闭时 background_pages 不接管聚合页 on_create。
+//   * Corona: 同一位图转换为各区域 :blur / system 配置，由原版 hook 完成切换。
 
 use crate::fw_api;
 use crate::{st_rd, st_wr};
@@ -27,7 +28,7 @@ static mut LOADED: u32 = 0;
 
 const CFG: &[u8] = b"/data/chaos/blur_regions.cfg\0";
 
-/// 只在进设置页和第一次 set 前调一次; 文件缺失/越界值保持默认全开
+/// 首次读取/修改时加载; 文件缺失/越界值保持默认全开
 pub(crate) unsafe fn ensure_loaded() {
     if LOADED != 0 { return; }
     LOADED = 1;
@@ -39,6 +40,12 @@ pub(crate) unsafe fn ensure_loaded() {
         }
         fw_api::close(fd);
     }
+}
+
+/// 所有模糊引擎共用的持久化区域位图。Corona 首次启用也必须尊重已保存的选择。
+pub(crate) unsafe fn mask() -> u32 {
+    ensure_loaded();
+    st_rd!(MASK) & 0x0F
 }
 
 /// 槽位当前是否启用(st_rd! 是 volatile 读, 调用方都在 unsafe 上下文)

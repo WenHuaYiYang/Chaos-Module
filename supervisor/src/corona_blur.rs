@@ -9,7 +9,7 @@ use crate::fw_api;
 const CONFIG: &[u8] = b"/data/chaos/corona_blur.cfg\0";
 
 extern "C" {
-    fn chaos_corona_backgrounds_commit(enabled: u32) -> i32;
+    fn chaos_corona_backgrounds_commit(enabled: u32, region_mask: u32) -> i32;
     fn chaos_corona_backgrounds_poll();
     fn chaos_corona_backgrounds_pending() -> u32;
     fn chaos_corona_backgrounds_idle() -> i32;
@@ -56,12 +56,14 @@ pub(crate) unsafe fn set(on: bool) {
     set_enabled(on);
 }
 
-/// Commit Corona's complete four-surface background configuration. The C
+/// Commit Corona's background configuration using the shared region mask:
+/// launcher, control center, widgets, notifications (bits 0 through 3).
+/// Unselected regions retain the system background. The C
 /// implementation is the verbatim p67_backgrounds/p67_launcher state machine;
 /// a non-zero return means it is still busy with a native scroll/delete and
 /// must be retried on a later UI-owner tick.
-pub(crate) unsafe fn backgrounds_commit(enabled: bool) -> i32 {
-    chaos_corona_backgrounds_commit(enabled as u32)
+pub(crate) unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 {
+    chaos_corona_backgrounds_commit(enabled as u32, region_mask & 0x0F)
 }
 
 pub(crate) unsafe fn backgrounds_poll() {

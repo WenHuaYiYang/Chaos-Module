@@ -1608,7 +1608,7 @@ impl Page for AppListPage {
 // 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
 // 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
 // 旧版静态背景/实时截取设置移到页7，主页面只保留系统背景、Corona 模糊、
-// 旧版选项和模糊区域。区域掩码只影响旧版；Corona 开启后固定覆盖四个区域。
+// 旧版选项和模糊区域。区域掩码对所有模糊实现生效，包括 Corona 模糊。
 pub(crate) struct BlurPage;
 
 pub(crate) const BLUR_LEGACY_PID: u32 = 7;
@@ -1620,17 +1620,22 @@ impl Page for BlurPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            build_rows(ctx, ctx.title, &[
+            let prev = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                (1, RowSpec::switch("Corona 模糊\0".as_bytes())),
+                (1, RowSpec::switch("Corona模糊\0".as_bytes())),
                 (2, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (3, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 Corona 后生效\0".as_bytes().as_ptr())),
-                (4, RowSpec::tap("模糊区域\0".as_bytes(), "仅对旧版选项生效\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("Corona 固定覆盖四区\0".as_bytes(),
-                    "启动器/控制中心/小部件/通知中心\0".as_bytes().as_ptr())),
-                (11, RowSpec::clickable("返回\0".as_bytes())),
-                (5, RowSpec::display("使用 Corona 模糊实现\0".as_bytes(),
-                    "https://github.com/AstralSightStudios/Canopus-Module-Corona\0".as_bytes().as_ptr()))])?;
+                (3, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 Corona模糊后生效\0".as_bytes().as_ptr())),
+                (4, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 Corona模糊）\0".as_bytes().as_ptr())),
+                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
+            // 长说明不放入会裁切的行副标题。与许可全文相同：标签只限宽，
+            // 高度随换行增长；挂在原生可滚动 content 上，完整 URL 不含 Markdown 标记。
+            let label = fw_api::label_create(ctx.content);
+            if label == 0 { return Err(PageError::RowFailed(5)); }
+            fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
+            fw_api::obj_set_width(label, 320);
+            fw_api::label_set_text(label,
+                "说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor。\0".as_bytes().as_ptr());
+            fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
                 fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
                 (crate::background_home::mode() == 0 && !crate::corona_blur::enabled()) as u8);
@@ -1687,7 +1692,7 @@ impl Page for BlurLegacyPage {
                 (2, RowSpec::clickable("手动生成或更新表盘背景\0".as_bytes())),
                 (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
                 (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (5, RowSpec::display("关闭 Corona 后生效\0".as_bytes(), core::ptr::null())),
+                (5, RowSpec::display("关闭 corona模糊后生效\0".as_bytes(), core::ptr::null())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             let mode = crate::background_home::mode();
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
@@ -2441,7 +2446,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.0\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.1\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2504,8 +2509,8 @@ impl Page for LicensesPage {
                     "AGPL-3.0-only\0".as_bytes().as_ptr())),
                 (1, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
                     "MPL-2.0\0".as_bytes().as_ptr())),
-                (2, RowSpec::display("Corona 上游源代码\0".as_bytes(),
-                    "https://github.com/AstralSightStudios/Canopus-Module-Corona\0".as_bytes().as_ptr())),
+                // (2, RowSpec::display("Corona 上游源代码\0".as_bytes(),
+                //     "https://github.com/AstralSightStudios/Canopus-Module-Corona\0".as_bytes().as_ptr())),
             ]).map(|_| ())
         }
     }
@@ -2718,10 +2723,10 @@ impl Page for DateMDPage {
 
 // ===== 页15: 系统模糊 -> 模糊区域(三级) =====
 //
-// 四个旧版背景替换区域的开关(数据与持久化全在 blur_zone.rs, 这里只建行与派发):
-//   行0=启动器 行1=控制中心 行2=通知中心 行3=小部件 行11=返回。
+// 四个背景替换区域的开关(数据与持久化全在 blur_zone.rs, 这里只建行与派发):
+//   行0=启动器 行1=控制中心 行2=小部件 行3=通知中心 行11=返回。
 // 开 = 正常替换(默认); 关 = 该区域保持官方模糊画面。
-// 仅约束旧版选项；Corona 不读取这张掩码，开启时固定覆盖四区。
+// 对所有模糊选项生效，包括 Corona 模糊。
 // 翻位后 blur_zone::set 持久化 + background_home::remount() 置 REQUEST,
 // 由背景 tick 的拆/装流程按新掩码统一重建(页面退出前就能看到拆装, 不用重启)。
 // 开关初态: 单排行, row_update 第 6 参原地补写(secondary 传 NONE 是安全的 ——
@@ -2737,8 +2742,8 @@ impl Page for BlurZonePage {
         unsafe {
             crate::blur_zone::ensure_loaded();
             build_rows(ctx, ctx.title, &[
-                (4, RowSpec::display("仅对旧版选项生效\0".as_bytes(),
-                    "Corona 固定覆盖四区\0".as_bytes().as_ptr())),
+                (4, RowSpec::display("适用于所有模糊选项\0".as_bytes(),
+                    "包括 corona模糊\0".as_bytes().as_ptr())),
                 (0, RowSpec::switch("启动器\0".as_bytes())),
                 (1, RowSpec::switch("控制中心\0".as_bytes())),
                 (2, RowSpec::switch("小部件\0".as_bytes())),

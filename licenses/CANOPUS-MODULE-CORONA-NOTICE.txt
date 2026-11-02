@@ -32,10 +32,16 @@ Verbatim upstream files (paths relative to supervisor/corona_vendor):
   src/p67_blur_native.inc
   src/p67_launcher.inc
 
-The vendored p67 background/launcher code covers all four static surfaces:
-  launcher, control center, widgets, and notification center. The Corona
-  mode does not consult Chaos's legacy blur-region mask; it owns all four
-  surfaces as one provider. The legacy mask page is documented as legacy-only.
+The vendored p67 background/launcher code supports all four surfaces:
+  launcher, control center, widgets, and notification center. All Chaos blur
+  modes, including Corona, use the same persisted region mask. The Chaos
+  adapter selects Corona's original :blur path for each enabled region and
+  the original empty/system path for each disabled region. Runtime changes
+  are committed by the UI owner, with retries while native rendering is busy.
+  This configuration selection does not modify the vendored implementation.
+
+Chaos integration source location shown in the on-device explanation:
+  https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor
 
 Original host harnesses (paths relative to supervisor/tests/corona):
   p67_backgrounds_harness.c

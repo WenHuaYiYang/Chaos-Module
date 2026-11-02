@@ -124,7 +124,7 @@ pub(crate) unsafe fn build_structures() {
     // 逐页注册(固件自带模块是 3 页模式, 这里扩到 29 页; 全部填充无空页 —— 空描述符会崩):
 // page0=信息 page1=应用管理 page2/3=时间/日期设置 page4=系统模糊 page5=更换字体
 // page6=桌面图标 page7=旧版模糊选项 page8/9=表盘切换/摇一摇轮换 page10=表盘管理
-// page11=亮度 page12=缓存 page13=系统美化菜单 page14=设置 page15=旧版模糊区域 page16=震动
+// page11=亮度 page12=缓存 page13=系统美化菜单 page14=设置 page15=模糊区域(包括corona) page16=震动
 // page17=运行日志 page18=关于 page19=恢复fetch page20=开放源代码许可 page21=Corona AGPL/MPL全文
 // page22=系统版本显示 page23=键盘 page24=系统关于页面修改 page25=手环系统文本
 // page26=设备名称 page27=手环型号 page28=应用列表设置。

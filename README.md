@@ -96,6 +96,8 @@ python3 tools/build.py --skip-ko  # 只重打容器
 该实现按上游声明采用 **AGPL-3.0-only**。上游实现和[许可证原文](supervisor/corona_vendor/LICENSE)
 保留在 `supervisor/corona_vendor/`；来源、文件校验值、Chaos 适配边界和分发注意事项见
 [Corona 第三方声明](licenses/CANOPUS-MODULE-CORONA-NOTICE.txt)。设备端可在“关于 → 开放源代码许可”查看许可全文。
+“模糊区域”对 Corona 和旧版模糊共同生效；系统模糊页底部“说明”同时列出上游与
+[Chaos 修改后源码](https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor)。
 分发二进制时需提供与该二进制对应的完整源码和构建/安装脚本；只附上上游链接或许可证并不足以替代相应源码义务。
 
 ## 致谢

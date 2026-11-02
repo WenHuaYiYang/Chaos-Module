@@ -7,6 +7,7 @@ use std::sync::Mutex;
 macro_rules! st_rd { ($value:expr) => { $value }; }
 macro_rules! st_wr { ($slot:expr, $value:expr) => { $slot = $value }; }
 static mut CORONA_BG_ACTIVE: u32 = 0;
+static mut CORONA_BG_MASK: u32 = 0;
 static mut ATTACHED: u32 = 0;
 static mut SOURCE_MODE: u32 = 0;
 static mut REFRESH: u32 = 0;
@@ -21,13 +22,16 @@ static mut SCENE: Scene = Scene;
 struct State {
     enabled: bool, screen: bool, idle: bool, targets: bool, pages: bool,
     scene_unmounted: bool, unmount_ok: bool, release_ok: bool, cleanup_pending: bool,
-    commit_rc: i32, calls: Vec<&'static str>, status: u32,
+    commit_rc: i32, region_mask: u32, commits: Vec<(bool, u32)>,
+    calls: Vec<&'static str>, status: u32,
+    saved_mask: Option<u8>, opens: u32, reads: u32,
 }
 impl State {
     fn new() -> Self {
         Self { enabled: false, screen: true, idle: true, targets: true, pages: false,
                scene_unmounted: true, unmount_ok: true, release_ok: true, cleanup_pending: false,
-               commit_rc: 0, calls: Vec::new(), status: 99 }
+               commit_rc: 0, region_mask: 0x0f, commits: Vec::new(), calls: Vec::new(), status: 99,
+               saved_mask: None, opens: 0, reads: 0 }
     }
 }
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -37,9 +41,10 @@ fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
 fn reset() {
     *STATE.lock().unwrap() = Some(State::new());
     unsafe {
-        CORONA_BG_ACTIVE = 0; ATTACHED = 0; SOURCE_MODE = 0; REFRESH = 0;
+        CORONA_BG_ACTIVE = 0; CORONA_BG_MASK = 0; ATTACHED = 0; SOURCE_MODE = 0; REFRESH = 0;
         REQUEST = 0; GENERATE = 0; MODE = 0; DIRTY = 0; BOOT_DELAY = 0;
         DELETED = [(0, 0); 4];
+        region_storage::reset();
     }
 }
 struct Scene;
@@ -57,12 +62,35 @@ unsafe fn unmount() -> bool {
 unsafe fn uninstall() { with(|s| s.calls.push("uninstall")); }
 unsafe fn set_status(value: u32) { with(|s| s.status = value); }
 mod fw_api {
+    pub mod oflag { pub const RDONLY: u32 = 1; }
+    pub unsafe fn open(path: *const u8, mode: u32, _: u32) -> i32 {
+        assert_eq!(std::ffi::CStr::from_ptr(path.cast()).to_bytes(), b"/data/chaos/blur_regions.cfg");
+        assert_eq!(mode, oflag::RDONLY);
+        crate::with(|s| { s.opens += 1; if s.saved_mask.is_some() { 1 } else { -1 } })
+    }
+    pub unsafe fn read(fd: i32, value: *mut u8, size: u32) -> i32 {
+        assert_eq!(fd, 1); assert_eq!(size, 1);
+        *value = crate::with(|s| { s.reads += 1; s.saved_mask.unwrap() }); 1
+    }
+    pub unsafe fn close(fd: i32) { assert_eq!(fd, 1); }
     pub unsafe fn screen_is_on() -> bool { crate::with(|s| s.screen) }
     pub unsafe fn background_home_targets() -> Option<[u32; 4]> {
         crate::with(|s| s.targets.then_some([10, 20, 30, 40]))
     }
 }
 mod background_pages { pub unsafe fn hooked() -> bool { crate::with(|s| s.pages) } }
+mod blur_zone {
+    pub unsafe fn mask() -> u32 { crate::with(|s| s.region_mask) }
+    pub unsafe fn on(slot: usize) -> bool { slot < 4 && mask() & (1 << slot) != 0 }
+}
+mod region_storage {
+    use crate::fw_api;
+    static mut MASK: u32 = 0x0f;
+    static mut LOADED: u32 = 0;
+    const CFG: &[u8] = b"/data/chaos/blur_regions.cfg\0";
+    pub unsafe fn reset() { MASK = 0x0f; LOADED = 0; }
+    include!(env!("CHAOS_CORONA_REGION_SOURCE"));
+}
 mod background_surfaces {
     pub unsafe fn pending() -> bool { false }
     pub unsafe fn clear_background() { crate::with(|s| {
@@ -76,8 +104,12 @@ mod corona_blur {
     pub unsafe fn backgrounds_idle() -> bool { crate::with(|s| s.idle) }
     pub unsafe fn backgrounds_pending() -> bool { crate::with(|s| s.cleanup_pending) }
     pub unsafe fn backgrounds_poll() { crate::with(|s| s.calls.push("poll")); }
-    pub unsafe fn backgrounds_commit(enabled: bool) -> i32 {
-        crate::with(|s| { s.calls.push(if enabled { "on" } else { "off" }); s.commit_rc })
+    pub unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 {
+        crate::with(|s| {
+            s.commits.push((enabled, region_mask));
+            s.calls.push(if enabled { "on" } else { "off" });
+            s.commit_rc
+        })
     }
 }
 
@@ -96,8 +128,29 @@ fn enabled_from_system_mode_unmounts_then_commits_all_hooks() {
     reset(); with(|s| s.enabled = true);
     unsafe {
         assert!(pending()); assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 1);
+        assert_eq!(CORONA_BG_MASK, 0x0f);
         assert_eq!(MODE, 0); assert_eq!(ATTACHED, 0); assert_eq!(SOURCE_MODE, 0);
     }
+    with(|s| assert_eq!(s.calls, ["unmount", "clear", "release", "uninstall", "on", "poll"]));
+}
+
+#[test]
+fn active_mask_changes_commit_only_after_native_acceptance() {
+    reset(); with(|s| s.enabled = true);
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_MASK, 0x0f); }
+    with(|s| { s.region_mask = 0b0101; s.calls.clear(); s.commit_rc = -2145; });
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_MASK, 0x0f); }
+    with(|s| { assert_eq!(s.calls, ["on", "poll"]); s.calls.clear(); s.commit_rc = 0; });
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_MASK, 0b0101); }
+    with(|s| { assert_eq!(s.calls, ["on", "poll"]); s.calls.clear(); });
+    unsafe { assert!(corona_tick()); }
+    with(|s| assert_eq!(s.calls, ["poll"]));
+}
+
+#[test]
+fn all_regions_disabled_keeps_corona_owner_without_legacy_fallback() {
+    reset(); with(|s| { s.enabled = true; s.region_mask = 0; });
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 1); assert_eq!(CORONA_BG_MASK, 0); }
     with(|s| assert_eq!(s.calls, ["unmount", "clear", "release", "uninstall", "on", "poll"]));
 }
 

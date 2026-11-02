@@ -28,10 +28,12 @@ class CoronaUiTests(unittest.TestCase):
         names = ipc.split("let pnames:", 1)[1].split("];", 1)[0]
         self.assertIn("addr_of!(PAGE_BLUR_LEGACY)", names)
 
-    def test_main_page_preserves_entries_and_clarifies_legacy_scope(self):
+    def test_main_page_preserves_entries_and_clarifies_shared_region_scope(self):
         main = page_impl("BlurPage")
-        for text in ("系统背景", "Corona 模糊", "旧版选项", "模糊区域", "仅对旧版选项生效", "Corona 固定覆盖四区"):
+        for text in ("系统背景", "corona模糊", "旧版选项", "模糊区域", "适用于所有模糊选项（包括 corona模糊）"):
             self.assertIn(text, main)
+        self.assertNotIn("Corona 固定覆盖四区", main)
+        self.assertNotIn("仅对旧版选项生效", main)
         self.assertIn("mode() == 0 && !crate::corona_blur::enabled()", main)
 
     def test_selecting_system_background_disables_corona_first(self):
@@ -46,18 +48,36 @@ class CoronaUiTests(unittest.TestCase):
         for text in ("静态背景图(表盘)", "自动截取替换图片", "手动生成或更新表盘背景", "完全透明背景（实验性）"):
             self.assertIn(text, legacy)
             self.assertNotIn(text, main)
-        self.assertIn("关闭 Corona 后生效", legacy)
+        self.assertIn("关闭 corona模糊后生效", legacy)
 
-    def test_region_page_explains_corona_does_not_use_its_mask(self):
+    def test_region_page_explains_scope_includes_corona(self):
         regions = page_impl("BlurZonePage")
-        self.assertIn("仅对旧版选项生效", regions)
-        self.assertIn("Corona 固定覆盖四区", regions)
+        self.assertIn("适用于所有模糊选项", regions)
+        self.assertIn("包括 corona模糊", regions)
+        self.assertNotIn("Corona 固定覆盖四区", regions)
+        self.assertNotIn("仅对旧版选项生效", regions)
 
-    def test_attribution_is_last_main_page_row(self):
+    def test_attribution_is_last_growing_content_label_with_plain_urls(self):
         main = page_impl("BlurPage").split("fn on_click", 1)[0]
         self.assertIn(SOURCE_URL, main)
         self.assertGreater(main.index(SOURCE_URL), main.index("返回"))
-        self.assertIn("使用 Corona 模糊实现", main)
+        self.assertNotIn('RowSpec::display("说明\\0".as_bytes()', main)
+        self.assertNotIn("使用 Corona 模糊实现", main)
+        modified_url = "https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor"
+        exact_notice = (
+            f"说明：“corona模糊”功能源码来自{SOURCE_URL}，"
+            f"修改后源码可见：{modified_url}。"
+        )
+        self.assertIn(exact_notice, main)
+        self.assertEqual(main.count(SOURCE_URL), 1)
+        self.assertEqual(main.count(modified_url), 1)
+        self.assertNotIn("[https://", main)
+        self.assertIn("let prev = build_rows(ctx, ctx.title", main)
+        self.assertIn("fw_api::label_create(ctx.content)", main)
+        self.assertIn("style_apply(label, crate::FW_STYLE_HR_NAME", main)
+        self.assertIn("obj_set_width(label, 320)", main)
+        self.assertNotIn("obj_set_size_wh(label", main)
+        self.assertIn("obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID", main)
 
     def test_about_license_is_reachable_and_uses_upstream_text(self):
         about = page_impl("AboutPage")

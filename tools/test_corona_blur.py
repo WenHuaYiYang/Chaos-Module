@@ -108,14 +108,19 @@ def check_c_abi_contract() -> None:
     """Check the thin C seam cannot silently configure only one surface."""
     shim = (ROOT / "supervisor/corona_blur.c").read_text()
     required = (
-        "static const struct rh_backgrounds blur",
-        ".launcher = RH_BG_BLUR",
-        ".control_center = RH_BG_BLUR",
-        ".notifications = RH_BG_BLUR",
-        ".widgets = RH_BG_BLUR",
-        "static const struct rh_backgrounds system = {0};",
+        "int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask)",
+        "struct rh_backgrounds backgrounds",
+        "backgrounds.launcher",
+        "backgrounds.control_center",
+        "backgrounds.notifications",
+        "backgrounds.widgets",
+        "region_mask &= 0x0fu;",
+        "if (region_mask & 1u)",
+        "if (region_mask & 2u)",
+        "if (region_mask & 4u)",
+        "if (region_mask & 8u)",
         "if (chaos_corona_in_call || !p67_blur_native_idle()) return -2145;",
-        "result = rh_platform_backgrounds_commit(enabled ? &blur : &system);",
+        "result = rh_platform_backgrounds_commit(&backgrounds);",
         "if (!result) chaos_corona_enabled = !!enabled;",
         "if (chaos_corona_in_call) return;",
         "chaos_corona_backgrounds_pending",
@@ -135,18 +140,22 @@ def check_owner_state_contract() -> None:
     required = (
         "if st_rd!(CORONA_BG_ACTIVE) == 0",
         "crate::corona_blur::backgrounds_idle()",
-        "crate::corona_blur::backgrounds_commit(true)",
+        "let region_mask = crate::blur_zone::mask();",
+        "crate::corona_blur::backgrounds_commit(true, region_mask)",
+        "st_rd!(CORONA_BG_MASK) != region_mask",
+        "st_wr!(CORONA_BG_MASK, region_mask)",
         "st_wr!(CORONA_BG_ACTIVE, 1)",
-        "crate::corona_blur::backgrounds_commit(false)",
+        "crate::corona_blur::backgrounds_commit(false, 0)",
         "st_wr!(CORONA_BG_ACTIVE, 2)",
         "crate::corona_blur::backgrounds_pending()",
         "st_wr!(CORONA_BG_ACTIVE, 0)",
+        "st_wr!(CORONA_BG_MASK, 0)",
         "st_wr!(REQUEST, 1)",
     )
     for marker in required:
         require(marker in corona, f"Corona owner transition guard missing: {marker}")
-    require("if st_rd!(CORONA_BG_ACTIVE) == 2 { crate::corona_blur::backgrounds_poll(); }" in corona,
-            "fast off/on must poll deferred cleanup before retrying commit(true)")
+    require("if st_rd!(CORONA_BG_ACTIVE) != 0 { crate::corona_blur::backgrounds_poll(); }" in corona,
+            "mask/off retries must poll the applied native configuration")
     remount = rust_function(home_source, "remount")
     require("st_wr!(REQUEST, 1)" in remount and "st_wr!(DIRTY, 1)" in remount,
             "Corona toggles must wake even when legacy MODE is 0")

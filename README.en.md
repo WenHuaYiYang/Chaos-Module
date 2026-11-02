@@ -102,6 +102,8 @@ system icons or firmware images.
 are preserved in `supervisor/corona_vendor/`; provenance, checksums, Chaos integration changes and
 redistribution notes are in the [Corona third-party notice](licenses/CANOPUS-MODULE-CORONA-NOTICE.txt).
 The complete license is also available in About → Open-source licenses on the device.
+The shared blur-region settings apply to both Corona and legacy blur modes. The system blur
+page's explanation links to upstream and the [modified Chaos source](https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor).
 Binary redistribution requires the complete corresponding source and build/install scripts for that binary;
 an upstream link or license copy alone does not replace the applicable source obligations.
 

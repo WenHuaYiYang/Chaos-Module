@@ -33,6 +33,9 @@ static mut RT_VALID: u32 = 0; // 基线是否已校准(打开开关后第一次�
 // No legacy mutations are allowed in states 1/2. ATTACHED and SCENE remain
 // exclusively owned by the legacy path; Corona never lends them an image.
 static mut CORONA_BG_ACTIVE: u32 = 0;
+// Last successfully committed shared region mask; a busy commit must not
+// consume a newer selection. Zero is valid: Corona owns no blurred regions.
+static mut CORONA_BG_MASK: u32 = 0;
 // 模块注入后给其他模块留出启动窗口，约 50 * 50ms = 2.5 秒。
 static mut BOOT_DELAY: u32 = 0;
 
@@ -426,7 +429,13 @@ unsafe fn realtime_follow() {
 pub(crate) unsafe fn status() -> &'static [u8] {
     if crate::corona_blur::enabled() {
         return if st_rd!(CORONA_BG_ACTIVE) == 1 {
-            "Corona 四区域模糊模式\0".as_bytes()
+            if st_rd!(CORONA_BG_MASK) != crate::blur_zone::mask() {
+                "等待空闲后更新 Corona 区域\0".as_bytes()
+            } else if st_rd!(CORONA_BG_MASK) == 0 {
+                "Corona 模糊：未选择区域\0".as_bytes()
+            } else {
+                "Corona 模糊模式\0".as_bytes()
+            }
         } else {
             "等待空闲后切换 Corona\0".as_bytes()
         };
@@ -454,6 +463,7 @@ unsafe fn set_status(value: u32) {
 
 unsafe fn corona_tick() -> bool {
     if crate::corona_blur::enabled() {
+        let region_mask = crate::blur_zone::mask();
         if st_rd!(CORONA_BG_ACTIVE) == 0 {
             // Do not tear down an old scene during a native swipe or while
             // its roots cannot be validated for style restoration.
@@ -470,18 +480,20 @@ unsafe fn corona_tick() -> bool {
             st_wr!(REFRESH, 0);
             uninstall();
         }
-        if st_rd!(CORONA_BG_ACTIVE) != 1 {
-            if crate::corona_blur::backgrounds_commit(true) != 0 {
-                // A quick off/on may arrive during deferred retirement.
-                if st_rd!(CORONA_BG_ACTIVE) == 2 { crate::corona_blur::backgrounds_poll(); }
+        if st_rd!(CORONA_BG_ACTIVE) != 1 || st_rd!(CORONA_BG_MASK) != region_mask {
+            if crate::corona_blur::backgrounds_commit(true, region_mask) != 0 {
+                // Keep servicing the applied configuration while a live mask
+                // update or a quick off/on waits for native retirement.
+                if st_rd!(CORONA_BG_ACTIVE) != 0 { crate::corona_blur::backgrounds_poll(); }
                 return true;
             }
+            st_wr!(CORONA_BG_MASK, region_mask);
             st_wr!(CORONA_BG_ACTIVE, 1);
             st_wr!(DIRTY, 1);
         }
-        // The vendored Corona adapter owns launcher, control-center,
-        // notification and widget drawing/scroll/delete lifecycles.  Do not
-        // call background_surfaces or Backdrop while it is active.
+        // The vendored Corona adapter owns selected regions' drawing/scroll/
+        // delete lifecycles and restores system backgrounds for deselected
+        // ones. Even mask 0 must not fall through to a legacy background mode.
         crate::corona_blur::backgrounds_poll();
         return true;
     }
@@ -489,7 +501,7 @@ unsafe fn corona_tick() -> bool {
     if st_rd!(CORONA_BG_ACTIVE) == 1 {
         // A busy commit changes nothing. Keep servicing the installed hooks
         // until the native swipe ends; never reset/retire the provider alone.
-        if crate::corona_blur::backgrounds_commit(false) != 0 {
+        if crate::corona_blur::backgrounds_commit(false, 0) != 0 {
             crate::corona_blur::backgrounds_poll();
             return true;
         }
@@ -502,6 +514,7 @@ unsafe fn corona_tick() -> bool {
         crate::corona_blur::backgrounds_poll();
         if crate::corona_blur::backgrounds_pending() { return true; }
         st_wr!(CORONA_BG_ACTIVE, 0);
+        st_wr!(CORONA_BG_MASK, 0);
         st_wr!(REQUEST, 1);
         st_wr!(GENERATE, if st_rd!(MODE) == 1 { 1 } else { 0 });
         st_wr!(REFRESH, 0);

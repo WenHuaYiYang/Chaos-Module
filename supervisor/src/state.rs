@@ -134,7 +134,7 @@ pub static PAGE_CACHE: [u8; 6] = *b"cache\0";
 pub static PAGE_FONTD: [u8; 6] = *b"fontd\0";
 pub static PAGE_ABOUT: [u8; 6] = *b"about\0";
 
-/// 页15: 系统模糊 -> 模糊区域(三级)。仅控制旧版的四区域替换，不限制 Corona 模式。
+/// 页15: 系统模糊 -> 模糊区域(三级)。控制所有模糊选项的四区域替换，包括 corona模糊。
 pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
 
 /// 页16: 主页 -> 震动(三级)。滑动震动开关 + 测试震动。

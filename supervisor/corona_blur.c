@@ -115,16 +115,37 @@ int chaos_corona_backgrounds_idle(void) {
     return 1;
 }
 
-int chaos_corona_backgrounds_commit(uint32_t enabled) {
-    static const struct rh_backgrounds blur = {
-        .launcher = RH_BG_BLUR, .control_center = RH_BG_BLUR,
-        .notifications = RH_BG_BLUR, .widgets = RH_BG_BLUR
-    };
-    static const struct rh_backgrounds system = {0};
+int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask) {
+    /* The upstream commit has its own RH_PATH-sized staging object. Keep
+     * this additional 1 KiB off the UI stack, protected for the entire call.
+     * Upstream copies each path synchronously and retains none of these
+     * pointers after the commit returns. */
+    static struct rh_backgrounds backgrounds;
+    const char *blur = RH_BG_BLUR;
+    unsigned i, j;
     int result;
     if (chaos_corona_in_call || !p67_blur_native_idle()) return -2145;
     chaos_corona_in_call = 1;
-    result = rh_platform_backgrounds_commit(enabled ? &blur : &system);
+    /* bit0 launcher, bit1 control-center, bit2 widgets, bit3 notifications.
+     * Every unselected surface is explicitly the native system background. */
+    for (i = 0; i < RH_PATH; ++i) {
+        backgrounds.launcher[i] = 0;
+        backgrounds.control_center[i] = 0;
+        backgrounds.notifications[i] = 0;
+        backgrounds.widgets[i] = 0;
+    }
+    region_mask &= 0x0fu;
+    if (enabled) {
+        if (region_mask & 1u)
+            for (j = 0; j < RH_PATH; ++j) { backgrounds.launcher[j] = blur[j]; if (!blur[j]) break; }
+        if (region_mask & 2u)
+            for (j = 0; j < RH_PATH; ++j) { backgrounds.control_center[j] = blur[j]; if (!blur[j]) break; }
+        if (region_mask & 8u)
+            for (j = 0; j < RH_PATH; ++j) { backgrounds.notifications[j] = blur[j]; if (!blur[j]) break; }
+        if (region_mask & 4u)
+            for (j = 0; j < RH_PATH; ++j) { backgrounds.widgets[j] = blur[j]; if (!blur[j]) break; }
+    }
+    result = rh_platform_backgrounds_commit(&backgrounds);
     if (!result) chaos_corona_enabled = !!enabled;
     chaos_corona_in_call = 0;
     return result;
