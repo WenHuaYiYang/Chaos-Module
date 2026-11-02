@@ -964,7 +964,7 @@ pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
 const LOG_VIEW_CAP: usize = 48 * 1024;
-const LOG_PAGE_LINES: usize = 4;
+const LOG_PAGE_LINES: usize = 3;
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
 static mut LOG_TEXT: [u8; 4096] = [0; 4096];
 static mut LOG_LINE_OFF: [u32; 1024] = [0; 1024];
@@ -1001,15 +1001,28 @@ unsafe fn log_page_load() {
     } else { 0 };
     let mut li = start_line;
     while li < end_line {
-        let s = read_volatile(offs.add(li)) as usize;
+        let s0 = read_volatile(offs.add(li)) as usize;
         let e = if li + 1 < count { read_volatile(offs.add(li + 1)) as usize } else { n };
+        // 去掉行首 "[MM-DD HH:MM:SS] " 时间戳, 给正文留出宽度。
+        let mut s = s0;
+        if s < e && read_volatile(buf.add(s)) == b'[' {
+            let mut k = s;
+            let lim = if s + 24 < e { s + 24 } else { e };
+            while k < lim && read_volatile(buf.add(k)) != b']' { k += 1; }
+            if k < lim {
+                s = k + 1;
+                while s < e && read_volatile(buf.add(s)) == b' ' { s += 1; }
+            }
+        }
         let mut j = s;
-        while j < e && o + 1 < 4096 {
+        let mut wrote = 0usize;
+        while j < e && o + 1 < 4096 && wrote < 40 {
             let mut c = read_volatile(buf.add(j));
             if c == b'\r' { c = b' '; }
             write_volatile(out.add(o), c);
             o += 1;
             j += 1;
+            wrote += 1;
         }
         if o + 1 < 4096 { write_volatile(out.add(o), b'\n'); o += 1; }
         li += 1;
@@ -1026,7 +1039,7 @@ unsafe fn log_page_load() {
     } else {
         let mut b = [0u8; 48];
         let mut w = crate::text::W::new(b.as_mut_ptr(), 48);
-        w.s("v1.1.7 共 ".as_bytes());
+        w.s("v1.1.8 共 ".as_bytes());
         w.n(count as u32);
         w.s(" 行 第 ".as_bytes());
         w.n((LOG_PAGE + 1) as u32);
@@ -1076,7 +1089,8 @@ impl Page for LogPage {
             if lab != 0 {
                 fw_api::style_apply(lab, crate::FW_STYLE_MISANS_REG_24, 255, 0);
                 fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
-                fw_api::obj_set_size_wh(lab, 328, 200);
+                fw_api::obj_set_size_wh(lab, 328, 220);
+                fw_api::obj_add_flag(lab, 4);
                 fw_api::obj_align_to(lab, t4, fw_api::align::OUT_BOTTOM_MID, 0, 6);
             }
             Ok(())
@@ -2393,7 +2407,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.7\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.8\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
