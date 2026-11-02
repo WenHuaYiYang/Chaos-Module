@@ -964,7 +964,7 @@ pub(crate) struct LogPage;
 static PAGE_LOG: LogPage = LogPage;
 
 const LOG_VIEW_CAP: usize = 48 * 1024;
-const LOG_PAGE_LINES: usize = 3;
+const LOG_PAGE_LINES: usize = 2;
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
 static mut LOG_TEXT: [u8; 4096] = [0; 4096];
 static mut LOG_LINE_OFF: [u32; 1024] = [0; 1024];
@@ -1016,7 +1016,7 @@ unsafe fn log_page_load() {
         }
         let mut j = s;
         let mut wrote = 0usize;
-        while j < e && o + 1 < 4096 && wrote < 40 {
+        while j < e && o + 1 < 4096 && wrote < 400 {
             let mut c = read_volatile(buf.add(j));
             if c == b'\r' { c = b' '; }
             write_volatile(out.add(o), c);
@@ -1039,7 +1039,7 @@ unsafe fn log_page_load() {
     } else {
         let mut b = [0u8; 48];
         let mut w = crate::text::W::new(b.as_mut_ptr(), 48);
-        w.s("v1.1.8 共 ".as_bytes());
+        w.s("v1.1.9 共 ".as_bytes());
         w.n(count as u32);
         w.s(" 行 第 ".as_bytes());
         w.n((LOG_PAGE + 1) as u32);
@@ -1074,22 +1074,22 @@ impl Page for LogPage {
             let maxp = if LOG_LINES == 0 { 0 } else { (LOG_LINES - 1) / LOG_PAGE_LINES };
             // 顶部两排紧凑按钮 (56 高), 把剩余空间全留给日志文本,
             // 否则 6 行 112 高的系统行会把文本挤到屏幕外。
-            let t0 = build_tile_below(ctx, ctx.title, 0, "返回\0".as_bytes(), TILE_W, 56);
+            let t0 = build_tile_below(ctx, ctx.title, 0, "返回\0".as_bytes(), TILE_W, 44);
             if t0 == 0 { return Err(PageError::RowFailed(0)); }
-            let _t1 = build_tile_right(ctx, t0, 1, "刷新\0".as_bytes(), TILE_W, 56);
+            let _t1 = build_tile_right(ctx, t0, 1, "刷新\0".as_bytes(), TILE_W, 44);
             let e0: &[u8] = if LOG_PAGE < maxp { "更早\0".as_bytes() } else { "无更早\0".as_bytes() };
-            let t2 = build_tile_below(ctx, t0, 2, e0, TILE_W, 56);
+            let t2 = build_tile_below(ctx, t0, 2, e0, TILE_W, 44);
             if t2 == 0 { return Err(PageError::RowFailed(2)); }
             let e1: &[u8] = if LOG_PAGE > 0 { "更新\0".as_bytes() } else { "无更新\0".as_bytes() };
-            let _t3 = build_tile_right(ctx, t2, 3, e1, TILE_W, 56);
+            let _t3 = build_tile_right(ctx, t2, 3, e1, TILE_W, 44);
             let cl: &[u8] = if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() };
-            let t4 = build_tile_below(ctx, t2, 4, cl, TILE_ROW_W, 56);
+            let t4 = build_tile_below(ctx, t2, 4, cl, TILE_ROW_W, 44);
             if t4 == 0 { return Err(PageError::RowFailed(4)); }
             let lab = fw_api::label_create(ctx.content);
             if lab != 0 {
                 fw_api::style_apply(lab, crate::FW_STYLE_MISANS_REG_24, 255, 0);
                 fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
-                fw_api::obj_set_size_wh(lab, 328, 220);
+                fw_api::obj_set_size_wh(lab, 328, 240);
                 fw_api::obj_add_flag(lab, 4);
                 fw_api::obj_align_to(lab, t4, fw_api::align::OUT_BOTTOM_MID, 0, 6);
             }
@@ -2407,7 +2407,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.8\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.9\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
