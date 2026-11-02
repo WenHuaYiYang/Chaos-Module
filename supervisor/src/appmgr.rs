@@ -2465,6 +2465,14 @@ pub(crate) unsafe fn detail_uninstall_click() -> bool {
 pub(crate) unsafe fn detail_launch() -> bool {
     if !detail_valid() { return false; }
     let pkg = core::ptr::addr_of!(D_PKG) as *const u8;
+    // 表没初始化（真机上 0x20111B90 常为 NULL）时先拉起 proxyquickapp 一次。
+    let mut n = fw_api::quickapp_app_count();
+    if n <= 0 {
+        let booted = fw_api::quickapp_proxy_init();
+        n = fw_api::quickapp_app_count();
+        crate::log::kv("打开应用-拉起proxy ", if booted { 1 } else { 0 });
+    }
+    crate::log::kv("打开应用-应用表数量 ", if n > 0 { n as u32 } else { 0 });
     // 深度隐藏重启后注册表没有节点: 先按包名补建(固件页面管理器按节点找应用),
     // 补完若原本是隐藏态, 再把图标摘掉, 保持隐藏。
     if find_node(pkg) == 0 {
@@ -2474,7 +2482,7 @@ pub(crate) unsafe fn detail_launch() -> bool {
     }
     let rc = fw_api::quickapp_launch_app(pkg);
     if rc < 0 {
-        wmsg_keep("启动失败, 应用可能未安装\0");
+        wmsg_keep("启动失败: 应用表未就绪或未安装\0");
         return false;
     }
     true
