@@ -1026,7 +1026,7 @@ unsafe fn log_page_load() {
     } else {
         let mut b = [0u8; 48];
         let mut w = crate::text::W::new(b.as_mut_ptr(), 48);
-        w.s("v1.1.6 共 ".as_bytes());
+        w.s("v1.1.7 共 ".as_bytes());
         w.n(count as u32);
         w.s(" 行 第 ".as_bytes());
         w.n((LOG_PAGE + 1) as u32);
@@ -1038,6 +1038,16 @@ unsafe fn log_page_load() {
         let mut k = 0usize;
         while k < len && k + 1 < 48 { write_volatile(msg.add(k), b[k]); k += 1; }
         write_volatile(msg.add(k), 0);
+        // 把 “版本/行数/页码” 头一行塞到日志文本最上面, 页面空间不够时也能看到。
+        let mlen = k;
+        if o + mlen + 2 < 4096 {
+            core::ptr::copy(out, out.add(mlen + 1), o);
+            let mut j = 0usize;
+            while j < mlen { *out.add(j) = *msg.add(j); j += 1; }
+            *out.add(mlen) = b'\n';
+            o += mlen + 1;
+            *out.add(o) = 0;
+        }
     }
 }
 
@@ -1049,27 +1059,25 @@ impl Page for LogPage {
         unsafe {
             log_page_load();
             let maxp = if LOG_LINES == 0 { 0 } else { (LOG_LINES - 1) / LOG_PAGE_LINES };
-            let specs: [(usize, RowSpec); 6] = [
-                (0, RowSpec::clickable("返回\0".as_bytes())),
-                (1, RowSpec::clickable(if LOG_PAGE < maxp { "更早一页\0".as_bytes() } else { "已到最早\0".as_bytes() })),
-                (2, RowSpec::clickable(if LOG_PAGE > 0 { "更新一页\0".as_bytes() } else { "已是最新\0".as_bytes() })),
-                (3, RowSpec::clickable("刷新\0".as_bytes())),
-                (4, RowSpec::clickable(if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() })),
-                (5, RowSpec::display(
-                    core::slice::from_raw_parts(core::ptr::addr_of!(LOG_MSG) as *const u8,
-                        cstr_len(core::ptr::addr_of!(LOG_MSG) as *const u8) + 1),
-                    core::ptr::null())),
-            ];
-            build_rows(ctx, ctx.title, &specs)?;
-            let rp = page_rows_ptr(17);
-            let prev = if rp.is_null() { 0 } else { read_volatile(rp.add(5)) };
+            // 顶部两排紧凑按钮 (56 高), 把剩余空间全留给日志文本,
+            // 否则 6 行 112 高的系统行会把文本挤到屏幕外。
+            let t0 = build_tile_below(ctx, ctx.title, 0, "返回\0".as_bytes(), TILE_W, 56);
+            if t0 == 0 { return Err(PageError::RowFailed(0)); }
+            let _t1 = build_tile_right(ctx, t0, 1, "刷新\0".as_bytes(), TILE_W, 56);
+            let e0: &[u8] = if LOG_PAGE < maxp { "更早\0".as_bytes() } else { "无更早\0".as_bytes() };
+            let t2 = build_tile_below(ctx, t0, 2, e0, TILE_W, 56);
+            if t2 == 0 { return Err(PageError::RowFailed(2)); }
+            let e1: &[u8] = if LOG_PAGE > 0 { "更新\0".as_bytes() } else { "无更新\0".as_bytes() };
+            let _t3 = build_tile_right(ctx, t2, 3, e1, TILE_W, 56);
+            let cl: &[u8] = if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() };
+            let t4 = build_tile_below(ctx, t2, 4, cl, TILE_ROW_W, 56);
+            if t4 == 0 { return Err(PageError::RowFailed(4)); }
             let lab = fw_api::label_create(ctx.content);
             if lab != 0 {
                 fw_api::style_apply(lab, crate::FW_STYLE_MISANS_REG_24, 255, 0);
                 fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
-                fw_api::obj_set_size_wh(lab, 320, 320);
-                fw_api::obj_align_to(lab, if prev != 0 { prev } else { ctx.title },
-                    fw_api::align::OUT_BOTTOM_MID, 0, 8);
+                fw_api::obj_set_size_wh(lab, 328, 200);
+                fw_api::obj_align_to(lab, t4, fw_api::align::OUT_BOTTOM_MID, 0, 6);
             }
             Ok(())
         }
@@ -1080,13 +1088,13 @@ impl Page for LogPage {
                 LOG_CLEAR_ARMED = 0;
                 nav_back();
             } else if idx == 1 {
+                render_req(17);
+            } else if idx == 2 {
                 let maxp = if LOG_LINES == 0 { 0 } else { (LOG_LINES - 1) / LOG_PAGE_LINES };
                 if LOG_PAGE < maxp { LOG_PAGE += 1; }
                 render_req(17);
-            } else if idx == 2 {
-                if LOG_PAGE > 0 { LOG_PAGE -= 1; }
-                render_req(17);
             } else if idx == 3 {
+                if LOG_PAGE > 0 { LOG_PAGE -= 1; }
                 render_req(17);
             } else if idx == 4 {
                 if LOG_CLEAR_ARMED == 0 {
@@ -2385,7 +2393,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.6\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.7\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
