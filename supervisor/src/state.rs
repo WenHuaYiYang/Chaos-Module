@@ -121,6 +121,10 @@ pub static PAGE_ICONSUB: [u8; 8] = *b"iconsub\0";
 
 pub static PAGE_EXCL: [u8; 7] = *b"excl\0\0\0";
 
+/// 页7: 系统模糊 -> 旧版选项。保留旧的静态背景/实时截取设置，
+/// 但不再把“系统背景”和“模糊区域”重复放入此页。
+pub static PAGE_BLUR_LEGACY: [u8; 11] = *b"blurlegacy\0";
+
 pub static PAGE_WFACES: [u8; 7] = *b"wfaces\0";
 
 pub static PAGE_ROT: [u8; 8] = *b"wfshake\0";
@@ -130,7 +134,7 @@ pub static PAGE_CACHE: [u8; 6] = *b"cache\0";
 pub static PAGE_FONTD: [u8; 6] = *b"fontd\0";
 pub static PAGE_ABOUT: [u8; 6] = *b"about\0";
 
-/// 页15: 系统模糊 -> 模糊区域(三级)。四个背景替换区域(启动器/控制中心/通知中心/小部件)的开关。
+/// 页15: 系统模糊 -> 模糊区域(三级)。仅控制旧版的四区域替换，不限制 Corona 模式。
 pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
 
 /// 页16: 主页 -> 震动(三级)。滑动震动开关 + 测试震动。
@@ -148,7 +152,7 @@ pub static PAGE_FETCH: [u8; 6] = *b"fetch\0";
 /// 页20: 关于 -> 开放源代码许可列表。
 pub static PAGE_LICENSES: [u8; 8] = *b"license\0";
 
-/// 页21: MIBAND10PRO-TUNMODULE 的 MPL-2.0 许可正文。
+/// 页21: Corona AGPL-3.0-only / MIBAND10PRO-TUNMODULE MPL-2.0 许可正文；解析键沿用旧名。
 pub static PAGE_LICENSE_MPL: [u8; 8] = *b"mpl2lic\0";
 
 /// 页22: 设置 -> 系统关于页面修改 -> 系统版本显示。三个预设与自定义入口。

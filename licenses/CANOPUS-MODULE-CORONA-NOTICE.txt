@@ -1,0 +1,105 @@
+Canopus-Module-Corona — attribution and corresponding-source notice
+==================================================================
+
+Upstream project:
+  https://github.com/AstralSightStudios/Canopus-Module-Corona
+
+License: GNU Affero General Public License, version 3 only
+  SPDX identifier: AGPL-3.0-only
+  The supplied upstream README explicitly declares AGPL-3.0-only.
+  The original license text is preserved, without changes, at:
+  supervisor/corona_vendor/LICENSE
+
+Provenance:
+  The vendored files and host harnesses were compared with the user-supplied
+  Canopus-Module-Corona-main source archive during the 2026-11-03 review.
+  The archive has no .git metadata, so no upstream commit identifier or
+  original import date is asserted. The checksums below identify the exact
+  reviewed bytes.
+
+Verbatim upstream files (paths relative to supervisor/corona_vendor):
+  LICENSE
+  include/resource_hook.h
+  include/resource_hook_background.h
+  include/resource_hook_blur.h
+  include/resource_hook_p67_battery.h
+  include/resource_hook_p67_blur.h
+  include/resource_hook_target.h
+  src/p67_backgrounds.inc
+  src/p67_battery.inc
+  src/p67_battery_diagnostics.inc
+  src/p67_blur.inc
+  src/p67_blur_native.inc
+  src/p67_launcher.inc
+
+The vendored p67 background/launcher code covers all four static surfaces:
+  launcher, control center, widgets, and notification center. The Corona
+  mode does not consult Chaos's legacy blur-region mask; it owns all four
+  surfaces as one provider. The legacy mask page is documented as legacy-only.
+
+Original host harnesses (paths relative to supervisor/tests/corona):
+  p67_backgrounds_harness.c
+  p67_battery_harness.c
+  p67_blur_harness.c
+  p67_blur_provider_harness.c
+  p67_launcher_harness.c
+  test_p67_battery_pixels.c
+
+Chaos-owned metadata intentionally excluded from the upstream inventory:
+  supervisor/tests/corona/README.md
+  supervisor/tests/corona/upstream.sha256
+
+Chaos integration changes reviewed on 2026-11-03:
+  supervisor/corona_blur.c supplies the p67 3.101.043 firmware adapter and
+  the C ABI used by the Rust supervisor. supervisor/src/corona_blur.rs and
+  the background integration manage the Chaos setting and background use.
+  The page integration adds the Corona switch, attribution, license viewer,
+  and separation of the legacy controls. tools/build_ko.sh builds and links
+  the C adapter. These integration files are not claimed to be upstream code.
+  Upstream files and their existing notices must be retained unchanged unless
+  subsequent modifications are clearly documented and dated.
+
+Host harness provenance:
+  The six .c files listed above are retained as the original host harness/test
+  material and are run against the implementation staged in
+  supervisor/corona_vendor. The directory README and upstream.sha256 are
+  Chaos-owned test documentation/manifest and are not claimed as upstream.
+  These host safety/pixel/lifecycle models are not evidence of real-device
+  GPU, cache, touch, or frame-timing acceptance.
+
+Redistribution:
+  Preserve the license, applicable copyright notices, attribution, and
+  modification notices. When distributing binaries, provide the complete
+  Corresponding Source for the exact distributed version in a manner
+  permitted by AGPL section 6. That source must include the adapted Chaos
+  source, all vendored Corona code, and the scripts needed to build and
+  install it; provide Installation Information when section 6 requires it.
+  An upstream URL or a license copy alone is not a source offer for the
+  modified Chaos build. A release should identify the matching source tag,
+  commit or source archive alongside its binary download.
+  If a modified version is made available for remote network interaction,
+  comply with AGPL section 13's Corresponding Source requirement as applicable.
+  The full license text, rather than this summary, governs these obligations.
+
+SHA-256 (reviewed vendored implementation bytes):
+0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0  LICENSE
+2d86591802cd13cf7bfbd16ba3e81bb998b87e6001ca7992e0edfb31c1cba028  include/resource_hook.h
+218bf7fb564f5b332da9ed33cf29a0b22642bd668a202c9a3bee53c2533b2991  include/resource_hook_background.h
+3fa0bd8b038166a90a9bf68cda202dd1d263b0c0f97ccde0ec5463b771d6a9cf  include/resource_hook_blur.h
+9e2432146d96d16b4270da376fd37456a7ce009f004f447564132e13a44ade06  include/resource_hook_p67_battery.h
+70e5320f33ca42015b65e945b5ab018bbeda783a95459d35c99d565d3a75d55d  include/resource_hook_p67_blur.h
+b304a50a1fec31c2fc2bb7fe2f9aaf14b9955c812f809b74402822381e3ec6a4  include/resource_hook_target.h
+2d35367fef7cf8ee4428f836363deb602b702e91feb35bc04e9df25ac6a52391  src/p67_backgrounds.inc
+c55edc7ffabc3325034caef3c7ea5ae94c3eb852f2998c88825c3a10021f965b  src/p67_battery.inc
+bd7a1427b7f18c702c4bc182dcb07df4089e69998e8cecddd049690496a76529  src/p67_battery_diagnostics.inc
+ce1e31d34756631222bc2f377b76763f0b6639c1988f8a82cf40fd78fa082927  src/p67_blur.inc
+57118c0874dc4773185a77902f02e2ff1d886c62ff52b58d3e992e644329c031  src/p67_blur_native.inc
+34b660d317cbc63c9e910976209d39873b1be96a3f3b227eec19d2fc9a5a40a9  src/p67_launcher.inc
+
+SHA-256 (reviewed original host harness bytes):
+f956598298494f103f80e99d8f3259026a0092fa7762504d9e551152156057ee  supervisor/tests/corona/p67_backgrounds_harness.c
+6eca7ade701d4761125af6f3047146a1484e8a8acb59627fc4c9d8470cb12eb4  supervisor/tests/corona/p67_battery_harness.c
+5b365da70114298d5225e00b31ddc1b6994ff09d9db27b80bac3a01db1bd2586  supervisor/tests/corona/p67_blur_harness.c
+4e0df389e0e948afc12c830165dda191aa295ae30ad1f5bdec08cb653a712cbf  supervisor/tests/corona/p67_blur_provider_harness.c
+f38fb199a35f678e9d4117e513284713a689326628f73f044271274b2731aac7  supervisor/tests/corona/p67_launcher_harness.c
+b242f957ca9884a56737d156999238c7bf4925d4913e9cc11780d947ef265a78  supervisor/tests/corona/test_p67_battery_pixels.c

@@ -20,9 +20,6 @@ static PRESETS: &[&[u8]] = &[
     "小米手环11 Pro\0".as_bytes(),
     "小米手环11 Pro 陶瓷版\0".as_bytes(),
     "三星note7\0".as_bytes(),
-    "跳蛋女性插入式自慰器遥控成人夫妻情趣用品秒潮神器强震高潮玩具\0".as_bytes(),
-    "迷你跳蛋超细小号跳弹情趣男女自慰按摩用品新手处男女夫妻性用品\0".as_bytes(),
-    "金属肛塞女用肛门扩肛器后庭成人调情趣用品拉珠狐狸尾巴女性玩具\0".as_bytes(),
 ];
 
 pub(crate) fn preset_count() -> usize {
