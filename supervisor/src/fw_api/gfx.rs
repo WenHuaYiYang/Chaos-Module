@@ -34,6 +34,8 @@ pub unsafe extern "C" fn obj_set_scroll_dir(obj: Obj, dir: u32) {
 }
 
 pub const LV_DIR_HOR: u32 = 0x3;
+/// 纵向滚动：TOP(4) | BOTTOM(8)
+pub const LV_DIR_VER: u32 = 0xC;
 pub const LV_OBJ_FLAG_CLICKABLE: u32 = 0x2;
 pub const LV_OBJ_FLAG_SCROLLABLE: u32 = 0x10;
 pub const LV_OBJ_FLAG_SCROLL_ELASTIC: u32 = 0x20;

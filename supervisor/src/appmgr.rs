@@ -354,10 +354,17 @@ unsafe fn apply_pkg(hide: bool, pkg: *const u8) -> bool {
 
 unsafe fn apply_immediate(hide: bool) -> bool {
     let pkg = core::ptr::addr_of!(REQ_PKG) as *const u8;
-    // 深度隐藏重启后节点缺失: 显示前先按包名补建节点, 否则 app_launcher_add 找不到记录。
+    // 深度隐藏重启后节点缺失: 显示前先按包名从 proxyquickapp 已装表补建节点,
+    // 否则 app_launcher_add 找不到记录。补建失败时把应用表数量写进日志，
+    // 便于区分“表没起来”和“表里没有这个包”。
     if !hide && find_node(pkg) == 0 {
+        let n = fw_api::quickapp_app_count();
+        crate::log::kv("显示应用-应用表 ", if n > 0 { n as u32 } else { 0 });
         let ok = fw_api::quickapp_register_pkg(pkg);
         crate::log::kv("显示应用-补建节点 ", if ok { 1 } else { 0 });
+        if find_node(pkg) == 0 {
+            crate::log::line("显示应用-补建后仍无节点");
+        }
     }
     apply_pkg(hide, pkg)
 }
@@ -387,6 +394,7 @@ pub(crate) unsafe fn do_op() {
     }
     crate::log::cstr(core::ptr::addr_of!(APP_MSG) as *const u8);
     reload();
+    sort_view_visible_first();
 }
 
 /// 一键批量: 把当前批的方向对应的全部条目拷进队列(快照), tick 里逐个执行。
@@ -434,6 +442,7 @@ pub(crate) unsafe fn do_batch() {
     if BATCH_FAIL != 0 { crate::log::kv("批量完成, 失败 ", BATCH_FAIL as u32); }
     sel_clear();
     reload();
+    sort_view_visible_first();
 }
 
 unsafe fn cstr_slice(p: *const u8) -> &'static [u8] {
@@ -1388,8 +1397,12 @@ unsafe fn keep_apply_all() -> usize {
 
 pub(crate) unsafe fn apply_mode_ensure() {
     if APPLY_LOADED != 0 { return; }
-    // 统一为深度隐藏: 隐藏 = 条目在 apps.json_hide + 节点 bit0 + 无图标。
-    // 普通/深度两套模式合并后不再读配置; 旧 keep 名单在 deep_apply_all 里迁移。
+    // 深度隐藏: 隐藏时把条目搬进 apps.json_hide，固件开机不注册，图标完全不出现。
+    // 显示时先把条目搬回 apps.json，再用 quickapp_register_app(0x0C549678) 从
+    // proxyquickapp 已装表补回注册表节点，然后清隐藏位、挂图标 —— 不再要求重启。
+    //
+    // v1.1.13 恢复深度模式为默认；普通隐藏留下的 keep 名单由 deep_apply_all()
+    // 在开机补偿里统一搬进 apps.json_hide，避免“所有快应用刚开机都显示”。
     APPLY_MODE = 0;
     keep_load();
     APPLY_LOADED = 1;
@@ -1570,6 +1583,22 @@ pub(crate) unsafe fn do_reapply() {
     if REQ_REAPPLY == 0 { return; }
     REQ_REAPPLY = 0;
 
+    // 普通隐藏: 条目一直在 apps.json，节点由固件开机注册；只需把 keep 名单
+    // 重新置位并摘图标，不搬文件、不补节点，也不会要求重启。
+    if apply_mode_is_keep() {
+        let found = keep_apply_all();
+        let n = KEEP_N;
+        let d = core::ptr::addr_of_mut!(APP_MSG) as *mut u8;
+        let mut w = put_lit(d, "已重新应用隐藏 ".as_bytes());
+        w += put_u32(d.add(w), found as u32);
+        w += put_lit(d.add(w), "/".as_bytes());
+        w += put_u32(d.add(w), n as u32);
+        write_volatile(d.add(w), 0);
+        MSG_KEEP = 1;
+        crate::log::kv("重新应用隐藏, 命中 ", found as u32);
+        return;
+    }
+
     // 深度隐藏: 先把缺的注册表节点补回来, 再把隐藏表里的条目统一搬回隐藏态。
     let (total, rebuilt) = fw_api::quickapp_resync_missing();
     if rebuilt > 0 {
@@ -1602,11 +1631,39 @@ pub(crate) unsafe fn boot_apply() {
     if BOOT_APPLIED != 0 { return; }
     apply_mode_ensure();
     excl_ensure();
-    if BOOT_TRIES == 0 { crate::log::line("开机补偿: 深度隐藏重放开始"); }
+    if BOOT_TRIES == 0 {
+        crate::log::line(if apply_mode_is_keep() {
+            "开机补偿: 普通隐藏重放开始"
+        } else {
+            "开机补偿: 深度隐藏重放开始"
+        });
+    }
     BOOT_WAIT = BOOT_WAIT.wrapping_add(1);
     // 注册表/应用表可能比模块晚就绪: 每 40 拍试一次, 最多 5 分钟。
     if BOOT_WAIT % 40 != 0 { return; }
     BOOT_TRIES = BOOT_TRIES.wrapping_add(1);
+    if apply_mode_is_keep() {
+        // 普通隐藏: 条目在 apps.json，等固件把节点建出来后逐项置位、摘图标。
+        // 升级迁移后的第一次开机，固件已经读完 apps.json；这里按固件的
+        // “重同步”路径补缺节点，让旧深度隐藏的应用也能立即显示。
+        // proxyquickapp 的已装表可能比模块晚就绪，所以每 5 次补偿重试一次，
+        // 而不是只在第 5 次试一次。
+        if BOOT_TRIES % 5 == 0 {
+            let (total, rebuilt) = fw_api::quickapp_resync_missing();
+            if rebuilt > 0 {
+                crate::log::kv("开机补偿: 补建节点, 应用表 ", total);
+                crate::log::kv("开机补偿: 补建节点, 本次 ", rebuilt);
+            }
+        }
+        let found = keep_apply_all();
+        let n = KEEP_N;
+        if n == 0 || found >= n || BOOT_TRIES >= 300 {
+            BOOT_APPLIED = 1;
+            crate::log::kv("开机补偿: 隐藏条目 ", n as u32);
+            crate::log::kv("开机补偿: 命中 ", found as u32);
+        }
+        return;
+    }
     let _ = fw_api::quickapp_resync_missing();
     let (found, moved, n) = deep_apply_all();
     if n == 0 || found >= n || BOOT_TRIES >= 300 {
@@ -1676,16 +1733,28 @@ pub(crate) unsafe fn watch_keep() {
         WATCH_CHG = 1;
     } else if WATCH_CHG != 0 {
         WATCH_CHG = 0;
-        let _ = fw_api::quickapp_resync_missing();
-        let (found, moved, _n) = deep_apply_all();
-        if found != 0 || moved != 0 {
-            crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
-            if moved != 0 { crate::log::kv("看门狗: 迁移回隐藏表 ", moved as u32); }
+        if apply_mode_is_keep() {
+            let found = keep_apply_all();
+            if found != 0 {
+                crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
+            }
+        } else {
+            let _ = fw_api::quickapp_resync_missing();
+            let (found, moved, _n) = deep_apply_all();
+            if found != 0 || moved != 0 {
+                crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
+                if moved != 0 { crate::log::kv("看门狗: 迁移回隐藏表 ", moved as u32); }
+            }
         }
     } else if WATCH_WAIT % 240 == 0 {
         // 兜底: 集合没变但节点被重建/bit0 被清, 每分钟(慢拍 4 分钟)整表重放一次。
-        let (found, _moved, _n) = deep_apply_all();
-        if found != 0 { crate::log::kv("看门狗: 周期补隐藏 ", found as u32); }
+        if apply_mode_is_keep() {
+            let found = keep_apply_all();
+            if found != 0 { crate::log::kv("看门狗: 周期补隐藏 ", found as u32); }
+        } else {
+            let (found, _moved, _n) = deep_apply_all();
+            if found != 0 { crate::log::kv("看门狗: 周期补隐藏 ", found as u32); }
+        }
     }
     WATCH_BUSY = 0;
 }

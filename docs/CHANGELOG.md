@@ -2,6 +2,38 @@
 
 版本号与容器头、关于页、`Cargo.toml` 三处同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
+## v1.1.13 — 2026-11-04
+
+- **深度隐藏恢复为默认，并支持运行期免重启显示**：`apply_mode_ensure()` 改回 `APPLY_MODE = 0`；隐藏时条目进 `apps.json_hide`，开机固件不注册，避免所有快应用图标先闪一下。
+- 显示路径：`op_show_pkg` 先把条目搬回 `apps.json`，`apply_immediate` 在 `find_node == 0` 时调用 `quickapp_register_pkg`（内部 `quickapp_register_app` @ `0x0C549678`，数据来自 proxyquickapp 已装表）补节点，再清 bit0、挂图标。
+- 补建日志新增 `显示应用-应用表 N`、`显示应用-补建节点 0/1`、`显示应用-补建后仍无节点`，用于区分代理表未就绪、表里没有该包、以及节点已建但 `app_launcher_add` 失败。
+- 普通隐藏留下的 keep 名单由 `boot_apply()` 的 `deep_apply_all()` 自动迁进 `apps.json_hide`；`watch_keep()` 继续在换绑/重注册后重放深度隐藏。
+- 版本 1.1.13。
+
+## v1.1.12 — 2026-11-03
+
+- **运行期补注册表节点**：反汇编确认固件 `quickapp_register_app(app_id, info)` @ `0x0C549678` 会分配并挂入注册表节点，内部调用 `app_launcher_add`；数据来自 proxyquickapp 已装表（`0x20111B90`，`quickapp_app_count` @ `0x0C54A560`、`quickapp_app_item` @ `0x0C54A818`）。固件自己的重同步在事件 9 回调 `0x0C5498A4` 与换绑入口 `0x0C5499B4`。
+- `boot_apply()` 的补节点从“第 5 次只试一次”改为每 5 次补偿重试一次，覆盖 proxyquickapp 表晚于模块就绪的情况。
+- 移除手动 `quickapp_proxy_init()` 调用：真实入口 `0x0C548450(callback, config)` 需要固件启动时那份配置对象，传 NULL 会清空六个事件处理器，旧的无参调用还可能把事件对象当回调 `blx`。改为只读已装表，等待固件初始化，并由开机补偿周期重试。
+- 补建仍失败的情况：已装表始终为 NULL，或 `quickapp_register_app` 的 `malloc(0xD0)` 返回空（日志 `no memory for page.`）。
+- 版本 1.1.12。
+
+## v1.1.11 — 2026-11-02
+
+- **快应用显示免重启**：`apply_mode_ensure()` 不再强制深度隐藏，固定普通隐藏（`APPLY_MODE = 1`）。隐藏时条目留在 `apps.json`，只写 keep 名单、置节点 `+0x3C` bit0、摘桌面图标；显示时清 bit0 并挂回图标，运行期立即生效。
+- 深度隐藏停用：固件只在开机读 `apps.json`，运行期没有安全的重新注册入口，搬走条目后无法补节点。
+- 新增一次性迁移 `migrate_deep_to_keep()`：把 `apps.json_hide` 条目搬回 `apps.json`，同时写入 keep 名单保持隐藏；名单满时回滚该条，避免应用意外露出。
+- `do_reapply()`、`boot_apply()`、`watch_keep()` 增加普通模式分支，只重放隐藏位/图标，不再调用 `deep_apply_all()` 搬文件；`do_op()`/`do_batch()` 在重读后排序，隐藏/显示后列表顺序立即更新。
+- 版本 1.1.11；`appmgr_apply.cfg` 不再读取。
+
+## v1.1.10 — 2026-11-02
+
+- **运行日志页重做显示**：日志文字从 `content` 直接子对象改为独立纵向滚动视口；按 24px MiSans 保守字宽手动折行并累计视觉行数，标签/内层 board 高度由行数换算（此固件不响应 `LV_SIZE_CONTENT`），长行不再被固定 240 高裁掉。
+- 去掉“每页 2 条”分页；一次拼出最新 60 条日志，最新在上。行首偏移改为 1024 项环形缓冲，日志行数超过 1024 时仍取到真正的尾部，而不是停在最旧一段。
+- 清空结果提示作为一次性首行消费，显示后立即清零；清空成功后不再立刻变回“暂无日志”。
+- 日志页与关于页版本号改用 `env!("CARGO_PKG_VERSION")`，不再每版手写；版本 1.1.10。
+- 重新构建 ko 与安装器容器（容器头版本保持既有值）。
+
 ## v1.0.7 — 2026-11-01
 
 - 并入系统关于页面修改（系统版本显示 / 手环系统文本 / 设备名称 / 手环型号）与通用英文数字键盘。

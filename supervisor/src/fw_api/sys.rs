@@ -431,22 +431,17 @@ pub unsafe fn quickapp_launch_app(pkg: *const u8) -> i32 {
     let f: unsafe extern "C" fn(*const u8, *const u8) -> i32 = transmute(0x0C54_81E5usize);
     f(pkg, core::ptr::null())
 }
-/// proxyquickapp 的初始化入口 `0xC548450`（内部从 `0x20125700` 取事件对象，
-/// 再调 `0xC54A4B8` 建“已装应用表”并写 `0x20111B90`）。
+/// 探测 proxyquickapp 已装表是否就绪。
 ///
-/// 背景：这个函数在固件里只有一个小包装 `0xC4B88A0`，而该包装没有任何引用 ——
-/// 真机上 `0x20111B90` 可能一直是 NULL，导致按包名补节点/启动全部失败。
-/// 这里在需要时手动拉起一次；已初始化或事件对象无效时不做任何事。
+/// 真实初始化入口是 `0xC548450(完成回调, 配置串)`：`r1` 会作为事件处理器登记到
+/// 六个子系统，传 NULL 会把这些处理器清空，传错值会 `blx` 野指针。我们手里没有
+/// 固件启动时使用的那份配置对象，**不能**安全地手动拉起它，所以这里只读表状态，
+/// 由固件自己完成初始化；调用方稍后重试即可。
 pub unsafe fn quickapp_proxy_init() -> bool {
-    if quickapp_app_count() > 0 { return true; }
-    static mut TRIED: u8 = 0;
-    if TRIED != 0 { return false; }
-    TRIED = 1;
-    let ev = crate::mem::rd32(0x2012_5700 as *const u32);
-    if ev == 0 || !crate::mem::plausible_ptr(ev) { return false; }
-    let f: unsafe extern "C" fn() = transmute(0x0C54_8451usize);
-    f();
-    quickapp_app_count() > 0
+    let n = quickapp_app_count();
+    if n > 0 { return true; }
+    crate::log::line("补建节点: 应用表未就绪");
+    false
 }
 
 /// 只给**指定包名**补注册表节点（不碰其它应用）。
@@ -456,9 +451,9 @@ pub unsafe fn quickapp_proxy_init() -> bool {
 /// 建节点（会加图标, 调用方随后 `apply_pkg(false)` 会先 del 再 add, 不会重复）。
 pub unsafe fn quickapp_register_pkg(pkg: *const u8) -> bool {
     let mut n = quickapp_app_count();
-    // 表没初始化时先拉起 proxyquickapp（真机上 0x20111B90 可能一直是 NULL）。
+    // 表没就绪时只记录状态，不手动初始化 proxyquickapp（见 quickapp_proxy_init）。
     if n <= 0 {
-        crate::log::kv("补建节点-拉起proxy ", if quickapp_proxy_init() { 1 } else { 0 });
+        crate::log::kv("补建节点-应用表 ", if quickapp_proxy_init() { 1 } else { 0 });
         n = quickapp_app_count();
     }
     if n <= 0 { return false; }
