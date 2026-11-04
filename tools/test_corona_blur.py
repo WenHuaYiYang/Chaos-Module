@@ -162,6 +162,12 @@ def check_owner_state_contract() -> None:
     owner_tick = rust_function(home_source, "tick")
     require(owner_tick.index("corona_tick()") < owner_tick.index("background_surfaces::tick("),
             "legacy surface worker must not run before Corona arbitration")
+    zones = (ROOT / "supervisor/src/blur_zone.rs").read_text()
+    mask_body = rust_function(zones, "mask")
+    require(mask_body.index("ensure_loaded();") < mask_body.index("st_rd!(MASK)"),
+            "mask() must load persisted regions before returning the shared mask")
+    require("crate::blur_zone::ensure_loaded();" in rust_function(home_source, "load_mode"),
+            "legacy startup must also load the shared saved regions")
 
     print("Corona Rust owner transition guards: OK", flush=True)
 
@@ -202,9 +208,17 @@ def run_owner_harness() -> None:
     with tempfile.TemporaryDirectory(prefix="chaos-corona-owner-") as directory:
         temp = Path(directory)
         included = temp / "production_owner.rs"
+        generated += "\nunsafe fn masked_targets(full: [u32; 4]) -> [u32; 4] {" + rust_function(source, "masked_targets") + "}\n"
         included.write_text(generated)
+        region_source = (ROOT / "supervisor/src/blur_zone.rs").read_text()
+        region = temp / "production_region.rs"
+        region.write_text("pub(crate) unsafe fn ensure_loaded() {"
+                          + rust_function(region_source, "ensure_loaded") + "}\n"
+                          + "pub(crate) unsafe fn mask() -> u32 {"
+                          + rust_function(region_source, "mask") + "}\n")
         binary = temp / "owner.test"
-        environment = dict(os.environ, CHAOS_CORONA_OWNER_SOURCE=str(included))
+        environment = dict(os.environ, CHAOS_CORONA_OWNER_SOURCE=str(included),
+                           CHAOS_CORONA_REGION_SOURCE=str(region))
         subprocess.run([os.environ.get("RUSTC", "rustc"), "--edition=2021",
                         "--test", str(ROOT / "supervisor/tests/corona_owner_harness.rs"),
                         "-o", str(binary)], env=environment, check=True)
@@ -277,6 +291,8 @@ def main() -> int:
         run_owner_harness()
         run_restore_harness()
         run_abi_harness()
+        subprocess.run([sys.executable, str(ROOT / "tools/test_notification_icon.py")], check=True)
+        subprocess.run([sys.executable, str(ROOT / "tools/test_corona_config.py")], check=True)
     print("PASS: vendored Corona p67 complete-background regression checks")
     print("NOT VERIFIED: device GPU/cache acceptance, touch/scroll feel, frame time")
     return 0

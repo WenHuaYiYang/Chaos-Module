@@ -427,17 +427,19 @@ unsafe fn realtime_follow() {
 }
 
 pub(crate) unsafe fn status() -> &'static [u8] {
-    if crate::corona_blur::enabled() {
+    if crate::corona_blur::active() {
         return if st_rd!(CORONA_BG_ACTIVE) == 1 {
             if st_rd!(CORONA_BG_MASK) != crate::blur_zone::mask() {
                 "等待空闲后更新 Corona 区域\0".as_bytes()
             } else if st_rd!(CORONA_BG_MASK) == 0 {
-                "Corona 模糊：未选择区域\0".as_bytes()
+                "模糊：未选择区域\0".as_bytes()
+            } else if crate::corona_blur::v2_enabled() {
+                "模糊v2模式\0".as_bytes()
             } else {
-                "Corona 模糊模式\0".as_bytes()
+                "Corona模糊模式\0".as_bytes()
             }
         } else {
-            "等待空闲后切换 Corona\0".as_bytes()
+            "等待空闲后切换模糊\0".as_bytes()
         };
     }
     if st_rd!(CORONA_BG_ACTIVE) != 0 {
@@ -462,7 +464,9 @@ unsafe fn set_status(value: u32) {
 }
 
 unsafe fn corona_tick() -> bool {
-    if crate::corona_blur::enabled() {
+    let engine_active = crate::corona_blur::active();
+    let v2_active = crate::corona_blur::v2_enabled();
+    if engine_active {
         let region_mask = crate::blur_zone::mask();
         if st_rd!(CORONA_BG_ACTIVE) == 0 {
             // Do not tear down an old scene during a native swipe or while
@@ -491,6 +495,14 @@ unsafe fn corona_tick() -> bool {
             st_wr!(CORONA_BG_ACTIVE, 1);
             st_wr!(DIRTY, 1);
         }
+        // v2 adds only the old no-message image replacement. Never restart
+        // background_pages/background_surfaces while Corona owns the scene.
+        // Use the successfully applied mask, not a still-busy desired mask.
+        let icon_wanted = v2_active && st_rd!(CORONA_BG_MASK) & 8 != 0;
+        if (icon_wanted || crate::notification_icon::pending())
+            && fw_api::screen_is_on() && crate::corona_blur::backgrounds_idle() {
+            let _ = crate::notification_icon::tick(icon_wanted);
+        }
         // The vendored Corona adapter owns selected regions' drawing/scroll/
         // delete lifecycles and restores system backgrounds for deselected
         // ones. Even mask 0 must not fall through to a legacy background mode.
@@ -498,6 +510,15 @@ unsafe fn corona_tick() -> bool {
         return true;
     }
 
+    // Restore v2-owned icons before any handoff to the legacy engine. Missing
+    // native idle keeps both providers polled; it must not drop cleanup work.
+    if crate::notification_icon::pending() {
+        if !fw_api::screen_is_on() || !crate::corona_blur::backgrounds_idle()
+            || !crate::notification_icon::tick(false) {
+            if st_rd!(CORONA_BG_ACTIVE) != 0 { crate::corona_blur::backgrounds_poll(); }
+            return true;
+        }
+    }
     if st_rd!(CORONA_BG_ACTIVE) == 1 {
         // A busy commit changes nothing. Keep servicing the installed hooks
         // until the native swipe ends; never reset/retire the provider alone.
@@ -531,8 +552,8 @@ pub(crate) unsafe fn pending() -> bool {
     }
     // Sleeping displays retain Corona's cleanup state for the next wake;
     // they must not force the existing 1s idle timer back to a 50ms spin.
-    fw_api::screen_is_on() && (crate::corona_blur::enabled() || st_rd!(CORONA_BG_ACTIVE) != 0
-        || st_rd!(REQUEST) != 0 || SCENE.pending()
+    fw_api::screen_is_on() && (crate::corona_blur::active() || st_rd!(CORONA_BG_ACTIVE) != 0
+        || crate::notification_icon::pending() || st_rd!(REQUEST) != 0 || SCENE.pending()
         || st_rd!(REFRESH) != 0 || crate::background_surfaces::pending())
 }
 

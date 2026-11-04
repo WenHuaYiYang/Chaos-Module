@@ -14,6 +14,19 @@ pub const BACKGROUND_NOTIFY_KEYS: [u32; 2] = [0x0014_0001, 0x0014_0000];
 pub const BACKGROUND_NOTIFY_CREATE_ORIGINALS: [u32; 2] = [0x0C52_5AFD, 0x0C52_613D];
 pub const BACKGROUND_NOTIFY_CREATE_SLOT: u32 = 0x4C;
 
+/// p67/.043 通知聚合页当前根；只能从原生空闲 UI tick 读取，不能在
+/// DELETE/STYLE 回调内重入。0x9AABEE 删除后 0x9AABFE 清 +0x30；
+/// 延迟销毁会先把 +0x28 设为 4，故仅检查非零 root 不够。
+/// 创建在 0x9AAECC 写 root，0x9AAF90 将状态设为 5。
+/// 证据偏移是原始 vela_ap.bin 文件偏移（见 notification ABI probe）。
+pub unsafe fn background_notification_page_root() -> u32 {
+    let desc = BACKGROUND_NOTIFY_DESCS[0];
+    if rd32((desc + 0x14) as *const u32) != BACKGROUND_NOTIFY_KEYS[0]
+        || rd8((desc + 0x28) as *const u8) == 4 { return 0; }
+    let root = rd32((desc + 0x30) as *const u32);
+    if safe_ptr(root) { root } else { 0 }
+}
+
 /// 登记时用复合键确认目标，避免改写其他应用。
 pub unsafe fn background_home_matches() -> bool {
     rd32((BACKGROUND_HOME_DESC + 0x14) as *const u32) == 0x0010_0000
