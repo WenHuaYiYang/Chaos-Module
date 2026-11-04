@@ -1,6 +1,6 @@
 //! 原生文件桥开关：持久化到 `/data/chaos/bridge.cfg`，由维护定时器落地。
 //!
-//! 文件格式：`BRG1` + 1 字节 enabled（0/1）。默认开启，兼容 bridge 包原有
+//! 文件格式：`BRG1` + 1 字节 enabled（0/1）。默认开启，保持原有
 //! “开机自动启动”的行为；用户关掉后不会在下次开机重新启动。
 //!
 //! 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 放到 `chaos_shake_timer`
@@ -15,7 +15,6 @@ const MAGIC: &[u8; 4] = b"BRG1";
 static mut LOADED: u32 = 0;
 static mut ENABLED: u32 = 1;
 
-#[cfg(not(chaos_no_bridge))]
 extern "C" {
     fn chaos_bridge_start() -> i32;
     fn chaos_bridge_stop();
@@ -74,26 +73,23 @@ pub(crate) unsafe fn toggle() -> bool {
     on
 }
 
-/// 维护定时器调用。bridge 包才真正 start/stop；safe 包是空实现。
+/// 维护定时器调用：按开关状态启动/停止文件桥。
 pub(crate) unsafe fn tick() {
-    #[cfg(not(chaos_no_bridge))]
-    {
-        load();
-        let state = st_rd!(BRIDGE_STATE);
-        if ENABLED != 0 {
-            if state == 0 {
-                let rc = chaos_bridge_start();
-                st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
-                log::line(if rc == 0 {
-                    "文件桥: CanopusConnect 已启动"
-                } else {
-                    "文件桥: 启动失败"
-                });
-            }
-        } else if state == 1 {
-            chaos_bridge_stop();
-            st_wr!(BRIDGE_STATE, 0);
-            log::line("文件桥: 已关闭");
+    load();
+    let state = st_rd!(BRIDGE_STATE);
+    if ENABLED != 0 {
+        if state == 0 {
+            let rc = chaos_bridge_start();
+            st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
+            log::line(if rc == 0 {
+                "文件桥: CanopusConnect 已启动"
+            } else {
+                "文件桥: 启动失败"
+            });
         }
+    } else if state == 1 {
+        chaos_bridge_stop();
+        st_wr!(BRIDGE_STATE, 0);
+        log::line("文件桥: 已关闭");
     }
 }

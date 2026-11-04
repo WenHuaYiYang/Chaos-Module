@@ -4,7 +4,8 @@
 
 ## v1.1.4.dev — 2026-11-04
 
-- **文件桥运行期开关**：设置页新增 `文件桥` switch（仅 bridge 包），状态持久化到 `/data/chaos/bridge.cfg`（`BRG1` + enabled）。
+- **文件桥并入标准包**：不再构建/发布 safe 包，`chaos_sup.ko` 和安装包始终包含文件桥；设置页始终显示 `文件桥` switch。
+- **文件桥运行期开关**：状态持久化到 `/data/chaos/bridge.cfg`（`BRG1` + enabled）。
 - 新增 `chaos_bridge_stop()`：把 L2 0x43 的 RX handler 恢复为固件原入口，清空 RX/TX 队列、listener 和连接状态；owner/bt timer 降到 1 Hz 空转。
 - `chaos_bridge_start()` 支持恢复：timer 已初始化时直接重启 10 ms owner tick 并重新挂接；如果 Canopus 已占用 handler，`l2_attach()` 只在当前仍是 `L2_RX` 时接管，不会强行覆盖。
 - 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 由 `chaos_shake_timer` 执行，避免在 LVGL 点击回调里创建/撤销 timer。

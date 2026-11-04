@@ -2446,7 +2446,6 @@ impl Page for SettingsPage {
     /// 页名字符串沿用 `about`(state/ipc 没动)：它只是 page_goto 的解析键，与标题无关。
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            #[cfg(not(chaos_no_bridge))]
             let rows: &[(usize, RowSpec<'_>)] = &[
                 (0, RowSpec::clickable("时间设置\0".as_bytes())),
                 (1, RowSpec::clickable("日期设置\0".as_bytes())),
@@ -2458,19 +2457,7 @@ impl Page for SettingsPage {
                 (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
                 (8, RowSpec::switch("文件桥\0".as_bytes())),
             ];
-            #[cfg(chaos_no_bridge)]
-            let rows: &[(usize, RowSpec<'_>)] = &[
-                (0, RowSpec::clickable("时间设置\0".as_bytes())),
-                (1, RowSpec::clickable("日期设置\0".as_bytes())),
-                (2, RowSpec::clickable("亮度\0".as_bytes())),
-                (3, RowSpec::clickable("震动\0".as_bytes())),
-                (4, RowSpec::clickable("缓存清理\0".as_bytes())),
-                (5, RowSpec::clickable("运行日志\0".as_bytes())),
-                (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
-                (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
-            ];
             build_rows(ctx, ctx.title, rows)?;
-            #[cfg(not(chaos_no_bridge))]
             fw_api::row_update(
                 core::ptr::read_volatile(ctx.rows.add(8)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
@@ -2495,12 +2482,9 @@ impl Page for SettingsPage {
         }
     }
     fn is_switch_row(&self, idx: usize) -> bool {
-        #[cfg(not(chaos_no_bridge))]
-        if idx == 8 { return true; }
-        false
+        idx == 8
     }
     fn on_switch(&self, idx: usize) {
-        #[cfg(not(chaos_no_bridge))]
         if idx == 8 {
             unsafe {
                 let on = crate::bridge_cfg::toggle();

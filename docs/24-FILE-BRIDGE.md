@@ -77,7 +77,7 @@ Chaos 没有这些运行时。本实现保留 `band_files` 的**文件协议**�
 
 ## 安装与使用
 
-1. 安装 `dist/chaos-installer-p67-bridge.bin`（bridge 包）并重启；`dist/chaos-installer-p67.bin` 是不含 bridge 的 safe 包。
+1. 安装 `dist/chaos-installer-p67.bin` 并重启；文件桥已并入标准包，设置页可随时开关。
 2. 默认文件桥开启。要和 Canopus 同时使用时，进 Chaos 设置页关掉「文件桥」，再在 Canopus 管理器里启用 Supervisor/`band_files`；反过来也一样，同一个 L2 0x43 只能有一个处理端。
 3. 打开 AstroBox 的 `手环文件管理器` 插件（0.1.5），连接手环。
 4. 状态应显示 `已连接 band_files（协议 v1）`，无需 Canopus 管理器。
@@ -160,7 +160,7 @@ bridge 三个目标文件的 `.text` 合计约 10.4 KB，链接 GC 后实际 `.t
   AstroBox 的 `.bin` 安装、设备连接、文件传输都会一起受影响；这不是 `.bin` 安装被协议拦截，
   而是底层蓝牙通道被 bridge 弄坏了。
 - 判断方法：重启手环后不打开文件管理器插件，直接试 AstroBox 安装普通 `.bin`。
-  能装 → bridge 没有全局破坏；仍超时 → 先装 safe 包恢复。
+  能装 → bridge 没有全局破坏；仍超时 → 进 Chaos 设置页关闭「文件桥」后重试。
 
 ## SAR 风险与回退
 
