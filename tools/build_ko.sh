@@ -48,8 +48,27 @@ host=$(rustc +nightly -vV | sed -n 's/^host: //p')
 lld="$(rustc +nightly --print sysroot)/lib/rustlib/$host/bin/rust-lld"
 echo "rust-lld: $lld"
 
+# Corona's p67 blur is intentionally kept as a verbatim freestanding C
+# provider.  Compile it for the same soft-float ABI as Rust before the final
+# relocatable link; the provider has no libc/runtime imports and all firmware
+# calls are encoded as audited .043 AP addresses in corona_blur.c.
+cc=${CC:-clang}
+command -v "$cc" >/dev/null 2>&1 || {
+  echo "error: clang (or CC) is required to build the Corona blur provider" >&2
+  exit 1
+}
+corona_obj="$src/target/thumbv8m.main-none-eabi/release/chaos_corona_blur.o"
+"$cc" --target=thumbv8m.main-none-eabi -mcpu=cortex-m33 -mthumb -mfloat-abi=soft \
+       -ffreestanding -fno-builtin -fno-stack-protector \
+       -fno-unwind-tables -fno-asynchronous-unwind-tables \
+       -ffunction-sections -fdata-sections -O2 \
+       -I"$src" -I"$src/corona_vendor/include" \
+       -c "$src/corona_blur.c" -o "$corona_obj"
+
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
-       -T "$here/merge_sections.ld" -o "$out" "$lib"
+       -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
+       -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
+       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj"
 
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then

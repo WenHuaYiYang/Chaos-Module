@@ -38,6 +38,8 @@ mod background_pages;
 mod background_surfaces;
 mod background_assets;
 mod blur_zone;
+mod corona_blur;
+mod notification_icon;
 
 mod text;
 mod explorer;

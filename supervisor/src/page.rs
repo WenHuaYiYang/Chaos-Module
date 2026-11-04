@@ -1741,9 +1741,12 @@ impl Page for AppListPage {
 //
 // 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
 // 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
-// 原"固定图片背景"那一档已删: 它只读 /data/chaos/background.bin, 而这文件从没有生成过。
-// 行5 = "模糊区域"入口(页15, blur_zone): 分区域启停背景替换(启动器/控制中心/通知中心/小部件)。
+// 旧版静态背景/实时截取设置移到页7，主页面保留系统背景、corona模糊、模糊v2、
+// 旧版选项和模糊区域。两开关共用一个 Corona 引擎；v2 额外处理通知空消息图标。
+// 行号固定为 0=系统 / 1=corona / 2=v2 / 3=状态 / 4=旧版 / 5=区域 / 11=返回。
 pub(crate) struct BlurPage;
+
+pub(crate) const BLUR_LEGACY_PID: u32 = 7;
 
 impl Page for BlurPage {
     fn fill_title(&self, buf: *mut u8) {
@@ -1752,25 +1755,32 @@ impl Page for BlurPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            build_rows(ctx, ctx.title, &[
+            let prev = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                (1, RowSpec::switch("静态背景图(表盘)\0".as_bytes())),
-                (2, RowSpec::switch("自动截取替换图片\0".as_bytes())),
-                (3, RowSpec::clickable("手动生成或更新表盘背景\0".as_bytes())),
-                (4, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
-                (5, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (6, RowSpec::clickable("模糊区域\0".as_bytes())),
+                // (1, RowSpec::switch("corona模糊\0".as_bytes())),
+                (1, RowSpec::switch("Corona模糊(模糊v2)\0".as_bytes())),
+                (2, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (3, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊和模糊v2后生效\0".as_bytes().as_ptr())),
+                (4, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 corona模糊和模糊v2）\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            // 勾选态原地写(不重建整页): 行 0/1 是两档单选(档位), 行 2/4 是开关
-            let sel = crate::background_home::mode() as usize;
-            for i in 0..2 {
-                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)), fw_api::NONE_PTR,
-                    fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (i == sel) as u8);
-            }
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (sel == 3) as u8);
+            // 长说明不放入会裁切的行副标题。与许可全文相同：标签只限宽，
+            // 高度随换行增长；挂在原生可滚动 content 上，完整 URL 不含 Markdown 标记。
+            let label = fw_api::label_create(ctx.content);
+            if label == 0 { return Err(PageError::RowFailed(6)); }
+            fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
+            fw_api::obj_set_width(label, 320);
+            fw_api::label_set_text(label,
+                "说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor。\0".as_bytes().as_ptr());
+            fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+                (crate::background_home::mode() == 0 && !crate::corona_blur::active()) as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+                crate::corona_blur::enabled() as u8);
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, crate::background_home::realtime_on() as u8);
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+                crate::corona_blur::v2_enabled() as u8);
             Ok(())
         }
     }
@@ -1778,30 +1788,85 @@ impl Page for BlurPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             match idx {
-                0 => crate::background_home::request(0),
-                3 => crate::background_home::generate(),
-                6 => nav_goto(crate::blur_zone::PAGE_PID, 0),
+                0 => {
+                    // 选回官方背景须关闭两开关；引擎和 v2 图标都由背景生命周期安全退役。
+                    crate::corona_blur::set(false);
+                    crate::corona_blur::set_v2_enabled(false);
+                    crate::background_home::request(0);
+                },
+                4 => nav_goto(BLUR_LEGACY_PID, 0),
+                5 => nav_goto(crate::blur_zone::PAGE_PID, 0),
                 11 => nav_back(),
                 _ => {}
             }
         }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 2 || idx == 4 }
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 2 }
 
     fn on_switch(&self, idx: usize) {
         unsafe {
-            if idx == 1 {
-                crate::background_home::request(
-                    if crate::background_home::mode() == 1 { 0 } else { 1 });
+            if idx == 1 { crate::corona_blur::set(!crate::corona_blur::enabled()); }
+            if idx == 2 { crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled()); }
+        }
+    }
+}
+
+// ===== 页7: 系统模糊 -> 旧版选项 =====
+//
+// 这是原系统模糊页的兼容入口。系统背景(主页面)与模糊区域(页15)不在这里重复，
+// 其余旧档位/实时截取设置全部集中到本页；corona 或 v2 任一开启时保留设置但不应用。
+pub(crate) struct BlurLegacyPage;
+
+impl Page for BlurLegacyPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "旧版选项\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::switch("静态背景图(表盘)\0".as_bytes())),
+                (1, RowSpec::switch("自动截取替换图片\0".as_bytes())),
+                (2, RowSpec::clickable("手动生成或更新表盘背景\0".as_bytes())),
+                (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
+                (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (5, RowSpec::display("关闭 corona模糊和模糊v2后生效\0".as_bytes(), core::ptr::null())),
+                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
+            let mode = crate::background_home::mode();
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (mode == 1) as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+                crate::background_home::realtime_on() as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)), fw_api::NONE_PTR,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (mode == 3) as u8);
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            match idx {
+                2 => crate::background_home::generate(),
+                11 => nav_back(),
+                _ => {}
             }
-            if idx == 2 {
-                crate::background_home::set_realtime(
-                    if crate::background_home::realtime_on() != 0 { 0 } else { 1 });
-            }
-            if idx == 4 {
-                crate::background_home::request(
-                    if crate::background_home::mode() == 3 { 0 } else { 3 });
+        }
+    }
+
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 0 || idx == 1 || idx == 3 }
+
+    fn on_switch(&self, idx: usize) {
+        unsafe {
+            match idx {
+                0 => crate::background_home::request(
+                    if crate::background_home::mode() == 1 { 0 } else { 1 }),
+                1 => crate::background_home::set_realtime(
+                    if crate::background_home::realtime_on() != 0 { 0 } else { 1 }),
+                3 => crate::background_home::request(
+                    if crate::background_home::mode() == 3 { 0 } else { 3 }),
+                _ => {}
             }
         }
     }
@@ -2328,6 +2393,7 @@ static PAGE_VIBP: VibPage = VibPage;
 static PAGE_FONTLIST: FontListPage = FontListPage;
 static PAGE_ICONSUB: IconSubPage = IconSubPage;
 static PAGE_SETTINGS: SettingsPage = SettingsPage;
+static PAGE_BLUR_LEGACYP: BlurLegacyPage = BlurLegacyPage;
 
 pub(crate) struct SettingsPage;
 static mut ABOUT_FW: [u8; 32] = [0; 32];
@@ -2527,6 +2593,7 @@ impl Page for AboutPage {
                 (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (6, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
                 (7, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+                (8, RowSpec::clickable("开放源代码许可\0".as_bytes())),
             ])?;
             Ok(())
         }
@@ -2550,7 +2617,9 @@ impl Page for AboutPage {
                 crate::ui::render_req(18);
                 return;
             }
-            if idx == 0 {
+            if idx == 8 {
+                nav_goto(20, 0);
+            } else if idx == 0 {
                 DBG_CLICKS += 1;
                 if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
             }
@@ -2558,6 +2627,146 @@ impl Page for AboutPage {
     }
     fn needs_tick(&self) -> bool { unsafe { DBG_ON != 0 } }
     fn tick(&self) { unsafe { if DBG_ON != 0 { DBG_TICKS = DBG_TICKS.wrapping_add(1); } } }
+}
+
+// ===== 页20: 关于 -> 开放源代码许可 =====
+//
+// Corona 以 AGPL-3.0-only 发布；此处保留完整许可证正文入口，同时保留项目中已有的
+// MIBAND10PRO-TUNMODULE MPL-2.0 文本，便于用户在设备上查看所有第三方许可。
+pub(crate) struct LicensesPage;
+static PAGE_LICENSESP: LicensesPage = LicensesPage;
+
+impl Page for LicensesPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "开放源代码许可\0".as_bytes()); }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            build_rows(ctx, ctx.title, &[
+                (0, RowSpec::tap("Canopus-Module-Corona\0".as_bytes(),
+                    "AGPL-3.0-only\0".as_bytes().as_ptr())),
+                (1, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
+                    "MPL-2.0\0".as_bytes().as_ptr())),
+                // (2, RowSpec::display("Corona 上游源代码\0".as_bytes(),
+                //     "https://github.com/AstralSightStudios/Canopus-Module-Corona\0".as_bytes().as_ptr())),
+            ]).map(|_| ())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            if idx < 2 {
+                LICENSE_KIND = idx as u32;
+                LICENSE_PAGE = 0;
+                nav_goto(21, 0);
+            }
+        }
+    }
+}
+
+static CORONA_LICENSE_TEXT: &[u8] = include_bytes!("../corona_vendor/LICENSE");
+static MPL_LICENSE_TEXT: &[u8] = include_bytes!("../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
+static mut LICENSE_KIND: u32 = 0;
+static mut LICENSE_PAGE: usize = 0;
+static mut LICENSE_VIEW: [u8; 4096] = [0; 4096];
+static mut LICENSE_STATUS: [u8; 48] = [0; 48];
+const LICENSE_PAGE_LINES: usize = 7;
+
+unsafe fn license_text() -> &'static [u8] {
+    if LICENSE_KIND == 0 { CORONA_LICENSE_TEXT } else { MPL_LICENSE_TEXT }
+}
+
+unsafe fn license_line_count() -> usize {
+    let mut lines = 1usize;
+    for &c in license_text() { if c == b'\n' { lines += 1; } }
+    lines
+}
+
+unsafe fn license_page_count() -> usize {
+    (license_line_count() + LICENSE_PAGE_LINES - 1) / LICENSE_PAGE_LINES
+}
+
+unsafe fn license_render_page() {
+    let text = license_text();
+    let pages = license_page_count();
+    if LICENSE_PAGE >= pages { LICENSE_PAGE = pages.saturating_sub(1); }
+    let target_line = LICENSE_PAGE * LICENSE_PAGE_LINES;
+    let mut line = 0usize;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < text.len() && line < target_line {
+        if text[i] == b'\n' { line += 1; }
+        i += 1;
+        start = i;
+    }
+    let mut end = start;
+    line = 0;
+    while end < text.len() && line < LICENSE_PAGE_LINES {
+        if text[end] == b'\n' { line += 1; }
+        end += 1;
+    }
+    let out = core::ptr::addr_of_mut!(LICENSE_VIEW) as *mut u8;
+    let count = core::cmp::min(end.saturating_sub(start), 4095);
+    for j in 0..count { write_volatile(out.add(j), text[start + j]); }
+    write_volatile(out.add(count), 0);
+
+    let status = core::ptr::addr_of_mut!(LICENSE_STATUS) as *mut u8;
+    let mut buf = [0u8; 48];
+    let mut w = crate::text::W::new(buf.as_mut_ptr(), buf.len());
+    w.s("第 ".as_bytes());
+    w.n((LICENSE_PAGE + 1) as u32);
+    w.s("/".as_bytes());
+    w.n(pages as u32);
+    w.s(" 页".as_bytes());
+    w.end();
+    let len = w.len();
+    for j in 0..len { write_volatile(status.add(j), buf[j]); }
+    write_volatile(status.add(len), 0);
+}
+
+pub(crate) struct LicenseTextPage;
+static PAGE_LICENSEP: LicenseTextPage = LicenseTextPage;
+
+impl Page for LicenseTextPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe {
+            if LICENSE_KIND == 0 { put_str(buf, "Corona AGPL-3.0-only\0".as_bytes()); }
+            else { put_str(buf, "MPL-2.0 license\0".as_bytes()); }
+        }
+    }
+
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe {
+            license_render_page();
+            let pages = license_page_count();
+            let prev = build_rows(ctx, ctx.title, &[
+                (0, RowSpec::clickable(if LICENSE_PAGE > 0 { "上一页\0".as_bytes() } else { "已到首页\0".as_bytes() })),
+                (1, RowSpec::clickable(if LICENSE_PAGE + 1 < pages { "下一页\0".as_bytes() } else { "已到末页\0".as_bytes() })),
+                (2, RowSpec::display(
+                    core::slice::from_raw_parts(core::ptr::addr_of!(LICENSE_STATUS) as *const u8,
+                        cstr_len(core::ptr::addr_of!(LICENSE_STATUS) as *const u8) + 1),
+                    core::ptr::null())),
+            ])?;
+            let label = fw_api::label_create(ctx.content);
+            if label != 0 {
+                fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
+                fw_api::label_set_text(label, core::ptr::addr_of!(LICENSE_VIEW) as *const u8);
+                // 英文原文的一行会折成多行；高度随文字增长，不能把正文裁在 320px 内。
+                fw_api::obj_set_width(label, 320);
+                fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
+            }
+            Ok(())
+        }
+    }
+
+    fn on_click(&self, idx: usize) {
+        unsafe {
+            let pages = license_page_count();
+            if idx == 0 && LICENSE_PAGE > 0 { LICENSE_PAGE -= 1; crate::ui::render_req(21); }
+            else if idx == 1 && LICENSE_PAGE + 1 < pages { LICENSE_PAGE += 1; crate::ui::render_req(21); }
+        }
+    }
 }
 
 // ===== 页2: 时间设置(时 + 分) =====
@@ -2654,8 +2863,9 @@ impl Page for DateMDPage {
 // ===== 页15: 系统模糊 -> 模糊区域(三级) =====
 //
 // 四个背景替换区域的开关(数据与持久化全在 blur_zone.rs, 这里只建行与派发):
-//   行0=启动器 行1=控制中心 行2=通知中心 行3=小部件 行11=返回。
+//   行0=启动器 行1=控制中心 行2=小部件 行3=通知中心 行11=返回。
 // 开 = 正常替换(默认); 关 = 该区域保持官方模糊画面。
+// 对所有模糊选项生效，包括 corona模糊和模糊v2；关闭通知区域也恢复 v2 原图标。
 // 翻位后 blur_zone::set 持久化 + background_home::remount() 置 REQUEST,
 // 由背景 tick 的拆/装流程按新掩码统一重建(页面退出前就能看到拆装, 不用重启)。
 // 开关初态: 单排行, row_update 第 6 参原地补写(secondary 传 NONE 是安全的 ——
@@ -2671,10 +2881,14 @@ impl Page for BlurZonePage {
         unsafe {
             crate::blur_zone::ensure_loaded();
             build_rows(ctx, ctx.title, &[
+                (4, RowSpec::display("适用于所有模糊选项\0".as_bytes(),
+                    "包括 corona模糊和模糊v2\0".as_bytes().as_ptr())),
                 (0, RowSpec::switch("启动器\0".as_bytes())),
                 (1, RowSpec::switch("控制中心\0".as_bytes())),
                 (2, RowSpec::switch("小部件\0".as_bytes())),
                 (3, RowSpec::switch("通知中心\0".as_bytes())),
+                (5, RowSpec::display("关闭通知区域恢复原图标\0".as_bytes(),
+                    "同时撤销模糊v2图标去黑底\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             for i in 0..crate::blur_zone::REGION_N {
                 fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)),
@@ -3280,7 +3494,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
     &PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
     &PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
-    &PAGE_REMOVED,    // 7  已移除(排除项页)
+    &PAGE_BLUR_LEGACYP, // 7  系统模糊 -> 旧版选项
     &PAGE_WF_LIST_8,  // 8
     &PAGE_WF_LIST_9,  // 9
     &PAGE_WF_MGMT,    // 10
@@ -3293,8 +3507,8 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_LOG,          // 17 设置 -> 运行日志
     &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
     &PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
-    &PAGE_REMOVED,      // 20 已移除(开源许可列表)
-    &PAGE_REMOVED,      // 21 已移除(MPL 全文)
+    &PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
+    &PAGE_LICENSEP,     // 21 Corona AGPL / MPL-2.0 全文
     &PAGE_SYSVERP,      // 22 系统关于页面修改 -> 系统版本显示
     &PAGE_KEYBOARDP,    // 23 通用英文数字键盘
     &PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改

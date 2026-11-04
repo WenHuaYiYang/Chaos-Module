@@ -29,6 +29,13 @@ static mut RT_LOADED: u32 = 0;
 static mut RT_ON: u32 = 0;
 static mut RT_WF: u32 = 0;    // 上次见到的表盘 identity(基线)
 static mut RT_VALID: u32 = 0; // 基线是否已校准(打开开关后第一次见到表盘时校准)
+// 0 = legacy ownership, 1 = Corona committed, 2 = Corona deferred cleanup.
+// No legacy mutations are allowed in states 1/2. ATTACHED and SCENE remain
+// exclusively owned by the legacy path; Corona never lends them an image.
+static mut CORONA_BG_ACTIVE: u32 = 0;
+// Last successfully committed shared region mask; a busy commit must not
+// consume a newer selection. Zero is valid: Corona owns no blurred regions.
+static mut CORONA_BG_MASK: u32 = 0;
 // 模块注入后给其他模块留出启动窗口，约 50 * 50ms = 2.5 秒。
 static mut BOOT_DELAY: u32 = 0;
 
@@ -283,8 +290,13 @@ unsafe fn consume_deleted() {
 unsafe fn unmount() -> bool {
     st_wr!(MUTATING, 1);
     consume_deleted();
-    if let Some(parents) = fw_api::background_home_targets() { SCENE.restore_deleted(parents); }
-    crate::background_surfaces::restore(fw_api::background_home_targets());
+    let parents = fw_api::background_home_targets();
+    if (parents.is_none() && !SCENE.unmounted())
+        || !crate::background_surfaces::restore(parents) {
+        st_wr!(MUTATING, 0);
+        return false;
+    }
+    if let Some(parents) = parents { SCENE.restore_deleted(parents); }
     crate::background_pages::uninstall();
     crate::background_assets::reset_battery();
     SCENE.detach();
@@ -358,13 +370,11 @@ unsafe fn masked_targets(full: [u32; 4]) -> [u32; 4] {
      if crate::blur_zone::on(3) { full[3] } else { 0 }]
 }
 
-/// 模糊区域开关变化后的重挂入口: 已在替换态就拆了按新掩码重装,
-/// 未启用背景(模式 0)则什么都不动(下次启用自然按新掩码来)。
+/// 模糊区域或引擎开关变化只登记请求；UI owner 在下一拍切换。
+/// 模式 0 也登记，保证 Corona 从系统背景启用/关闭时能推进并刷新页面。
 pub(crate) unsafe fn remount() {
-    if st_rd!(MODE) != 0 {
-        st_wr!(REQUEST, 1);
-        st_wr!(DIRTY, 1);
-    }
+    st_wr!(REQUEST, 1);
+    st_wr!(DIRTY, 1);
 }
 
 // ===== 实时背景模糊(跟随表盘) =====
@@ -417,6 +427,24 @@ unsafe fn realtime_follow() {
 }
 
 pub(crate) unsafe fn status() -> &'static [u8] {
+    if crate::corona_blur::active() {
+        return if st_rd!(CORONA_BG_ACTIVE) == 1 {
+            if st_rd!(CORONA_BG_MASK) != crate::blur_zone::mask() {
+                "等待空闲后更新 Corona 区域\0".as_bytes()
+            } else if st_rd!(CORONA_BG_MASK) == 0 {
+                "模糊：未选择区域\0".as_bytes()
+            } else if crate::corona_blur::v2_enabled() {
+                "模糊v2模式\0".as_bytes()
+            } else {
+                "Corona模糊模式\0".as_bytes()
+            }
+        } else {
+            "等待空闲后切换模糊\0".as_bytes()
+        };
+    }
+    if st_rd!(CORONA_BG_ACTIVE) != 0 {
+        return "正在安全退出 Corona\0".as_bytes();
+    }
     if st_rd!(REQUEST) != 0 && st_rd!(MODE) != 0
         && fw_api::top_app_id() != fw_api::HOME_APP_ID {
         return "返回表盘后生效\0".as_bytes();
@@ -435,12 +463,97 @@ unsafe fn set_status(value: u32) {
     if value != st_rd!(STATUS) { st_wr!(STATUS, value); st_wr!(DIRTY, 1); }
 }
 
+unsafe fn corona_tick() -> bool {
+    let engine_active = crate::corona_blur::active();
+    let v2_active = crate::corona_blur::v2_enabled();
+    if engine_active {
+        let region_mask = crate::blur_zone::mask();
+        if st_rd!(CORONA_BG_ACTIVE) == 0 {
+            // Do not tear down an old scene during a native swipe or while
+            // its roots cannot be validated for style restoration.
+            if !fw_api::screen_is_on() || !crate::corona_blur::backgrounds_idle() {
+                return true;
+            }
+            if (st_rd!(ATTACHED) != 0 || !SCENE.unmounted() || crate::background_pages::hooked())
+                && fw_api::background_home_targets().is_none() { return true; }
+            if !unmount() { return true; }
+            crate::background_surfaces::clear_background();
+            if !SCENE.release() { return true; }
+            st_wr!(ATTACHED, 0);
+            st_wr!(SOURCE_MODE, 0);
+            st_wr!(REFRESH, 0);
+            uninstall();
+        }
+        if st_rd!(CORONA_BG_ACTIVE) != 1 || st_rd!(CORONA_BG_MASK) != region_mask {
+            if crate::corona_blur::backgrounds_commit(true, region_mask) != 0 {
+                // Keep servicing the applied configuration while a live mask
+                // update or a quick off/on waits for native retirement.
+                if st_rd!(CORONA_BG_ACTIVE) != 0 { crate::corona_blur::backgrounds_poll(); }
+                return true;
+            }
+            st_wr!(CORONA_BG_MASK, region_mask);
+            st_wr!(CORONA_BG_ACTIVE, 1);
+            st_wr!(DIRTY, 1);
+        }
+        // v2 adds only the old no-message image replacement. Never restart
+        // background_pages/background_surfaces while Corona owns the scene.
+        // Use the successfully applied mask, not a still-busy desired mask.
+        let icon_wanted = v2_active && st_rd!(CORONA_BG_MASK) & 8 != 0;
+        if (icon_wanted || crate::notification_icon::pending())
+            && fw_api::screen_is_on() && crate::corona_blur::backgrounds_idle() {
+            let _ = crate::notification_icon::tick(icon_wanted);
+        }
+        // The vendored Corona adapter owns selected regions' drawing/scroll/
+        // delete lifecycles and restores system backgrounds for deselected
+        // ones. Even mask 0 must not fall through to a legacy background mode.
+        crate::corona_blur::backgrounds_poll();
+        return true;
+    }
+
+    // Restore v2-owned icons before any handoff to the legacy engine. Missing
+    // native idle keeps both providers polled; it must not drop cleanup work.
+    if crate::notification_icon::pending() {
+        if !fw_api::screen_is_on() || !crate::corona_blur::backgrounds_idle()
+            || !crate::notification_icon::tick(false) {
+            if st_rd!(CORONA_BG_ACTIVE) != 0 { crate::corona_blur::backgrounds_poll(); }
+            return true;
+        }
+    }
+    if st_rd!(CORONA_BG_ACTIVE) == 1 {
+        // A busy commit changes nothing. Keep servicing the installed hooks
+        // until the native swipe ends; never reset/retire the provider alone.
+        if crate::corona_blur::backgrounds_commit(false, 0) != 0 {
+            crate::corona_blur::backgrounds_poll();
+            return true;
+        }
+        st_wr!(CORONA_BG_ACTIVE, 2);
+        st_wr!(DIRTY, 1);
+    }
+    if st_rd!(CORONA_BG_ACTIVE) == 2 {
+        // Off is not a one-shot watch(0): retain owner polling until display
+        // observers, GPU-retired images and battery buffers are all released.
+        crate::corona_blur::backgrounds_poll();
+        if crate::corona_blur::backgrounds_pending() { return true; }
+        st_wr!(CORONA_BG_ACTIVE, 0);
+        st_wr!(CORONA_BG_MASK, 0);
+        st_wr!(REQUEST, 1);
+        st_wr!(GENERATE, if st_rd!(MODE) == 1 { 1 } else { 0 });
+        st_wr!(REFRESH, 0);
+        set_status(0);
+        st_wr!(DIRTY, 1);
+    }
+    false
+}
+
 pub(crate) unsafe fn pending() -> bool {
     if st_rd!(BOOT_DELAY) != 0 { return true; }
     for i in 0..4 {
         if st_rd!(DELETED[i]).1 != 0 { return true; }
     }
-    fw_api::screen_is_on() && (st_rd!(REQUEST) != 0 || SCENE.pending()
+    // Sleeping displays retain Corona's cleanup state for the next wake;
+    // they must not force the existing 1s idle timer back to a 50ms spin.
+    fw_api::screen_is_on() && (crate::corona_blur::active() || st_rd!(CORONA_BG_ACTIVE) != 0
+        || crate::notification_icon::pending() || st_rd!(REQUEST) != 0 || SCENE.pending()
         || st_rd!(REFRESH) != 0 || crate::background_surfaces::pending())
 }
 
@@ -453,18 +566,24 @@ pub(crate) unsafe fn tick() {
     consume_deleted();
     vib_tick();   // 滑动震动 + 震动测试
     if !crate::font_apply::quiet() { return; }
+    // 档位或状态一变就排一次整页重建: 回调里(事件派发链上)只登记请求, 控件由这里
+    // 在安静拍上重建 —— 与"更换字体""桌面图标"两页同一套做法。
+    if st_rd!(DIRTY) != 0 {
+        st_wr!(DIRTY, 0);
+        if crate::page_is_live(BLUR_PID as usize) { crate::render_req(BLUR_PID as usize); }
+        if crate::page_is_live(crate::page::BLUR_LEGACY_PID as usize) {
+            crate::render_req(crate::page::BLUR_LEGACY_PID as usize);
+        }
+    }
+    // Give Corona exclusive ownership before ANY legacy surface worker,
+    // snapshot refresh or scene attachment. UI-only redraws above still run.
+    if corona_tick() { return; }
     if fw_api::screen_is_on() && crate::background_surfaces::pending() {
         let Some(full) = fw_api::background_home_targets() else { return; };
         let changed = crate::background_surfaces::tick(Some(masked_targets(full)));
         if changed != 0 && st_rd!(ATTACHED) != 0 {
             st_wr!(REFRESH, st_rd!(REFRESH) | changed);
         }
-    }
-    // 档位或状态一变就排一次整页重建: 回调里(事件派发链上)只登记请求, 控件由这里
-    // 在安静拍上重建 —— 与"更换字体""桌面图标"两页同一套做法。
-    if st_rd!(DIRTY) != 0 {
-        st_wr!(DIRTY, 0);
-        if crate::page_is_live(BLUR_PID as usize) { crate::render_req(BLUR_PID as usize); }
     }
     let mode = st_rd!(MODE);
     if mode == 0 {

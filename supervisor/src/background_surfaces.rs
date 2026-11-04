@@ -39,6 +39,10 @@ static mut PAGE_SCAN: u32 = 0;
 
 pub(crate) unsafe fn set_background(descriptor: u32) { st_wr!(BACKGROUND, descriptor); }
 
+/// Called only after legacy surfaces/images have been restored and detached,
+/// before their source allocation is released for a Corona handoff.
+pub(crate) unsafe fn clear_background() { st_wr!(BACKGROUND, 0); }
+
 pub(crate) unsafe fn rescan() {
     if st_rd!(ACTIVE) != 0 { st_wr!(SCAN, 1); }
 }
@@ -394,25 +398,27 @@ pub(crate) unsafe fn enable_transparent(roots: [u32; 4]) {
     st_wr!(ACTIVE, 1);
 }
 
-pub(crate) unsafe fn restore(roots: Option<[u32; 4]>) {
+pub(crate) unsafe fn restore(roots: Option<[u32; 4]>) -> bool {
     consume();
-    let active = st_rd!(ACTIVE);
+    if st_rd!(ACTIVE) == 0 { return true; }
+    // Home can temporarily leave the live tree during a transition. Do not
+    // discard restoration work or free its background while styles may still
+    // reference it. DELETE events are consumed on the next owner retry.
+    let Some(roots) = roots else { return false; };
     st_wr!(ACTIVE, 0);
     st_wr!(WORK, 0);
     st_wr!(SCAN, 0);
-    if active == 0 { return; }
-    if let Some(roots) = roots {
-        for slot in 0..LIMIT {
-            let entry = st_rd!(SURFACES[slot]);
-            if entry.object != 0 && owns_root(entry.root, Some(roots)) && belongs(entry.object, entry.root) {
-                if value(entry.object, entry.prop) != entry.original {
-                    write(entry.object, entry.prop, entry.original);
-                }
+    for slot in 0..LIMIT {
+        let entry = st_rd!(SURFACES[slot]);
+        if entry.object != 0 && owns_root(entry.root, Some(roots)) && belongs(entry.object, entry.root) {
+            if value(entry.object, entry.prop) != entry.original {
+                write(entry.object, entry.prop, entry.original);
             }
         }
     }
     // 删除通知返回后再撤销旧句柄。
     consume();
+    true
 }
 
 pub(crate) unsafe fn pending() -> bool {

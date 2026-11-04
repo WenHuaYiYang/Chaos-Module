@@ -6,7 +6,6 @@ use crate::{st_rd, st_wr};
 pub(crate) const EMPTY_PATH: &[u8] = b"/resource/app/notifications/no_message.bin\0";
 pub(crate) const BATTERY_PATH: &[u8] = b"/resource/app/common/icon/charge_cont.bin\0";
 static mut EMPTY_IMAGE: u32 = 0;
-static mut ATTEMPTED: u32 = 0;
 static mut BATTERY_TEMPLATE: u32 = 0;
 static mut BATTERY_ATTEMPTED: u32 = 0;
 static mut BATTERY_IMAGE: u32 = 0;
@@ -14,8 +13,9 @@ static mut BATTERY_BACKGROUND: u32 = 0;
 static mut BATTERY_POSITION: (i32, i32) = (-1, -1);
 
 pub(crate) unsafe fn empty_image() -> u32 {
-    if st_rd!(ATTEMPTED) != 0 { return st_rd!(EMPTY_IMAGE); }
-    st_wr!(ATTEMPTED, 1);
+    // 只缓存成功的 descriptor；临时低内存/短读不能让 v2 永久失效。
+    // v2 owner 对失败做节流，旧版仍在下次重新挂载时重试。
+    if st_rd!(EMPTY_IMAGE) != 0 { return st_rd!(EMPTY_IMAGE); }
     let image = load(EMPTY_PATH, 96, 96, true);
     st_wr!(EMPTY_IMAGE, image);
     image
@@ -108,17 +108,21 @@ unsafe fn load(path: &[u8], width: u8, height: u8, remove_black: bool) -> u32 {
     }
     let data = (owner + 28 + 63) & !63;
     core::ptr::copy((owner + 28) as *const u8, data as *mut u8, payload_bytes as usize);
-    if remove_black {
-        for index in 0..256 {
-            let color = data + index * 4;
-            if (0..3).all(|channel| rd8((color + channel) as *const u8) == 0) {
-                core::ptr::write_volatile((color + 3) as *mut u8, 0);
-            }
-        }
-    }
+    if remove_black { clear_black_palette(data as *mut u8); }
     core::ptr::write_bytes(owner as *mut u8, 0, 28);
     core::ptr::copy_nonoverlapping(header.as_ptr(), owner as *mut u8, 12);
     core::ptr::write_volatile((owner + 12) as *mut u32, payload_bytes);
     core::ptr::write_volatile((owner + 16) as *mut u32, data);
     owner
+}
+
+/// 256 项 BGRA 调色板：只清纯黑 RGB 的 alpha，近黑色和非黑图案原样保留。
+/// 调用方保证 data 指向完整、可写的 1024 字节 palette。
+unsafe fn clear_black_palette(data: *mut u8) {
+    for index in 0..256 {
+        let color = data.add(index * 4);
+        if (0..3).all(|channel| rd8(color.add(channel)) == 0) {
+            core::ptr::write_volatile(color.add(3), 0);
+        }
+    }
 }

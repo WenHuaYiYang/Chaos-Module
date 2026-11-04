@@ -96,6 +96,17 @@ Documentation index: [docs/README.md](docs/README.md).
 Fonts and third-party assets follow their own licenses; this repository ships no commercial fonts,
 system icons or firmware images.
 
+“Corona blur” is ported from
+[Canopus-Module-Corona](https://github.com/AstralSightStudios/Canopus-Module-Corona), which declares
+**AGPL-3.0-only**. The upstream implementation and [original license](supervisor/corona_vendor/LICENSE)
+are preserved in `supervisor/corona_vendor/`; provenance, checksums, Chaos integration changes and
+redistribution notes are in the [Corona third-party notice](licenses/CANOPUS-MODULE-CORONA-NOTICE.txt).
+The complete license is also available in About → Open-source licenses on the device.
+The shared blur-region settings apply to both Corona and legacy blur modes. The system blur
+page's explanation links to upstream and the [modified Chaos source](https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor).
+Binary redistribution requires the complete corresponding source and build/install scripts for that binary;
+an upstream link or license copy alone does not replace the applicable source obligations.
+
 ## Acknowledgements
 
 - The Xiaomi Vela / NuttX community and the openvela documentation
