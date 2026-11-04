@@ -2,13 +2,14 @@
 
 版本号与容器头、关于页、`Cargo.toml` 三处同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
-## v1.1.13 — 2026-11-04
+## v1.1.2.dev — 2026-11-04
 
+- **合并官方 master `a137e9a`（官方版本 1.1.2）**：并入 Corona 模糊、通知图标、背景/状态栏调整与对应测试；开发分支版本显示为 `v1.1.2.dev`，容器头继续跟随官方 `0x00010007`。
 - **深度隐藏恢复为默认，并支持运行期免重启显示**：`apply_mode_ensure()` 改回 `APPLY_MODE = 0`；隐藏时条目进 `apps.json_hide`，开机固件不注册，避免所有快应用图标先闪一下。
 - 显示路径：`op_show_pkg` 先把条目搬回 `apps.json`，`apply_immediate` 在 `find_node == 0` 时调用 `quickapp_register_pkg`（内部 `quickapp_register_app` @ `0x0C549678`，数据来自 proxyquickapp 已装表）补节点，再清 bit0、挂图标。
 - 补建日志新增 `显示应用-应用表 N`、`显示应用-补建节点 0/1`、`显示应用-补建后仍无节点`，用于区分代理表未就绪、表里没有该包、以及节点已建但 `app_launcher_add` 失败。
 - 普通隐藏留下的 keep 名单由 `boot_apply()` 的 `deep_apply_all()` 自动迁进 `apps.json_hide`；`watch_keep()` 继续在换绑/重注册后重放深度隐藏。
-- 版本 1.1.13。
+- 版本 1.1.2.dev。
 
 ## v1.1.12 — 2026-11-03
 

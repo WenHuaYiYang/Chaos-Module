@@ -1131,7 +1131,7 @@ unsafe fn log_page_load() {
     }
 
     if count != 0 {
-        t.put_bytes(concat!("v", env!("CARGO_PKG_VERSION"), " · 共 ").as_bytes());
+        t.put_bytes(concat!("v", env!("CARGO_PKG_VERSION"), ".dev · 共 ").as_bytes());
         t.put_num(count as u32);
         t.put_bytes(" 行".as_bytes());
         t.newline();
@@ -2585,7 +2585,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), concat!("v", env!("CARGO_PKG_VERSION"), "\0").as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), concat!("v", env!("CARGO_PKG_VERSION"), ".dev\0").as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),

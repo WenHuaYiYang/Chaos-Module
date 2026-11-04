@@ -1401,7 +1401,7 @@ pub(crate) unsafe fn apply_mode_ensure() {
     // 显示时先把条目搬回 apps.json，再用 quickapp_register_app(0x0C549678) 从
     // proxyquickapp 已装表补回注册表节点，然后清隐藏位、挂图标 —— 不再要求重启。
     //
-    // v1.1.13 恢复深度模式为默认；普通隐藏留下的 keep 名单由 deep_apply_all()
+    // v1.1.2.dev 恢复深度模式为默认；普通隐藏留下的 keep 名单由 deep_apply_all()
     // 在开机补偿里统一搬进 apps.json_hide，避免“所有快应用刚开机都显示”。
     APPLY_MODE = 0;
     keep_load();
