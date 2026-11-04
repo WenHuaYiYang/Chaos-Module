@@ -1624,7 +1624,7 @@ impl Page for BlurPage {
             let prev = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
                 // (1, RowSpec::switch("corona模糊\0".as_bytes())),
-                (1, RowSpec::switch("Corona模糊)\0".as_bytes())),
+                (1, RowSpec::switch("Corona模糊(模糊v2)\0".as_bytes())),
                 (2, RowSpec::display(crate::background_home::status(), core::ptr::null())),
                 (3, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊和模糊v2后生效\0".as_bytes().as_ptr())),
                 (4, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 corona模糊和模糊v2）\0".as_bytes().as_ptr())),
@@ -2451,7 +2451,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.1\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.2\0".as_bytes().as_ptr())),
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
