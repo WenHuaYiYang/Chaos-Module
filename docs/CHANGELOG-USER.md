@@ -1,3 +1,10 @@
+# 更新列表（v1.1.3.dev）
+
+- 新增原生文件桥：Chaos 内置 CanopusConnect 兼容端，AstroBox「手环文件管理器」插件可直接连接，不需要 Canopus 模块管理器、Supervisor 或 band_files 模块。
+- 提供 bridge / safe 两种安装包：bridge 包启用文件桥；safe 包不启用，避免和 Canopus 的 L2 0x43 通道冲突。
+- 运行日志降噪：去掉开机补偿逐条“隐藏 xxx”和看门狗周期重复行，只保留注册表真正变化时的日志。
+- 合并官方 1.1.2 代码，版本进入 v1.1.3.dev。
+
 # 更新列表（v1.1.2.dev）
 
 - 合并官方最新代码（Corona 模糊、通知图标等）；版本跟随官方 `1.1.2`，开发分支显示 `v1.1.2.dev`。

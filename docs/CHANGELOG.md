@@ -2,7 +2,17 @@
 
 版本号与容器头、关于页、`Cargo.toml` 三处同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
+## v1.1.3.dev — 2026-11-04
+
+- **原生文件桥**：`supervisor/bridge/` 内置最小 CanopusConnect 兼容端（`bridge.c` + `canopus_protocol.c` + `band_files_embed.c`），在 `chaos_shake_timer` 里等 UI owner 就绪后调用 `chaos_bridge_start()`。支持 AstroBox `band_files` 插件的 ConnectListen/Send/Message 与 L2 0x43 加密会话，不依赖 Canopus 模块。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。
+- 构建支持 `CHAOS_NO_BRIDGE=1` 产出 safe 包；bridge 包额外链接三个 C provider，KO 约 299 KB，safe 包约 282 KB。
+- 日志降噪：移除 `keep_apply_all()` 的逐条“开机补偿隐藏”，移除看门狗周期重放的重复日志；只在注册表真正变化时记录。
+- 版本 1.1.3.dev；容器头 `0x00010103`。
+
 ## v1.1.2.dev — 2026-11-04
+
+- **原生文件桥**：Chaos 内置最小 CanopusConnect 兼容端，AstroBox 文件管理器插件可直接连接，不再需要 Canopus 模块管理器、Canopus Supervisor 或 band_files 模块；文件协议/插件 UI 不变。新增 `docs/24-FILE-BRIDGE.md`。
+
 
 - **合并官方 master `a137e9a`（官方版本 1.1.2）**：并入 Corona 模糊、通知图标、背景/状态栏调整与对应测试；开发分支版本显示为 `v1.1.2.dev`，容器头继续跟随官方 `0x00010007`。
 - **深度隐藏恢复为默认，并支持运行期免重启显示**：`apply_mode_ensure()` 改回 `APPLY_MODE = 0`；隐藏时条目进 `apps.json_hide`，开机固件不注册，避免所有快应用图标先闪一下。

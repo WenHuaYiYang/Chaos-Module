@@ -47,6 +47,30 @@ mod watchface;
 mod page;
 mod ui;
 mod ipc;
+
+#[cfg(not(chaos_no_bridge))]
+extern "C" {
+    fn chaos_bridge_start() -> i32;
+}
+
+/// Called by the C bridge only for one-shot state transitions, never per
+/// frame. Keeping it here means the bridge uses Chaos' log file and the
+/// "运行日志" page instead of a second logging path.
+#[no_mangle]
+pub extern "C" fn chaos_bridge_log(message: *const u8) {
+    if message.is_null() {
+        return;
+    }
+    unsafe {
+        let mut n = 0usize;
+        while n < 160 && *message.add(n) != 0 {
+            n += 1;
+        }
+        if let Ok(text) = core::str::from_utf8(core::slice::from_raw_parts(message, n)) {
+            crate::log::line(text);
+        }
+    }
+}
 pub(crate) use text::*;
 pub(crate) use explorer::*;
 pub(crate) use watchface::*;
@@ -239,6 +263,8 @@ unsafe extern "C" fn chaos_ctor() {
         // 依赖它的一切(页面 tick / desktop_scale)都不会跑。
         crate::log::kv("timer h ", st_rd!(SHAKE_TIMER));
         crate::log::line("模块加载: /dev/chaos 注册成功");
+        // The bridge is armed from chaos_shake_timer, not here: the owner
+        // loop / LVGL timer source is not ready while insmod is running.
     }
 }
 

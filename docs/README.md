@@ -25,6 +25,7 @@
 | [BUILD.md](BUILD.md) | 工具链、构建流程、版本号规则、发布检查单 | 维护者 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 目录结构、启动链、页面模型、IPC、固件耦合 | 维护者 |
 | [LVGL-MAP.md](LVGL-MAP.md) | p67 固件里 LVGL 类描述、构造入口、绘制函数地址 | 维护者 |
+| [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md) | Chaos 原生文件桥、替代 Canopus 模块的协议与构建 | 维护者 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 | 所有人 |
 | [CHANGELOG-DEV.md](CHANGELOG-DEV.md) | 与基线 `d31f1e5` 的逐项技术差异 | 维护者 |
 | [CHANGELOG-USER.md](CHANGELOG-USER.md) | 与上一公开版的差异，含排除项/深度隐藏说明 | 使用者 |

@@ -1386,7 +1386,6 @@ unsafe fn keep_apply_all() -> usize {
             if id != 0 {
                 set_node_hidden(node, true);
                 fw_api::app_launcher_del(id);
-                crate::log::pkg("开机补偿隐藏 ", p);
                 found += 1;
             }
         }
@@ -1631,13 +1630,6 @@ pub(crate) unsafe fn boot_apply() {
     if BOOT_APPLIED != 0 { return; }
     apply_mode_ensure();
     excl_ensure();
-    if BOOT_TRIES == 0 {
-        crate::log::line(if apply_mode_is_keep() {
-            "开机补偿: 普通隐藏重放开始"
-        } else {
-            "开机补偿: 深度隐藏重放开始"
-        });
-    }
     BOOT_WAIT = BOOT_WAIT.wrapping_add(1);
     // 注册表/应用表可能比模块晚就绪: 每 40 拍试一次, 最多 5 分钟。
     if BOOT_WAIT % 40 != 0 { return; }
@@ -1734,26 +1726,20 @@ pub(crate) unsafe fn watch_keep() {
     } else if WATCH_CHG != 0 {
         WATCH_CHG = 0;
         if apply_mode_is_keep() {
-            let found = keep_apply_all();
-            if found != 0 {
-                crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
-            }
+            let _ = keep_apply_all();
         } else {
             let _ = fw_api::quickapp_resync_missing();
-            let (found, moved, _n) = deep_apply_all();
-            if found != 0 || moved != 0 {
-                crate::log::kv("看门狗: 注册表变化, 补隐藏 ", found as u32);
-                if moved != 0 { crate::log::kv("看门狗: 迁移回隐藏表 ", moved as u32); }
-            }
+            let _ = deep_apply_all();
         }
     } else if WATCH_WAIT % 240 == 0 {
         // 兜底: 集合没变但节点被重建/bit0 被清, 每分钟(慢拍 4 分钟)整表重放一次。
+        // Periodic fallback is intentionally silent: it runs every minute and
+        // used to add identical lines forever. Only actual registry changes
+        // (the branch above) are worth a log line.
         if apply_mode_is_keep() {
-            let found = keep_apply_all();
-            if found != 0 { crate::log::kv("看门狗: 周期补隐藏 ", found as u32); }
+            let _ = keep_apply_all();
         } else {
-            let (found, _moved, _n) = deep_apply_all();
-            if found != 0 { crate::log::kv("看门狗: 周期补隐藏 ", found as u32); }
+            let _ = deep_apply_all();
         }
     }
     WATCH_BUSY = 0;

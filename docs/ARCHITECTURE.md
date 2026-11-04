@@ -115,6 +115,17 @@ Chaos 直接调用固件里已静态核对的函数地址（`supervisor/src/fw_a
 - 无固件指纹校验：装错固件时模块可能加载失败或崩溃。
 - 单核、无 MMU 保护：越界写就是 HardFault，没有恢复机会。
 
+## 原生文件桥
+
+`supervisor/bridge/` 内置一个最小 CanopusConnect 兼容端，让 AstroBox 插件直接连接 Chaos：
+
+- `bridge.c`：CPC2 ConnectListen/Send/Message、L2 0x43 加密队列、owner timer
+- `band_files_embed.c`：原 `band_files` 文件协议，跑在 fake `canopus_context_v1` 上
+- `canopus_protocol.c` / `canopus_abi.h` / `canopus_services.h`：冻结的协议/ABI 头
+
+它不包含 Canopus 的 registry、descriptor、安装器或 Manager RPC。启动入口是维护定时器 `chaos_shake_timer` 里的
+`chaos_bridge_start()`（UI owner 就绪后）。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。
+
 ## 相关文档
 
 - 构建与发版：[BUILD.md](BUILD.md)

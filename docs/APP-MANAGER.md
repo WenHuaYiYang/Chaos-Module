@@ -20,9 +20,9 @@ bmi    0x0C5137A4         ; 打 “The app need hidden”，返回 0
 
 所以：节点不存在时，清 `+0x3C` bit0 根本执行不到，`add` 也不可能成功。
 
-## 2. 生效模式（v1.1.2.dev 起固定深度隐藏）
+## 2. 生效模式（v1.1.3.dev 起固定深度隐藏）
 
-v1.1.2.dev 起固定使用深度隐藏：隐藏时条目从 `apps.json` 搬到 `apps.json_hide`，开机固件根本不注册，桌面不会先闪出隐藏应用的图标。
+v1.1.3.dev 起固定使用深度隐藏：隐藏时条目从 `apps.json` 搬到 `apps.json_hide`，开机固件根本不注册，桌面不会先闪出隐藏应用的图标。
 
 ### 深度隐藏
 
@@ -34,7 +34,7 @@ v1.1.2.dev 起固定使用深度隐藏：隐藏时条目从 `apps.json` 搬到 `
 
 ### 从普通隐藏升级
 
-v1.1.11/v1.1.12 的普通隐藏把包名记在 `/data/chaos/appmgr_keep.bin`，条目留在 `apps.json`。升级到 v1.1.2.dev 后，开机补偿会用 `deep_apply_all()` 把这些条目迁进 `apps.json_hide` 并隐藏；第一次开机会闪一下，之后开机不再出现。
+v1.1.11/v1.1.12 的普通隐藏把包名记在 `/data/chaos/appmgr_keep.bin`，条目留在 `apps.json`。升级到 v1.1.3.dev 后，开机补偿会用 `deep_apply_all()` 把这些条目迁进 `apps.json_hide` 并隐藏；第一次开机会闪一下，之后开机不再出现。
 
 ### 运行期补节点的固件依据（v1.1.12）
 
@@ -61,13 +61,13 @@ v1.1.11/v1.1.12 的普通隐藏把包名记在 `/data/chaos/appmgr_keep.bin`，�
 | `/data/apps.json_hide` | 隐藏应用注册表（同格式） |
 | `/data/chaos/appmgr_keep.bin` | 旧版普通隐藏的 Chaos 隐藏名单：`KH01` + 40 × 44 字节包名 |
 | `/data/chaos/appmgr_excl.bin` | 排除名单：`EX02` + 40 × 44 字节包名 + 4 字节校验和 |
-| `/data/chaos/appmgr_apply.cfg` | 旧版模式开关（v1.1.11 起不再读取；v1.1.2.dev 固定深度隐藏） |
+| `/data/chaos/appmgr_apply.cfg` | 旧版模式开关（v1.1.11 起不再读取；v1.1.3.dev 固定深度隐藏） |
 
 ## 5. 验证清单
 
 1. 深度隐藏：隐藏 → 图标立即消失 → 重启 → 图标不出现（开机不闪）。
 2. 深度隐藏：重启后点显示 → 日志 `显示应用-应用表 N`（N>0）、`显示应用-补建节点 1` → 图标立即回来，不重启。
-3. 普通隐藏升级：vv1.1.11/v1.1.12 的 keep 条目在首次开机被迁进 `apps.json_hide`，保持隐藏；之后开机不再闪。
+3. 普通隐藏升级：v1.1.11/v1.1.12 的 keep 条目在首次开机被迁进 `apps.json_hide`，保持隐藏；之后开机不再闪。
 4. 排除项：加入后一键操作跳过；页 1 不显示；页 7 可取消。
 5. 损坏文件：把 `appmgr_keep.bin` / `appmgr_excl.bin` 写成乱码，页面应正常打开；排除名单损坏时按“空名单”处理，开机补偿会把 keep 名单里的应用全部隐藏。
 

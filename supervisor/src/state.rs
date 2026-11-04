@@ -193,6 +193,7 @@ pub static mut NOTIF: [u32; 22] = [0; 22];
 pub static mut CTOR_DONE: u32 = 0; // ctor 幂等守卫(.init_array + module_main 可能双触发)
 
 pub static mut DRIVER_ON: u32 = 0; // driver 注册成功标志（dtor 幂等守卫）
+pub static mut BRIDGE_STATE: u32 = 0; // 0=未启动 1=运行 0xffff_ffff=启动失败
 
 // 非零初始化可变全局 → 产生 .data PROGBITS 节（与固件自带模块的 ELF 形状一致）
 #[used]
