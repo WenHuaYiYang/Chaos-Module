@@ -2446,7 +2446,8 @@ impl Page for SettingsPage {
     /// 页名字符串沿用 `about`(state/ipc 没动)：它只是 page_goto 的解析键，与标题无关。
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            build_rows(ctx, ctx.title, &[
+            #[cfg(not(chaos_no_bridge))]
+            let rows: &[(usize, RowSpec<'_>)] = &[
                 (0, RowSpec::clickable("时间设置\0".as_bytes())),
                 (1, RowSpec::clickable("日期设置\0".as_bytes())),
                 (2, RowSpec::clickable("亮度\0".as_bytes())),
@@ -2455,7 +2456,27 @@ impl Page for SettingsPage {
                 (5, RowSpec::clickable("运行日志\0".as_bytes())),
                 (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
                 (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
-            ]).map(|_| ())
+                (8, RowSpec::switch("文件桥\0".as_bytes())),
+            ];
+            #[cfg(chaos_no_bridge)]
+            let rows: &[(usize, RowSpec<'_>)] = &[
+                (0, RowSpec::clickable("时间设置\0".as_bytes())),
+                (1, RowSpec::clickable("日期设置\0".as_bytes())),
+                (2, RowSpec::clickable("亮度\0".as_bytes())),
+                (3, RowSpec::clickable("震动\0".as_bytes())),
+                (4, RowSpec::clickable("缓存清理\0".as_bytes())),
+                (5, RowSpec::clickable("运行日志\0".as_bytes())),
+                (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
+                (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
+            ];
+            build_rows(ctx, ctx.title, rows)?;
+            #[cfg(not(chaos_no_bridge))]
+            fw_api::row_update(
+                core::ptr::read_volatile(ctx.rows.add(8)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::bridge_cfg::enabled() as u8,
+            );
+            Ok(())
         }
     }
     fn on_click(&self, idx: usize) {
@@ -2470,6 +2491,20 @@ impl Page for SettingsPage {
                 6 => nav_goto(19, 0),   // 恢复 fetch 支持
                 7 => nav_goto(24, 0),   // 系统关于页面修改
                 _ => {}
+            }
+        }
+    }
+    fn is_switch_row(&self, idx: usize) -> bool {
+        #[cfg(not(chaos_no_bridge))]
+        if idx == 8 { return true; }
+        false
+    }
+    fn on_switch(&self, idx: usize) {
+        #[cfg(not(chaos_no_bridge))]
+        if idx == 8 {
+            unsafe {
+                let on = crate::bridge_cfg::toggle();
+                crate::log::kv("文件桥开关 ", if on { 1 } else { 0 });
             }
         }
     }

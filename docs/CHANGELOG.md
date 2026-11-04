@@ -2,6 +2,14 @@
 
 版本号与容器头、关于页、`Cargo.toml` 三处同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
+## v1.1.4.dev — 2026-11-04
+
+- **文件桥运行期开关**：设置页新增 `文件桥` switch（仅 bridge 包），状态持久化到 `/data/chaos/bridge.cfg`（`BRG1` + enabled）。
+- 新增 `chaos_bridge_stop()`：把 L2 0x43 的 RX handler 恢复为固件原入口，清空 RX/TX 队列、listener 和连接状态；owner/bt timer 降到 1 Hz 空转。
+- `chaos_bridge_start()` 支持恢复：timer 已初始化时直接重启 10 ms owner tick 并重新挂接；如果 Canopus 已占用 handler，`l2_attach()` 只在当前仍是 `L2_RX` 时接管，不会强行覆盖。
+- 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 由 `chaos_shake_timer` 执行，避免在 LVGL 点击回调里创建/撤销 timer。
+- 版本 1.1.4.dev；容器头 `0x00010104`。
+
 ## v1.1.3.dev — 2026-11-04
 
 - **原生文件桥**：`supervisor/bridge/` 内置最小 CanopusConnect 兼容端（`bridge.c` + `canopus_protocol.c` + `band_files_embed.c`），在 `chaos_shake_timer` 里等 UI owner 就绪后调用 `chaos_bridge_start()`。支持 AstroBox `band_files` 插件的 ConnectListen/Send/Message 与 L2 0x43 加密会话，不依赖 Canopus 模块。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。

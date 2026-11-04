@@ -65,19 +65,21 @@ Chaos 没有这些运行时。本实现保留 `band_files` 的**文件协议**�
 
 | 事件 | 行为 |
 |---|---|
-| Chaos 维护定时器 | 在 UI owner 就绪后启动 bridge timer；失败只写 `BRIDGE_STATE=0xffff_ffff`，不影响 Chaos 页面 |
+| Chaos 维护定时器 | 按开关状态在 UI owner 就绪后启动/停止 bridge；失败只写 `BRIDGE_STATE=0xffff_ffff`，不影响 Chaos 页面 |
+| 设置页开关 | 写 `/data/chaos/bridge.cfg`（`BRG1` + enabled），清 `BRIDGE_STATE`，下一次维护 tick 落地 start/stop |
+| 关闭桥 | `chaos_bridge_stop()` 恢复原 L2 0x43 handler、清空队列，timer 降到 1 Hz 空转 |
+| 重新打开 | 若 handler 仍是固件原入口则重新挂接；若 Canopus 已占用则不强行抢回 |
 | 手机连接 | L2 会话建立后首个加密请求触发 `g_connected` |
 | 手机断开 | 下一次会话句柄变化时清空 listener |
 | Chaos 卸载 | 当前安装器从不卸载；bridge 不提供反向注册 |
 
-`BRIDGE_STATE` 位于 `state.rs`，1 = 已启动，0xffff_ffff = 启动失败。
+`BRIDGE_STATE` 位于 `state.rs`，0 = 关闭/待应用，1 = 已启动，0xffff_ffff = 启动失败。
 
 ## 安装与使用
 
-1. 在 Canopus 管理器里**停用/移除** `band_files`，最好完全停用 Canopus Supervisor；
-   同一个 L2 0x43 只能有一个处理端。
-2. 安装 `dist/chaos-installer-p67-bridge.bin`（实验性 bridge 包）并重启；`dist/chaos-installer-p67.bin` 是不含 bridge 的安全默认包。
-3. 打开 AstroBox 的 `手环文件管理器` 插件（0.1.1），连接手环。
+1. 安装 `dist/chaos-installer-p67-bridge.bin`（bridge 包）并重启；`dist/chaos-installer-p67.bin` 是不含 bridge 的 safe 包。
+2. 默认文件桥开启。要和 Canopus 同时使用时，进 Chaos 设置页关掉「文件桥」，再在 Canopus 管理器里启用 Supervisor/`band_files`；反过来也一样，同一个 L2 0x43 只能有一个处理端。
+3. 打开 AstroBox 的 `手环文件管理器` 插件（0.1.5），连接手环。
 4. 状态应显示 `已连接 band_files（协议 v1）`，无需 Canopus 管理器。
 5. 需要访问 `/data` 以外路径时，在插件里打开开发者模式；重启后默认关闭。
 

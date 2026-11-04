@@ -412,6 +412,23 @@ static void l2_attach(void)
     irq_restore(mask);
 }
 
+/// Restore every connection whose RX slot still points at us. If Canopus (or
+/// another owner) already replaced it, leave that handler alone.
+static void l2_detach(void)
+{
+    volatile uint32_t *head = (volatile uint32_t *)L2_CONNECTIONS;
+    uint32_t mask = irq_save();
+    for (volatile uint32_t *node = (volatile uint32_t *)head[1];
+         node != 0 && node != head;
+         node = (volatile uint32_t *)node[1]) {
+        volatile uint32_t *conn = (volatile uint32_t *)node[3];
+        if (conn != 0 && conn[3] == (uint32_t)(uintptr_t)l2_rx) {
+            conn[3] = (uint32_t)L2_RX;
+        }
+    }
+    irq_restore(mask);
+}
+
 static int l2_send_now(uint16_t handle, void *session, const uint8_t *data, uint16_t len)
 {
     struct l2_packet pkt;
@@ -616,6 +633,7 @@ static int bt_timer_start(uint32_t period);
 static void bt_tick(void *timer)
 {
     (void)timer;
+    if (!g_started) return;
     tx_drain();
     (void)bt_timer_start(tx_pending() ? 2u : 10u);
 }
@@ -694,7 +712,16 @@ static void boot_tick(void *timer)
 
 int chaos_bridge_start(void)
 {
-    if (g_boot_timer != 0 || g_started) return 0;
+    if (g_started) return 0;
+    // Resume: the owner timer was only slowed down on stop, not destroyed.
+    if (g_owner_init) {
+        if (owner_timer_start(10u, owner_tick) != 0) return -1;
+        g_started = 1;
+        if (g_bt_init) (void)bt_timer_start(10u);
+        l2_attach();
+        return 0;
+    }
+    if (g_boot_timer != 0) return 0;
     g_ctx.struct_size = sizeof(g_ctx);
     g_ctx.services = &g_services;
     g_ctx.fs = &g_fs_obj;
@@ -708,4 +735,30 @@ int chaos_bridge_start(void)
     g_services.group_version[CANOPUS_SVC_CONNECT] = 1u;
     g_boot_timer = ((timer_fn)L2_TIMER)(boot_tick, 10u, 0);
     return g_boot_timer != 0 ? 0 : -1;
+}
+
+/// Stop taking L2 0x43 and put the timers into a 1 Hz idle cadence. The static
+/// timer objects stay initialized so a later start can resume without
+/// reallocating; queued frames and the listener are dropped.
+void chaos_bridge_stop(void)
+{
+    if (!g_started && g_boot_timer == 0) return;
+    g_started = 0;
+    l2_detach();
+    if (g_boot_timer != 0) {
+        ((timer_delete_fn)L2_TIMER_DELETE)(g_boot_timer);
+        g_boot_timer = 0;
+    }
+    uint32_t mask = irq_save();
+    for (uint32_t i = 0; i < BRIDGE_RX_SLOTS; i++) g_rx[i].state = 0u;
+    for (uint32_t i = 0; i < BRIDGE_TX_SLOTS; i++) g_tx[i].state = 0u;
+    g_rx_read = g_rx_write = 0u;
+    g_tx_read = g_tx_write = 0u;
+    g_connected = 0;
+    g_listener = 0;
+    g_last_handle = 0;
+    g_last_session = 0;
+    irq_restore(mask);
+    if (g_owner_init) (void)owner_timer_start(1000u, owner_tick);
+    if (g_bt_init) (void)bt_timer_start(1000u);
 }

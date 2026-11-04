@@ -394,19 +394,9 @@ unsafe fn tick_adapt() {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
-#[cfg(not(chaos_no_bridge))]
-    // Arm the native file bridge only after the UI owner exists. Starting it
-    // from chaos_ctor creates an LVGL timer before the timer source is ready,
-    // which looks "started" in the log but never fires.
-    if st_rd!(BRIDGE_STATE) == 0 {
-        let rc = chaos_bridge_start();
-        st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
-        crate::log::line(if rc == 0 {
-            "文件桥: CanopusConnect 已启动"
-        } else {
-            "文件桥: 启动失败"
-        });
-    }
+    // 文件桥只在这里启动/停止：UI owner 已就绪，且开关变化由维护 tick
+    // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
+    crate::bridge_cfg::tick();
     if st_rd!(BOOT_DELAY) != 0 {
         st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
         return;

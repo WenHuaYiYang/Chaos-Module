@@ -47,11 +47,7 @@ mod watchface;
 mod page;
 mod ui;
 mod ipc;
-
-#[cfg(not(chaos_no_bridge))]
-extern "C" {
-    fn chaos_bridge_start() -> i32;
-}
+mod bridge_cfg;
 
 /// Called by the C bridge only for one-shot state transitions, never per
 /// frame. Keeping it here means the bridge uses Chaos' log file and the

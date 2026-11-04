@@ -98,7 +98,7 @@ if [ "${CHAOS_NO_BRIDGE:-0}" = "1" ]; then
          -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
          -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj"
 else
-  "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor -u chaos_bridge_start \
+  "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor -u chaos_bridge_start -u chaos_bridge_stop \
          -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
          -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
          -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj" $bridge_objs

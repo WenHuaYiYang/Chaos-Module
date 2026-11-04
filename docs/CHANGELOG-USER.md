@@ -1,3 +1,11 @@
+# 更新列表（v1.1.4.dev）
+
+- 设置页新增「文件桥」开关，状态保存到 `/data/chaos/bridge.cfg`；关掉后不再启动文件桥，把 L2 0x43 通道让回 Canopus Supervisor。
+- 开关立即生效：关掉时恢复原来的 L2 处理函数并清空队列；重新打开时如果 Canopus 已经占用通道，不会强行抢回。
+- 文件桥关闭后维护定时器降到 1 秒空转，减少无意义唤醒。
+- 只有 bridge 包显示这个开关；safe 包没有文件桥代码，不显示。
+- 版本号显示 v1.1.4.dev。
+
 # 更新列表（v1.1.3.dev）
 
 - 新增原生文件桥：Chaos 内置 CanopusConnect 兼容端，AstroBox「手环文件管理器」插件可直接连接，不需要 Canopus 模块管理器、Supervisor 或 band_files 模块。
