@@ -832,6 +832,7 @@ impl Page for InfoPage {
                 (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
+                (8, RowSpec::clickable("NSH终端\0".as_bytes())),
                 (6, RowSpec::clickable("设置\0".as_bytes())),
                 (7, RowSpec::clickable("关于\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/版本(页14)
             ])?;
@@ -860,6 +861,7 @@ impl Page for InfoPage {
                 3 => nav_goto(1, 0),   // 应用管理
                 4 => nav_goto(10, 0),  // 表盘管理
                 5 => nav_goto(13, 0),  // 系统美化
+                8 => nav_goto(crate::terminal_ui::PAGE_PID, 0), // NSH终端
                 6 => nav_goto(14, 0),  // 设置(时间/日期/亮度/震动/缓存/版本)
                 7 => nav_goto(18, 0), // 关于(页18, 调试入口)
                 _ => {} // 行0-2 是数据行
@@ -3378,4 +3380,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_APPLIST,      // 28 系统美化 -> 应用列表设置(桌面缩放/排距/内缩)
     &PAGE_DETAILP,      // 29 应用管理 -> 应用详情(P0 占位)
     &PAGE_BATCHP,       // 30 应用管理 -> 批量操作(P0 占位)
+    &crate::terminal_ui::PAGE, // 31 NSH终端
 ];

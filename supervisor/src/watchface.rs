@@ -394,6 +394,8 @@ unsafe fn tick_adapt() {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
+    // Drain terminal output on the resident UI timer even when another page is foreground.
+    crate::terminal_ui::poll_output();
     if st_rd!(BOOT_DELAY) != 0 {
         st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
         return;

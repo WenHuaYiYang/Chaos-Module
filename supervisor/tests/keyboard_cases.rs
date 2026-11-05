@@ -3,6 +3,7 @@ use crate::mock;
 
 unsafe fn setup(completion: Completion) -> (u32, u32, u32) {
     mock::reset();
+    NSH_DRAFT.fill(0);
     open(core::ptr::null(), completion);
     let parent = fw_api::obj_create(0, 0);
     fw_api::obj_set_size(parent, 336, 424);
@@ -324,5 +325,103 @@ fn reopen_and_failed_render_discard_old_label_handles() {
         assert!(render(parent));
         assert_eq!(mock::object(INPUT_LABEL).text, b"Original text");
         assert!(LETTER_LABELS.iter().all(|&label| label != 0));
+    }
+}
+
+#[test]
+fn nsh_mode_is_lowercase_has_255_bytes_and_keeps_tail_visible() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        setup(Completion::NshCommand);
+        assert!(!UPPERCASE);
+        assert_eq!(capacity(), 255);
+        for c in b"ls /data -la" { press(*c as u32); }
+        assert_eq!(input(), b"ls /data -la");
+        press(KEY_CLEAR);
+        for _ in 0..260 { press(b'a' as u32); }
+        assert_eq!(LENGTH, 255);
+        assert_eq!(TEXT[255], 0);
+        assert_eq!(mock::object(INPUT_LABEL).text, vec![b'a'; 20]);
+        let initial = [b'z'; 256];
+        open(initial.as_ptr(), Completion::DeviceName);
+        assert_eq!(capacity(), 31);
+        assert_eq!(input(), vec![b'z'; 31]);
+    }
+}
+
+#[test]
+fn nsh_symbol_page_covers_all_punctuation_and_preserves_input() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        let (parent, _, _) = setup(Completion::NshCommand);
+        press(b'l' as u32); press(b's' as u32);
+        press(KEY_SYMBOLS);
+        assert!(SYMBOL_MODE);
+        assert_eq!(mock::with(|ui| ui.render_requests.clone()), [23]);
+        let first = mock::with(|ui| ui.objects.len());
+        assert!(render(parent));
+        let chars = mock::with(|ui| ui.objects[first..].iter().filter_map(|o| o.code)
+            .filter(|&c| c < 256).map(|c| c as u8).collect::<std::collections::BTreeSet<_>>());
+        for c in 0x21u8..=0x7e { if c.is_ascii_punctuation() { assert!(chars.contains(&c), "missing {c}"); } }
+        mock::with(|ui| {
+            for (i, key) in ui.objects.iter().enumerate().skip(first).filter(|(_, o)| o.code.is_some()) {
+                let label = ui.objects.iter().find(|o| o.parent == i as u32 + 1).unwrap();
+                assert_eq!(label.alignment, 9, "key {:?}", key.code);
+                assert_eq!(label.pos, (0, 0));
+            }
+        });
+        assert_eq!(input(), b"ls");
+        press(b'/' as u32); press(KEY_SYMBOLS);
+        assert!(!SYMBOL_MODE); assert_eq!(input(), b"ls/");
+    }
+}
+
+#[test]
+fn nsh_submission_failure_preserves_input_and_success_cannot_double_send() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        setup(Completion::NshCommand);
+        for c in b"echo ok" { press(*c as u32); }
+        mock::with(|ui| ui.save_ok = false);
+        press(KEY_DONE);
+        assert_eq!(input(), b"echo ok");
+        assert_eq!(mock::with(|ui| ui.back_count), 0);
+        assert_eq!(mock::object(INPUT_LABEL).text, "发送失败，请重试".as_bytes());
+        mock::with(|ui| ui.save_ok = true);
+        press(KEY_DONE); press(KEY_DONE);
+        assert_eq!(mock::with(|ui| ui.back_count), 1);
+        assert_eq!(mock::with(|ui| ui.saves.clone()), [(4, b"echo ok".to_vec()), (4, b"echo ok".to_vec())]);
+    }
+}
+
+#[test]
+fn nsh_empty_submission_is_allowed_but_setting_empty_is_not() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        setup(Completion::NshCommand); press(KEY_DONE);
+        assert_eq!(mock::with(|ui| ui.saves.clone()), [(4, vec![])]);
+        setup(Completion::SystemVersion); press(KEY_DONE);
+        assert!(mock::with(|ui| ui.saves.is_empty()));
+    }
+}
+
+#[test]
+fn nsh_draft_survives_cancel_and_other_settings_but_success_clears_it() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        setup(Completion::NshCommand);
+        for c in b"echo draft" { press(*c as u32); }
+        FG_PAGE = 31; // Native title/back gesture; no submission callback.
+        open(core::ptr::null(), Completion::NshCommand);
+        assert_eq!(input(), b"echo draft");
+        open(b"custom\0".as_ptr(), Completion::DeviceName);
+        open(core::ptr::null(), Completion::NshCommand);
+        assert_eq!(input(), b"echo draft");
+        press(KEY_DONE);
+        open(core::ptr::null(), Completion::NshCommand);
+        assert_eq!(input(), b"");
+        open(b"initial draft\0".as_ptr(), Completion::NshCommand);
+        open(core::ptr::null(), Completion::NshCommand);
+        assert_eq!(input(), b"initial draft");
     }
 }

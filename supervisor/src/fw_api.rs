@@ -49,7 +49,7 @@ pub const NONE_PTR: Cp = core::ptr::null();
 /// 页面数上限（page_id 0..=MAX_PAGE_ID）。新增页必须同步：
 /// `DESC` 容量、页名数组、注册循环、`install(meta, items, count)` 的 items 与 count、
 /// `render_page` / `dispatch` / `chaos_on_create` / `chaos_on_resume` / `chaos_on_destroy` 的 pid 上界。
-pub const MAX_PAGE_ID: usize = 9;
+pub const MAX_PAGE_ID: usize = crate::state::MAX_PID;
 /// 每页行槽上限（`PAGES[pid].rows[slot]`）。**清理循环必须用它**，别再写死数字
 /// （根因示例：槽位扩到 12 而销毁仍清 0..9 → 悬空句柄 → use-after-free）。
 pub const MAX_ROWS_PER_PAGE: usize = crate::state::MAX_ROWS_PER_PAGE;
@@ -168,6 +168,7 @@ mod home;
 mod page;
 mod picker;
 mod sys;
+mod nsh;
 
 /// 按目标选择的固件地址表。业务代码里的固件入口地址一律从这里取,
 /// 不再各自写死 `transmute(0x0C..)` 的字面量。
@@ -181,3 +182,4 @@ pub use home::*;
 pub use page::*;
 pub use picker::*;
 pub use sys::*;
+pub use nsh::*;

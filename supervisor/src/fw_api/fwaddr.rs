@@ -83,6 +83,25 @@ mod t043 {
     /// 与安装队列都由它建，界面上的读数、滑动震动、页面 tick 全依赖它。
     /// 重要: p65 那一档是**另一个地址**，两档的值不许互抄。
     pub const LV_TIMER_CREATE: u32 = 0x0C58_7ED1;
+
+    /// p67 / 3.101.043 NSH chain: exact AP + host machine-code probes.
+    /// See docs/NSH-SPAWN.md and docs/NSH-PTY.md. NOT device-validated.
+    pub const NSH_SYSTEM: u32 = 0x0C24_0399;
+    pub const NSH_TASK_SPAWN: u32 = 0x0C20_9771;
+    pub const NSH_ATTR_INIT: u32 = 0x0C1E_A725;
+    pub const NSH_ATTR_FLAGS: u32 = 0x0C1E_A781;
+    pub const NSH_ATTR_PRIORITY: u32 = 0x0C1E_A7A1;
+    pub const NSH_ATTR_STACK: u32 = 0x0C1E_A7C5;
+    pub const NSH_ATTR_DESTROY: u32 = 0x0C1E_A7E1;
+    pub const NSH_WAITPID: u32 = 0x0C20_63C5;
+    pub const NSH_ACTIONS_INIT: u32 = 0x0C1E_A711;
+    pub const NSH_ACTIONS_ADDDUP2: u32 = 0x0C1E_A63D;
+    pub const NSH_ACTIONS_DESTROY: u32 = 0x0C1E_A6E5;
+    pub const NSH_CONSOLE_NEW: u32 = 0x0C23_8E29;
+    pub const NSH_SESSION: u32 = 0x0C23_DDAD;
+    pub const NSH_USLEEP: u32 = 0x0C1F_5D0D;
+    pub const NSH_ERRNO_LOCATION: u32 = 0x0C1E_45BD;
+    pub const NSH_USER_FREE: u32 = 0x0C1F_8FF9;
 }
 
 /// 3.100.043（Redmi Watch 6 / best1502p）
