@@ -2453,7 +2453,7 @@ impl Page for AboutPage {
             let bt = about_build_time();
             let fw = about_firmware();
             build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.2\0".as_bytes().as_ptr())),
+                (0, RowSpec::tap("Chaos\0".as_bytes(), "v1.1.3\0".as_bytes().as_ptr())), //版本号
                 (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
                 (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
@@ -2487,10 +2487,14 @@ impl Page for AboutPage {
             }
             if idx == 8 {
                 nav_goto(20, 0);
-            } else if idx == 0 {
-                DBG_CLICKS += 1;
-                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
             }
+
+            // debug入口
+
+            // else if idx == 0 {
+            //     DBG_CLICKS += 1;
+            //     if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
+            // }
         }
     }
     fn needs_tick(&self) -> bool { unsafe { DBG_ON != 0 } }
