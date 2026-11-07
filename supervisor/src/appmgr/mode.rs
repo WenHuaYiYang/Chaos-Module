@@ -139,21 +139,23 @@ pub(crate) unsafe fn keep_apply_all() -> usize {
 
 pub(crate) unsafe fn apply_mode_ensure() {
     if APPLY_LOADED != 0 { return; }
-    // 深度隐藏: 隐藏时把条目搬进 apps.json_hide，固件开机不注册，图标完全不出现。
-    // 显示时先把条目搬回 apps.json，再用 quickapp_register_app(0x0C549678) 从
-    // proxyquickapp 已装表补回注册表节点，然后清隐藏位、挂图标 —— 不再要求重启。
-    //
-    // v1.1.2.dev 恢复深度模式为默认；普通隐藏留下的 keep 名单由 deep_apply_all()
-    // 在开机补偿里统一搬进 apps.json_hide，避免“所有快应用刚开机都显示”。
-    APPLY_MODE = 0;
+    // 读取持久化模式: 0 = 深度隐藏, 1 = 普通隐藏。
+    // 配置缺失/损坏/旧格式时保持深度隐藏默认值，避免升级后隐藏状态意外变化。
+    APPLY_MODE = if cfg_mode_read() == 1 { 1 } else { 0 };
     keep_load();
     APPLY_LOADED = 1;
 }
 
-pub(crate) unsafe fn apply_mode_is_keep() -> bool { false }
+pub(crate) unsafe fn apply_mode_is_keep() -> bool {
+    apply_mode_ensure();
+    APPLY_MODE != 0
+}
 
 /// 开关态: true = 深度隐藏(条目不在 apps.json)。
-pub(crate) unsafe fn deep_on() -> bool { true }
+pub(crate) unsafe fn deep_on() -> bool {
+    apply_mode_ensure();
+    APPLY_MODE == 0
+}
 
 /// 页1 开关行文案: 只写名称, 开关态由行右侧部件表达。
 pub(crate) unsafe fn apply_mode_label() -> &'static [u8] {

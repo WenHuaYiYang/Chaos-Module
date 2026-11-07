@@ -68,7 +68,7 @@ pub(crate) unsafe fn set_excl_pill(p: u32, i: usize) {
 // 行句柄/事件槽位约束: 条目行**不走 ctx.rows**(只有 12 格) —— 句柄自管在
 // appmgr::APP_ROWS, 事件槽号 = 条目下标 + 12(12..=51; 0..11 是 ctx.rows 的
 // 批量按钮/状态行, 条目复用会被派发成点按钮), 回调是 lib.rs 的 chaos_row_ev12..51。
-// 布局: 行0=一键隐藏全部 行1=一键显示全部 行2=状态 行3=排除项管理入口 —— 放最上面,
+// 布局: 行0=批量操作 行1=深度隐藏开关 行2=状态 行3=重新应用隐藏 —— 放最上面,
 // 列表再长也不怕按钮滚出屏幕; 之后是应用条目(已排除的条目不在本页显示)。
 
 pub(crate) struct AppMgrPage;
@@ -270,11 +270,18 @@ impl Page for AppMgrPage {
         unsafe {
             crate::appmgr::ensure();
             crate::appmgr::rows_reset();
-            // 顶部: 批量操作(整宽) + 状态行 + 重新应用隐藏
+            // 顶部: 批量操作 + 深度隐藏开关 + 状态行 + 重新应用隐藏
             let t0 = build_tile_below(ctx, ctx.title, 0,
                 "批量操作 >\0".as_bytes(), TILE_ROW_W, TILE_H);
             if t0 == 0 { return Err(PageError::RowFailed(0)); }
-            let s2 = build_row(ctx, t0, 2,
+            // 行1: 深度隐藏开关。开 = 条目搬进 apps.json_hide；关 = 普通隐藏(keep 名单)。
+            let sw = build_row(ctx, t0, 1,
+                &RowSpec::switch(crate::appmgr::apply_mode_label()));
+            if sw == 0 { return Err(PageError::RowFailed(1)); }
+            fw_api::row_update(sw,
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::appmgr::deep_on() as u8);
+            let s2 = build_row(ctx, sw, 2,
                 &RowSpec::display(crate::appmgr::msg(), core::ptr::null()));
             row_shrink(s2, 56);
             AM_MSG_ROW = read_volatile(ctx.rows.add(2));
@@ -312,7 +319,7 @@ impl Page for AppMgrPage {
     }
 
     fn on_click(&self, idx: usize) {
-        // 页1 顶部按钮槽位不变: 0=批量, 1=排除项, 3=重新应用隐藏
+        // 页1 顶部按钮槽位: 0=批量, 3=重新应用隐藏; 槽1 是开关(只走 on_switch)
         unsafe {
             if idx == 0 {
                 nav_goto(30, 0);            // 批量操作
@@ -332,10 +339,21 @@ impl Page for AppMgrPage {
         }
     }
 
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 }
+
+    fn on_switch(&self, idx: usize) {
+        if idx == 1 {
+            unsafe {
+                crate::appmgr::toggle_apply_mode();
+                render_req(1);
+            }
+        }
+    }
+
     fn needs_tick(&self) -> bool {
         unsafe {
             list_building() || crate::appmgr::has_req() || crate::appmgr::batch_pending()
-                || crate::appmgr::reapply_pending()
+                || crate::appmgr::reapply_pending() || crate::appmgr::mode_pending()
         }
     }
 
@@ -345,7 +363,10 @@ impl Page for AppMgrPage {
                 if LB_DELAY > 0 { LB_DELAY -= 1; }
                 else { list_build_chunk(LB_TICK_CHUNK); }
             }
-            if crate::appmgr::reapply_pending() {
+            if crate::appmgr::mode_pending() {
+                crate::appmgr::do_mode_apply();
+                render_req(1);
+            } else if crate::appmgr::reapply_pending() {
                 crate::appmgr::do_reapply();
             } else if crate::appmgr::batch_pending() {
                 crate::appmgr::do_batch();
