@@ -330,4 +330,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &crate::btpan::PAGE_WEBSRV_P, // 33 主页 -> 网页服务器
     &crate::btpan::PAGE_NETINFO_P, // 34 BTPAN -> 连接信息
     &crate::btpan::PAGE_EXP_P, // 35 主页 -> 实验性功能
+    &crate::btpan::PAGE_DIAG_P, // 36 实验性功能 -> 蓝牙诊断
 ];

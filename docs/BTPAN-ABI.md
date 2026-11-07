@@ -54,3 +54,105 @@ tools/test_pan_network.py 当前 23 项全通过：真实 ARM lwIP/TinyPAN 虚�
 - 未在真实 3.101.043 手环上验证 adapter IPC FD 继承、扫描回调、配对、L2CAP CID、BNEP setup 和 DHCP；主机模型不能替代这些结果。
 - bt_probe.c 和 pan_radio.c 的客户端上下文与 BNEP 生命周期由主线程维护；本文只给出 ABI 审查意见，不声称固件运行稳定。
 - 若出现 1/1，优先抓 sendrecv/FD 原始值再决定是否修复任务组继承，禁止把该错误静默转换为成功扫描。
+
+## 配对回调枚举与命令（2026-11-07 复盘 -611）
+
+**根因**：`on_bond` 曾把"非 2 的值"一律判死，而 043 的 bond 状态是 **0/1/2 三态**：
+固件里 bttool 的 bond 回调（0x0c6f281d，回调表槽 9）按 value 索引字符串表，
+表在别名 VA `0x2CD48618` → 文件 0xC8618：
+
+```
+[0] BOND_NONE  [1] BONDING  [2] BONDED
+```
+
+所以新设备配对时栈先发 **BONDING(1)**，旧逻辑立刻 `-611`；已配对设备直接回
+**BONDED(2)**，这就是"已配对能连、新设备必报 -611"的全部原因。
+
+**修复后的语义**（bt_probe.c `on_bond`）：
+- 2 → `connect_ready`，进入 L2CAP；
+- 1 → 配对进行中，保持 PAIR、不重发 94、不判死；PAIR 超时放宽到 60s；
+- 0 → 可能是重建配对前的旧密钥清理快照，节流重试（20 tick ≈ 5s），累计 8 次才 -611；
+- 回调不再按 `transport==1` 过滤（q66 参考实现的假设，043 无设备证据），只按地址匹配。
+
+**命令补充取证**（capstone 精确反汇编）：
+- `0x0C3AFE64` = connect classic → `movs r2,#0x69`，payload 仅 6 字节地址（无 transport）；
+- `0x0C3AFFA2` = create bond → `movs r2,#0x5e(94)`，payload 6 字节地址 + `payload[6]=transport`
+  （1=BREDR，见 bttool 帮助 `create bond, params: <addr> <transport>(0:BLE, 1:BREDR)`）。
+
+**地址序**：L2CAP connect 用扫描序在真机已实证可用，建绑定默认同序，连续失败 3 次后才试反转序。
+
+## 配对卡死 / -16 复盘（2026-11-07 第二轮，真机截图驱动）
+
+真机诊断事件序列（电脑配对）：
+
+```
+bond  BC:17:B8:BB:BD:8F  a=1 b=1   ← BONDING
+pair  BC:17:B8:BB:BD:8F  a=0 b=0   ← 收到配对请求
+bond  BC:17:B8:BB:BD:8F  a=1 b=0   ← 掉回 BOND_NONE
+```
+
+**两个独立故障**：
+
+1. **卡在"正在配对"**：`bt_probe_poll` 的 PAIR 超时只写 `state.error=-614`，**不退出 phases**，
+   于是 `network_service` 永远看到 `bt.phase!=0`。
+2. **-16 (EBUSY)**：`network_service.c` 的 `error(-16,1/2)` 就是"上一条流程没结束"——
+   电脑那次卡死的 PAIR 没清，再点手机必报 -16。
+
+**IO capability 取证**：bttool 命令表项 `{help="params: <io capability> (0:displayonly, 1:yes&no,
+2:keyboardonly, 3:no-in/no-out 4:keyboarddisplay)", name="iocap", handler=0x0C6F3971}`；
+handler 调 `0x0C3AF700` → `movs r2,#0x29`，payload[0]=capability。
+
+旧值 `1`(YesNo) 要求双方显示数字并确认，而 043 的 display 回调（槽 6 / 0x0C6F3B85）在实测中
+**从未触发**，于是对端等不到确认 → 取消 → bond 回 0。改为 **3 (NoInputNoOutput / Just Works)**：
+对端不需要我们显示或确认，收到 pair request 回 `0x61 accept=1` 即完成。
+
+**命令再次核对**（capstone）：`0x0C3B0050` = pair request reply → cmd **0x61**，payload 6B 地址 +
+`payload[6]`=accept；`0x0C3B008C` = confirmation → cmd **0x62**，payload 6B 地址 + `payload[6]`=transport
++ `payload[7]`=conform。
+
+## 回调槽位与系统配对初始化（2026-11-07 第三轮，固件实证）
+
+**槽位不再是推断**。固件里 `bt_adapter_register`（0x0C3AF3E8）有 10 个调用点，其中
+btmain 的那张表在别名 VA `0x2CD4A744`，槽 5/6/9 直接解出日志串：
+
+| 槽 | 函数 | 日志字符串 | 语义 |
+|---|---|---|---|
+| 5 | `0x0C709E91` | `gap_pair_request_callback` / `allow_link_connect_pair_request` | 配对请求，回 cmd **0x61**(accept) |
+| 6 | `0x0C709C79` | `gap_pair_display_callback` / `Pair Display [%s][%s]` / `[SSP][NOTIFY][%lu]` | SSP 显示配对码 |
+| 9 | `0x0C709B69` | bond 回调（0/1/2 三态） | 绑定状态 |
+
+**系统配对初始化序列**（btmain `0x0C70B004`，此前我们只做了中间一条）：
+
+```
+cmd 0x27  u32 0x00280704      ; class of device
+cmd 0x29  u8  3               ; IO capability = NoInputNoOutput (系统默认)
+cmd 0x3d  {0,1}               ; 系统同值；缺失时配对会被对端直接取消
+```
+
+`bt_probe.c prepare()` 现在按同一序列下发一次（0x29 用 1=DisplayYesNo，让支持
+Numeric Comparison 的对端能弹出配对码；请求仍自动 accept 兜底）。
+
+对照命令号（capstone 逐个确认）：`0x25`=set scan mode{p0,p1}、`0x26`=get scan mode、
+`0x27`=CoD、`0x29`=set io capability、`0x3d`={u8,u8}、`0x69`=connect classic(6B 地址)、
+`0x5e(94)`=create bond(6B 地址+transport)、`0x61`=pair request reply(6B+accept)、
+`0x62`=confirmation(6B+transport+conform)。
+
+## 配对重试命令与诊断字段（2026-11-07 第四轮）
+
+bttool 命令表项 `{help="cancel bond, params: <addr>", name="removebond", handler=0x0C6F2D31}`
+→ SDK `0x0C3AFFDC` → **cmd 0x5F(95)**，payload = 6B 地址 + 1B transport。
+
+用途：`on_bond` 收到 `value==0`（配对失败）时置 `bond_remove_pending`，下一拍先发
+`0x5F` 删掉本机残留绑定再重配 —— 电脑/手机端保留旧配对记录时，`createbond(94)`
+会被对方直接拒绝，现象就是 bond `1 → 0` 无限循环。
+
+**配对确认双发**：`pair request` 到达时同时回
+- `0x61 {addr, accept=1}`（pair request reply）
+- `0x62 {addr, transport=1, conform=1}`（confirmation）
+
+不同栈把 Numeric Comparison 的确认放在不同命令上，只回 0x61 时对端会一直等确认
+直到取消。失败无害。
+
+**诊断新增返回码**（`bt_probe_diagnostics` 124B）：`result_cod`(0x27)、`result_iocap`(0x29)、
+`result_paircfg`(0x3d)、`result_connect`(0x69)、`result_bond`(94)、`result_confirm`(0x62)、
+`result_remove`(0x5F)。>0 = 蓝牙服务拒绝，-618 = IPC 失败。

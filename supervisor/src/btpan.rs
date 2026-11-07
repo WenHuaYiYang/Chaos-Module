@@ -6,6 +6,7 @@ pub(crate) const PAGE_BTPAN_PID: u32 = 32;
 pub(crate) const PAGE_WEBSRV_PID: u32 = 33;
 pub(crate) const PAGE_NETINFO_PID: u32 = 34;
 pub(crate) const PAGE_EXP_PID: u32 = 35;
+pub(crate) const PAGE_DIAG_PID: u32 = 36;
 const PAN_ROWS: usize = 12;
 const WEB_ROWS: usize = 9; /* 0开关 1状态 2地址 3用户名 4密码 5设置密码 6btpan跳转 7统计 8诊断 */
 const DEV_FIRST: usize = 6; /* 设备行 6..11, 扫到几台显示几台, 其余隐藏 */
@@ -15,7 +16,8 @@ const ROW_CAP: usize = fw_api::MAX_ROWS_PER_PAGE;
 const WEB_SET_PASSWORD: usize = 5;
 const WEB_BTPAN: usize = 6;
 const INFO_ROWS: usize = 10;
-const _: () = assert!(PAN_ROWS <= ROW_CAP && WEB_ROWS <= ROW_CAP && INFO_ROWS <= ROW_CAP);
+const DIAG_ROWS: usize = 10;
+const _: () = assert!(PAN_ROWS <= ROW_CAP && WEB_ROWS <= ROW_CAP && INFO_ROWS <= ROW_CAP && DIAG_ROWS <= ROW_CAP);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -39,13 +41,20 @@ struct BtDiagnostics {
     adapter_state: u32, scan_stage: u32, scan_events: u32, scan_seen_start: u32, command: u32,
     ipc_result: i32, service_result: i32, sys_errno: i32, client_state: u32, client_fd: i32,
     l2_event: u32, l2_events: u32, error: i32, error_stage: u32,
+    /* bond 回调枚举(固件字符串表实证): 0=BOND_NONE 1=BONDING 2=BONDED。 */
+    bond_attempts: u32, bond_pending: u32, bonding: u32, bond_events: u32,
+    bond_value: u32, bond_transport: u32, bond_order: u32, phase: u32,
+    pair_reply_result: u32,
+    device_configured: u32,
+    result_cod: i32, result_iocap: i32, result_paircfg: i32,
+    result_connect: i32, result_bond: i32, result_confirm: i32, result_remove: i32,
 }
 const _: () = assert!(core::mem::size_of::<Device>() == 28);
 const _: () = assert!(core::mem::size_of::<Peer>() == 32);
 const _: () = assert!(core::mem::size_of::<NetworkView>() == 596);
 const _: () = assert!(core::mem::size_of::<IpInfo>() == 28);
 const _: () = assert!(core::mem::size_of::<HttpView>() == 28);
-const _: () = assert!(core::mem::size_of::<BtDiagnostics>() == 56);
+const _: () = assert!(core::mem::size_of::<BtDiagnostics>() == 124);
 
 unsafe extern "C" {
     fn chaos_pan_enable(on: i32);
@@ -63,6 +72,7 @@ unsafe extern "C" {
     fn chaos_httpd_enabled() -> i32;
     fn chaos_httpd_snapshot(out: *mut HttpView);
     fn bt_probe_diagnostics(out: *mut BtDiagnostics);
+    fn bt_probe_event_text(out: *mut u8, capacity: u32) -> u32;
 }
 static WORKER_STARTED: AtomicBool = AtomicBool::new(false);
 static WORKER_ERROR: AtomicI32 = AtomicI32::new(0);
@@ -99,6 +109,11 @@ impl RowCache { const EMPTY: Self = Self { main: [[0;64];ROW_CAP], sub: [[0;128]
 static mut PAN_CACHE: RowCache = RowCache::EMPTY;
 static mut WEB_CACHE: RowCache = RowCache::EMPTY;
 static mut INFO_CACHE: RowCache = RowCache::EMPTY;
+static mut DIAG_CACHE: RowCache = RowCache::EMPTY;
+static mut DIAG_LABEL: u32 = 0;
+static mut DIAG_CONTENT: u32 = 0;
+static mut DIAG_ANCHOR: u32 = 0;
+static mut DIAG_TEXT: [u8; 1024] = [0; 1024];
 // The growing diagnostic label belongs to this content/last-row generation.
 // Never update it just because a stale numeric LVGL handle still looks valid.
 static mut INFO_DIAG_LABEL: u32 = 0;
@@ -138,13 +153,13 @@ unsafe fn request_pan(on: bool, v: &NetworkView) {
 }
 unsafe fn set_row(pid: u32, slot: usize, main: &[u8], sub: &[u8], selected: bool) {
     if slot >= ROW_CAP { return; }
-    let cache = match pid { PAGE_BTPAN_PID => &mut *core::ptr::addr_of_mut!(PAN_CACHE), PAGE_WEBSRV_PID => &mut *core::ptr::addr_of_mut!(WEB_CACHE), PAGE_NETINFO_PID => &mut *core::ptr::addr_of_mut!(INFO_CACHE), _ => return };
+    let cache = match pid { PAGE_BTPAN_PID => &mut *core::ptr::addr_of_mut!(PAN_CACHE), PAGE_WEBSRV_PID => &mut *core::ptr::addr_of_mut!(WEB_CACHE), PAGE_NETINFO_PID => &mut *core::ptr::addr_of_mut!(INFO_CACHE), PAGE_DIAG_PID => &mut *core::ptr::addr_of_mut!(DIAG_CACHE), _ => return };
     let a = label_bytes::<64>(main); let b = label_bytes::<128>(sub);
     let row = PAGES[pid as usize].rows[slot]; if row == 0 { return; }
     if cache.valid[slot] && cache.handles[slot] == row && cache.main[slot] == a && cache.sub[slot] == b && cache.selected[slot] == selected as u8 { return; }
     cache.main[slot] = a; cache.sub[slot] = b; cache.selected[slot] = selected as u8; cache.handles[slot] = row; cache.valid[slot] = true;
     UPDATING = true;
-    fw_api::row_update(row, fw_api::NONE_PTR, a.as_ptr(), if slot == 0 && pid != PAGE_NETINFO_PID { fw_api::NONE_PTR } else { b.as_ptr() }, 0, selected as u8);
+    fw_api::row_update(row, fw_api::NONE_PTR, a.as_ptr(), if slot == 0 && !matches!(pid, PAGE_NETINFO_PID | PAGE_DIAG_PID) { fw_api::NONE_PTR } else { b.as_ptr() }, 0, selected as u8);
     UPDATING = false;
 }
 unsafe fn ip_text(ip: &[u8;4], out: &mut [u8]) {
@@ -170,12 +185,18 @@ unsafe fn status_text(v: &NetworkView, out: &mut [u8]) {
     else if pan_selected(v) != (v.enabled != 0) { w.s(if pan_selected(v) { "正在启用btpan…".as_bytes() } else { "正在停用btpan…".as_bytes() }); }
     else { w.s(cbytes(phase(v))); if v.phase == 2 { w.c(b' ').n(v.checked).c(b'/').n(v.candidates); }
         if v.error != 0 {
-            w.s(" · ".as_bytes()).s(error_stage(v.error_stage));
-            let mut d: BtDiagnostics = core::mem::zeroed(); bt_probe_diagnostics(&mut d);
-            if v.error == -611 { w.s("对端未完成配对，请在电脑/手机上确认配对请求 ".as_bytes()); }
-            else if v.error_stage == 1 && d.ipc_result != 0 { w.s("IPC失败 ".as_bytes()); }
-            else if v.error_stage == 1 && d.service_result > 0 { w.s("服务拒绝 ".as_bytes()); }
-            else { w.s("错误 ".as_bytes()); }
+            // 配对阶段(bt_probe 自己的 error_stage)不走 network_service 的阶段名,
+            // 否则 -611 会被标成"DHCP", 误导排查方向。
+            if v.error == -611 { w.s(" · 对端未完成配对，请在电脑上确认配对请求 ".as_bytes()); }
+            else if v.error == -614 { w.s(" · 配对超时，请重试 ".as_bytes()); }
+            else if v.error == -16 { w.s(" · 上次连接未结束，请先点断开 ".as_bytes()); }
+            else {
+                w.s(" · ".as_bytes()).s(error_stage(v.error_stage));
+                let mut d: BtDiagnostics = core::mem::zeroed(); bt_probe_diagnostics(&mut d);
+                if v.error_stage == 1 && d.ipc_result != 0 { w.s("IPC失败 ".as_bytes()); }
+                else if v.error_stage == 1 && d.service_result > 0 { w.s("服务拒绝 ".as_bytes()); }
+                else { w.s("错误 ".as_bytes()); }
+            }
             signed(&mut w, v.error);
         } } w.end();
 }
@@ -201,8 +222,14 @@ unsafe fn refresh_pan() {
     set_row(PAGE_BTPAN_PID,2,"扫描设备\0".as_bytes(),"手机需开启蓝牙网络共享\0".as_bytes(),false);
     set_row(PAGE_BTPAN_PID,3,"断开连接\0".as_bytes(),&v.connected_name,false);
     let mut w = crate::text::W::new(text.as_mut_ptr(),text.len());
-    if v.phase == 4 { w.s("配对码 ".as_bytes()); let mut div = 100_000; while div != 0 { w.c(b'0' + ((v.passkey / div) % 10) as u8); div /= 10; } w.s(" · 点击确认".as_bytes()); }
-    else { w.s("收到请求后核对配对码".as_bytes()); } w.end();
+    if v.phase == 4 && v.passkey != 0 {
+        // SSP 数字比较: 手环和对端显示同一个 6 位数, 两边都要确认。
+        w.s("配对码 ".as_bytes()); let mut div = 100_000; while div != 0 { w.c(b'0' + ((v.passkey / div) % 10) as u8); div /= 10; } w.s(" · 点击确认".as_bytes());
+    } else if v.phase == 4 {
+        // Just Works: 没有配对码, 确认动作发生在对端(电脑/手机)的弹窗上。
+        w.s("配对中，请在电脑/手机上确认配对".as_bytes());
+    } else { w.s("收到请求后核对配对码".as_bytes()); }
+    w.end();
     set_row(PAGE_BTPAN_PID,4,"确认配对\0".as_bytes(),&text,false);
     set_row(PAGE_BTPAN_PID,5,"连接信息\0".as_bytes(),"IP、网关、DNS、MAC\0".as_bytes(),false);
     /* 设备列表: 一台设备一行, 动态创建/删除 —— 没有设备就没有卡片, 不留空位。 */
@@ -309,6 +336,89 @@ impl crate::page::Page for NetInfoPage {
     fn on_click(&self, _idx: usize) {}
     fn tick(&self) { unsafe { if visible(PAGE_NETINFO_PID) && fw_api::screen_is_on() { refresh_info(); } } }
 }
+/// 页36: 蓝牙诊断(实验性功能 -> 蓝牙诊断)。把回调/命令/配对状态原样摊开,
+/// 现场就不必再靠猜。数据全部来自 bt_probe_diagnostics + bt_probe_event_text。
+pub(crate) struct BtDiagPage;
+pub(crate) static PAGE_DIAG_P: BtDiagPage = BtDiagPage;
+unsafe fn refresh_diag() {
+    let mut d: BtDiagnostics = core::mem::zeroed(); bt_probe_diagnostics(&mut d);
+    let mut text = [0u8; 128];
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s(match d.client_state { 0 => "未建立".as_bytes(), 1 => "建立中".as_bytes(), 2 => "就绪".as_bytes(),
+        3 => "创建失败".as_bytes(), 4 => "回调注册失败".as_bytes(), _ => "未知".as_bytes() });
+    w.s(" · fd ".as_bytes()); signed(&mut w, d.client_fd); w.end();
+    set_row(PAGE_DIAG_PID, 0, "蓝牙客户端\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s("BT ".as_bytes()).n(d.adapter_state).s(" · 阶段 ".as_bytes()).n(d.scan_stage)
+        .s(" · 配置 ".as_bytes()).s(if d.device_configured != 0 { "已下发".as_bytes() } else { "未下发".as_bytes() }).end();
+    set_row(PAGE_DIAG_PID, 1, "适配器\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s("cmd ".as_bytes()).n(d.command).s(" · 返回 ".as_bytes()); signed(&mut w, d.ipc_result);
+    w.s(" · 服务 ".as_bytes()); signed(&mut w, d.service_result); w.s(" · errno ".as_bytes()); signed(&mut w, d.sys_errno); w.end();
+    set_row(PAGE_DIAG_PID, 2, "最近IPC\0".as_bytes(), &text, false);
+    let bond = if d.bonding != 0 { "BONDING 配对中".as_bytes() }
+        else { match d.bond_value { 0 => "BOND_NONE 未绑定".as_bytes(), 1 => "BONDING 配对中".as_bytes(),
+            2 => "BONDED 已绑定".as_bytes(), _ => "无回调".as_bytes() } };
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s(bond).s(" · 尝试 ".as_bytes()).n(d.bond_attempts).s("/8".as_bytes());
+    if d.bond_pending != 0 { w.s(" · 等回调".as_bytes()); } w.end();
+    set_row(PAGE_DIAG_PID, 3, "配对状态\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s("回调 ".as_bytes()).n(d.bond_events).s(" 次 · transport ".as_bytes());
+    if d.bond_transport == 0xffff { w.s(b"--"); } else { w.n(d.bond_transport); }
+    w.s(" · 接受回复 ".as_bytes()); signed(&mut w, d.pair_reply_result as i32); w.end();
+    set_row(PAGE_DIAG_PID, 4, "配对回调\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s("事件 ".as_bytes()).n(d.l2_event).s(" · 累计 ".as_bytes()).n(d.l2_events); w.end();
+    set_row(PAGE_DIAG_PID, 5, "L2CAP\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    signed(&mut w, d.error); w.s(" · 阶段 ".as_bytes()).n(d.error_stage).s(" · phase ".as_bytes()).n(d.phase); w.end();
+    set_row(PAGE_DIAG_PID, 6, "底层错误\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s("CoD ".as_bytes()); signed(&mut w, d.result_cod);
+    w.s(" IO ".as_bytes()); signed(&mut w, d.result_iocap);
+    w.s(" 3D ".as_bytes()); signed(&mut w, d.result_paircfg); w.end();
+    set_row(PAGE_DIAG_PID, 7, "设备配置返回\0".as_bytes(), &text, false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    w.s("Conn ".as_bytes()); signed(&mut w, d.result_connect);
+    w.s(" Bond ".as_bytes()); signed(&mut w, d.result_bond);
+    w.s(" Rm ".as_bytes()); signed(&mut w, d.result_remove);
+    w.s(" Cfm ".as_bytes()); signed(&mut w, d.result_confirm); w.end();
+    set_row(PAGE_DIAG_PID, 8, "配对命令返回\0".as_bytes(), &text, false);
+    set_row(PAGE_DIAG_PID, 9, "最近回调\0".as_bytes(), "见下方事件列表\0".as_bytes(), false);
+    update_diag_log();
+}
+unsafe fn update_diag_log() {
+    let page = &PAGES[PAGE_DIAG_PID as usize];
+    if !safe_ptr(DIAG_LABEL) || DIAG_CONTENT != page.content || DIAG_ANCHOR != page.rows[DIAG_ROWS-1] { return; }
+    let mut scratch = [0u8; 640];
+    let size = bt_probe_event_text(scratch.as_mut_ptr(), scratch.len() as u32) as usize;
+    if size + 1 > scratch.len() { return; }
+    scratch[size] = 0;
+    if DIAG_TEXT[..=size] != scratch[..=size] {
+        DIAG_TEXT[..=size].copy_from_slice(&scratch[..=size]);
+        fw_api::label_set_text(DIAG_LABEL, core::ptr::addr_of!(DIAG_TEXT).cast::<u8>());
+    }
+}
+impl crate::page::Page for BtDiagPage {
+    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "蓝牙诊断\0".as_bytes()); } }
+    fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
+        DIAG_CACHE = RowCache::EMPTY; DIAG_LABEL = 0; DIAG_CONTENT = 0; DIAG_ANCHOR = 0; DIAG_TEXT = [0; 1024];
+        let mut prev = ctx.title;
+        for slot in 0..DIAG_ROWS {
+            prev = build_row(ctx, prev, slot, &RowSpec::display(b" \0", b" \0".as_ptr()));
+            if prev == 0 { return Err(PageError::RowFailed(slot)); }
+        }
+        let label = fw_api::label_create(ctx.content); if label == 0 { return Err(PageError::RowFailed(DIAG_ROWS)); }
+        fw_api::style_apply(label, FW_STYLE_HR_NAME, 255, 0); fw_api::obj_set_width(label, 320);
+        fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_LEFT, 0, 8);
+        DIAG_LABEL = label; DIAG_CONTENT = ctx.content; DIAG_ANCHOR = prev;
+        refresh_diag(); Ok(())
+    } }
+    fn needs_tick(&self) -> bool { true }
+    fn on_click(&self, _idx: usize) {}
+    fn tick(&self) { unsafe { if visible(PAGE_DIAG_PID) && fw_api::screen_is_on() { refresh_diag(); } } }
+}
 /// The shared keyboard calls this before returning. Credentials stay in RAM.
 pub(crate) unsafe fn save_web_password(password:*const u8)->bool {
     if password.is_null() {return false;} let mut n=0;
@@ -372,12 +482,14 @@ impl crate::page::Page for ExpPage {
         build_rows(ctx, ctx.title, &[
             (0, RowSpec::tap("btpan联网\0".as_bytes(), "蓝牙网络共享实验功能\0".as_ptr())),
             (1, RowSpec::tap("网页服务器\0".as_bytes(), "局域网控制台(实验)\0".as_ptr())),
+            (2, RowSpec::tap("蓝牙诊断\0".as_bytes(), "配对回调与 IPC 现场\0".as_ptr())),
         ])?; Ok(())
     } }
     fn on_click(&self, idx: usize) { unsafe {
         match idx {
             0 => nav_goto(PAGE_BTPAN_PID, 0),
             1 => nav_goto(PAGE_WEBSRV_PID, 0),
+            2 => nav_goto(PAGE_DIAG_PID, 0),
             _ => {}
         }
     } }

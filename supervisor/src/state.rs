@@ -186,10 +186,12 @@ pub static PAGE_NETINFO: [u8; 8] = *b"netinfo\0";
 
 /// 页35: 主页 -> 实验性功能(收拢 btpan联网/网页服务器/连接信息等未稳定入口)。
 pub static PAGE_EXP: [u8; 7] = *b"exp\0\0\0\0";
+/// 页36: 实验性功能 -> 蓝牙诊断(配对/回调/IPC 现场)。
+pub static PAGE_BTDIAG: [u8; 8] = *b"btdiag\0\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 36;                   // 注册页数(页0..页35)
+pub const PAGE_COUNT: usize = 37;                   // 注册页数(页0..页36)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 
