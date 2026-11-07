@@ -4,6 +4,7 @@
 
 ## v1.1.4 — 2026-11-07
 
+- **文件桥默认关闭**：首次安装/没有 `bridge.cfg` 时不再占用 L2 0x43；需要时在设置页手动打开。关闭开关后维护 tick 会真正调用 `chaos_bridge_stop()`，恢复原 handler 并清空队列。
 - **合并模糊开关**：去掉独立的“模糊v2”，Corona 模糊开关同时启用通知 `no_message` 图标去黑底；旧 `blur_v2.cfg` 开启状态会在首次启动迁移到 `corona_blur.cfg` 并删除旧文件。
 - **修复系统模糊页行号错位**：恢复 0=系统背景、1=corona模糊、2=状态、3=旧版选项、4=模糊区域的布局，旧版选项和模糊区域不再互相打开错误页面。
 - **修复通知详情页空状态图标黑底**：Corona 开关附带的 `notification_icon` 扫描新增通知详情页只读 root；详情页仍不接管背景，只替换 `no_message` 图源，避免整块黑容器。
@@ -11,7 +12,7 @@
 - **提高应用容量**：`APP_MAX` 40 → 64，注册表缓冲 32 KB → 64 KB；行事件槽位扩到 75，避免第 52 行以后错派发。超限时分别提示“应用过多”或“注册表过大”，不再落到“解析失败”。旧 40 槽 keep/excl 文件自动迁移。日志页尾部缓冲 48 KB → 16 KB，为注册表让出 RAM。
 - **恢复普通隐藏 / 深度隐藏双模式**：应用管理页行 1 恢复“深度隐藏”开关。开 = 条目搬进 `apps.json_hide`；关 = 条目留在 `apps.json`，用 `appmgr_keep.bin` 记录隐藏名单。模式持久化到 `appmgr_apply.cfg`，启动补偿、换绑看门狗和单条/批量隐藏都按当前模式分支。
 - **代码模块化**：`page.rs` 从 3,547 行拆为页面框架 + `page/` 下 10 个功能模块；`appmgr.rs` 从 2,715 行拆为共享状态/API + `appmgr/` 下 7 个职责模块。页面表、固件地址和持久化格式不变。
-- **文件桥并入标准包**：不再构建/发布 safe 包，`chaos_sup.ko` 和安装包始终包含文件桥；设置页始终显示 `文件桥` switch。
+- **文件桥并入标准包**：不再构建/发布 safe 包，`chaos_sup.ko` 和安装包始终包含文件桥；设置页始终显示 `文件桥` switch，但默认关闭。
 - **文件桥运行期开关**：状态持久化到 `/data/chaos/bridge.cfg`（`BRG1` + enabled）。
 - 新增 `chaos_bridge_stop()`：把 L2 0x43 的 RX handler 恢复为固件原入口，清空 RX/TX 队列、listener 和连接状态；owner/bt timer 降到 1 Hz 空转。
 - `chaos_bridge_start()` 支持恢复：timer 已初始化时直接重启 10 ms owner tick 并重新挂接；如果 Canopus 已占用 handler，`l2_attach()` 只在当前仍是 `L2_RX` 时接管，不会强行覆盖。
