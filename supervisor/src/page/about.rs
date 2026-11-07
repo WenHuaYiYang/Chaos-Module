@@ -60,19 +60,6 @@ unsafe fn dbg_text() {
     else { write_volatile(d.add(0), b'0' + v as u8); write_volatile(d.add(1), b'%'); write_volatile(d.add(2), 0); }
 }
 
-unsafe fn dbg_fields(a: fw_api::Obj) {
-    if a == 0 { return; }
-    let p = a as usize;
-    crate::log::kv("dbg34 ", core::ptr::read_volatile((p + 0x34) as *const u32));
-    crate::log::kv("dbg38 ", core::ptr::read_volatile((p + 0x38) as *const u32));
-    crate::log::kv("dbg3C ", core::ptr::read_volatile((p + 0x3C) as *const u32));
-    crate::log::kv("dbg40 ", core::ptr::read_volatile((p + 0x40) as *const u32));
-    crate::log::kv("dbg44 ", core::ptr::read_volatile((p + 0x44) as *const u32));
-    crate::log::kv("dbg48 ", core::ptr::read_volatile((p + 0x48) as *const u32));
-    crate::log::kv("dbg4C ", core::ptr::read_volatile((p + 0x4C) as *const u32));
-    crate::log::kv("dbg50 ", core::ptr::read_volatile((p + 0x50) as *const u32));
-}
-
 unsafe fn dbg_dump() {
     const BASE: usize = 0x1C06_0000;
     const LEN: usize = 512 * 1024;

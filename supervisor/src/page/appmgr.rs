@@ -3,8 +3,8 @@
 use crate::page::*;
 use crate::page::Page;
 
-static mut P_EXCL_LB: [u32; 40] = [0; 40];
-static mut P_STATE_LB: [u32; 40] = [0; 40];
+static mut P_EXCL_LB: [u32; crate::appmgr::APP_MAX] = [0; crate::appmgr::APP_MAX];
+static mut P_STATE_LB: [u32; crate::appmgr::APP_MAX] = [0; crate::appmgr::APP_MAX];
 static mut LAST_MSG: [u8; 64] = [0; 64];
 static mut LAST_HDR: [u8; 64] = [0; 64];
 
@@ -73,13 +73,10 @@ pub(crate) unsafe fn set_excl_pill(p: u32, i: usize) {
 
 pub(crate) struct AppMgrPage;
 
-static mut AM_STATUS_HID: [u8; 12] = [0; 12];
-static mut AM_STATUS_VIS: [u8; 12] = [0; 12];
-
 /// 列表行原地刷新(页1/页30 共用): 行数没变就逐行改副标题与颜色, 不重建整页,
 /// 这样列表滚动位置不会跳回顶部, 也不会在快速连点时销毁/重建行对象。
 /// 返回 false = 行数或句柄对不上, 调用方需要整页重建。
-static mut ROW_STATE: [u8; 40] = [0xFF; 40];
+static mut ROW_STATE: [u8; crate::appmgr::APP_MAX] = [0xFF; crate::appmgr::APP_MAX];
 
 unsafe fn refresh_list_rows(selected_mode: bool) -> bool {
     if list_building() { return true; } // 还在分批建行, 先不刷
@@ -143,34 +140,25 @@ static mut LB_PREV: u32 = 0;
 static mut LB_CONTENT: u32 = 0;
 static mut LB_FIRST: u32 = 0;
 static mut LB_DELAY: u32 = 0;
-static mut LB_SUB_VIS: u32 = 0;
-static mut LB_SUB_HID: u32 = 0;
 // 列表第 v 行对应的应用下标(批量页跳过排除项后, 行号 != 视图号)
-static mut LB_APP: [u16; 64] = [0xFFFF; 64];
-
-static mut LIST_REBUILD: u8 = 0;
+static mut LB_APP: [u16; crate::appmgr::APP_MAX] = [0xFFFF; crate::appmgr::APP_MAX];
 
 const LB_FIRST_CHUNK: u32 = 0;
 const LB_TICK_CHUNK: u32 = 5;
 
 pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
 
-unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub_hid: *const u8) {
+unsafe fn list_begin(kind: u32, prev: u32, content: u32) {
     LB_KIND = kind;
     LB_V = 0;
     LB_N = crate::appmgr::view_count() as u32;
     LB_PREV = prev;
     LB_CONTENT = content;
     LB_FIRST = 1;
-    LB_SUB_VIS = sub_vis as u32;
-    LB_SUB_HID = sub_hid as u32;
     {
         let cache = core::ptr::addr_of_mut!(ROW_STATE) as *mut u8;
         let mut i = 0usize;
-        while i < 40 { core::ptr::write_volatile(cache.add(i), 0xFF); i += 1; }
-        let pl = core::ptr::addr_of_mut!(P_EXCL_LB) as *mut u32;
-        let mut i = 0usize;
-        while i < 40 { core::ptr::write_volatile(pl.add(i), 0); i += 1; }
+        while i < crate::appmgr::APP_MAX { core::ptr::write_volatile(cache.add(i), 0xFF); i += 1; }
         let lm = core::ptr::addr_of_mut!(LAST_MSG) as *mut u8;
         let lh = core::ptr::addr_of_mut!(LAST_HDR) as *mut u8;
         let mut i = 0usize;
@@ -178,14 +166,13 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32, sub_vis: *const u8, sub
         let mut z = 0usize;
         let sp_ = core::ptr::addr_of_mut!(P_STATE_LB) as *mut u32;
         let ep_ = core::ptr::addr_of_mut!(P_EXCL_LB) as *mut u32;
-        while z < 40 { core::ptr::write_volatile(sp_.add(z), 0); core::ptr::write_volatile(ep_.add(z), 0); z += 1; }
+        while z < crate::appmgr::APP_MAX { core::ptr::write_volatile(sp_.add(z), 0); core::ptr::write_volatile(ep_.add(z), 0); z += 1; }
     }
-    LIST_REBUILD = 0;
     LB_DELAY = 3;
     {
         let a = core::ptr::addr_of_mut!(LB_APP) as *mut u16;
         let mut i = 0usize;
-        while i < 64 { core::ptr::write_volatile(a.add(i), 0xFFFF); i += 1; }
+        while i < crate::appmgr::APP_MAX { core::ptr::write_volatile(a.add(i), 0xFFFF); i += 1; }
     }
     let expected = if kind == 2 { crate::appmgr::batch_total() as u32 } else { LB_N };
     crate::appmgr::set_ui_rows(expected);
@@ -278,23 +265,20 @@ impl Page for AppMgrPage {
             let sw = build_row(ctx, t0, 1,
                 &RowSpec::switch(crate::appmgr::apply_mode_label()));
             if sw == 0 { return Err(PageError::RowFailed(1)); }
+            row_shrink(sw, 56);
             fw_api::row_update(sw,
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
                 0, crate::appmgr::deep_on() as u8);
             let s2 = build_row(ctx, sw, 2,
                 &RowSpec::display(crate::appmgr::msg(), core::ptr::null()));
             row_shrink(s2, 56);
-            AM_MSG_ROW = read_volatile(ctx.rows.add(2));
+            AM_MSG_ROW = s2;
             if s2 != 0 {
                 let t3 = build_tile_below(ctx, s2, 3,
                     "重新应用隐藏\0".as_bytes(), 328, 56);
                 tile_primary(t3);
             }
             crate::appmgr::sort_view_visible_first();
-
-            // 状态文案(静态缓冲, 供每行的副标签使用)
-            put_str(core::ptr::addr_of_mut!(AM_STATUS_HID) as *mut u8, "已隐藏\0".as_bytes());
-            put_str(core::ptr::addr_of_mut!(AM_STATUS_VIS) as *mut u8, "显示中\0".as_bytes());
 
             // 条目行: 先建首屏, 其余由 tick 分批续建
             let mut prev = read_volatile(ctx.rows.add(3));
@@ -311,9 +295,7 @@ impl Page for AppMgrPage {
                 prev = hdr;
                 AM_HDR_ROW = hdr;
             }
-            list_begin(1, prev, ctx.content,
-                core::ptr::addr_of!(AM_STATUS_VIS) as *const u8,
-                core::ptr::addr_of!(AM_STATUS_HID) as *const u8);
+            list_begin(1, prev, ctx.content);
             Ok(())
         }
     }
@@ -385,7 +367,7 @@ impl Page for AppMgrPage {
                 fw_api::row_update(h, fw_api::NONE_PTR,
                     crate::appmgr::header_text().as_ptr(), fw_api::NONE_PTR, 0, 0);
             }
-            // 行句柄失效时不再整页重建: 重建会销毁 40 个对象并再次触发本 tick, 形成每帧重建的卡顿。
+            // 行句柄失效时不再整页重建: 重建会销毁全部条目行并再次触发本 tick, 形成每帧重建的卡顿。
             // 行数真的变了(卸载/重扫)由对应操作自己 render_req。
             let _ = refresh_list_rows(false);
         }
@@ -520,8 +502,6 @@ pub(crate) struct BatchPage;
 pub(super) static PAGE_BATCHP: BatchPage = BatchPage;
 
 static mut B_SEL_TXT: [u8; 48] = [0; 48];
-static mut B_ST_HID: [u8; 12] = [0; 12];
-static mut B_ST_VIS: [u8; 12] = [0; 12];
 static mut B_LBL_ALL: [u8; 32] = [0; 32];
 static mut B_LBL_UNSEL: [u8; 32] = [0; 32];
 static mut B_LBL_DEL: [u8; 32] = [0; 32];
@@ -555,8 +535,6 @@ impl Page for BatchPage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             crate::appmgr::rows_reset();
-            put_str(core::ptr::addr_of_mut!(B_ST_HID) as *mut u8, "已隐藏\0".as_bytes());
-            put_str(core::ptr::addr_of_mut!(B_ST_VIS) as *mut u8, "显示中\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(B_LBL_ALL) as *mut u8, "全选\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(B_LBL_DEL) as *mut u8, "删除选中\0".as_bytes());
             put_str(core::ptr::addr_of_mut!(B_LBL_DEL2) as *mut u8, "确认删除?\0".as_bytes());
@@ -591,9 +569,7 @@ impl Page for BatchPage {
 
             // 勾选行: 先建首屏, 其余由 tick 分批续建
             crate::appmgr::sort_view_visible_first();
-            list_begin(2, t3, ctx.content,
-                core::ptr::addr_of!(B_ST_VIS) as *const u8,
-                core::ptr::addr_of!(B_ST_HID) as *const u8);
+            list_begin(2, t3, ctx.content);
             Ok(())
         }
     }

@@ -14,7 +14,8 @@ use crate::page::Page;
 pub(crate) struct LogPage;
 pub(super) static PAGE_LOG: LogPage = LogPage;
 
-const LOG_VIEW_CAP: usize = 48 * 1024;
+// 日志页只展示最近 60 条，16 KB 远大于 8 KB 文本上限；省下的静态 RAM 留给应用注册表。
+const LOG_VIEW_CAP: usize = 16 * 1024;
 const LOG_TEXT_CAP: usize = 8 * 1024;
 const LOG_TEXT_W: u32 = 320;
 const LOG_LINE_H: i32 = 36;

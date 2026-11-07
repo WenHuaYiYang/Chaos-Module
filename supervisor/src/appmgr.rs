@@ -59,14 +59,14 @@ pub(crate) use detail::*;
 pub(crate) const VIS_PATH: &[u8] = b"/data/apps.json\0";
 pub(crate) const HID_PATH: &[u8] = b"/data/apps.json_hide\0";
 
-pub(crate) const REG_CAP: usize = 32768; // 单个注册表文件字节上限(应用多时 10KB 不够)
-pub(crate) const APP_MAX: usize = 40;    // 条目上限(两份注册表合计)
+pub(crate) const REG_CAP: usize = 64 * 1024; // 单个注册表文件字节上限；64 KB 覆盖约 64 个常见应用对象
+pub(crate) const APP_MAX: usize = 64;    // 条目上限(两份注册表合计)
 const OBJ_CAP: usize = 1536;             // 单个被搬运对象的字节上限
 const PKG_CAP: usize = 44;               // 包名槽宽(E_PKG / BATCH_PKG / EXCL_SLOT 同宽)
 
 // ===== 批量操作排除名单 =====
 // 独立于两份注册表: 影响"一键隐藏/显示全部", 且排除项在页1 列表里不显示;
-// 页7 可逐项取消排除。格式: magic "EX02" + 40 槽 × 44 字节包名 + 4 字节校验和; 槽首字节 0 = 空槽, 读到空槽即止。
+// 格式: magic "EX02" + APP_MAX 槽 × 44 字节包名 + 4 字节校验和; 槽首字节 0 = 空槽, 读到空槽即止。
 // 包名匹配而非下标匹配, 重启后注册表顺序变化不会串项。
 pub(crate) const EXCL_PATH: &[u8] = b"/data/chaos/appmgr_excl.bin\0";
 const EXCL_MAGIC: [u8; 4] = *b"EX02";
@@ -90,12 +90,7 @@ static mut APPLY_LABEL: [u8; 48] = [0; 48];
 static mut MIG_BUF: [[u8; PKG_CAP]; APP_MAX] = [[0; PKG_CAP]; APP_MAX];
 static mut MIG_N: usize = 0;
 static mut REQ_MODE: u32 = 0;
-static mut EXCL_LABEL: [u8; 48] = [0; 48];
-static mut EXCL_HINT: [u8; 64] = [0; 64];
-static mut EXCL_VIEW: [u8; APP_MAX] = [0; APP_MAX];
-static mut EXCL_VIEW_N: usize = 0;
-static mut EXCL_MODE: u32 = 0;
-static mut MODE_LABEL: [u8; 48] = [0; 48];
+static mut MODE_BEFORE: u32 = 0; // 模式迁移失败时恢复用
 static mut APPLY_MODE: u32 = 0;
 static mut APPLY_LOADED: u32 = 0;
 static mut KEEP_BUF: [u8; KEEP_TOTAL] = [0; KEEP_TOTAL];
@@ -201,6 +196,7 @@ static mut REG_N: usize = 0;         // 本次载入字节数
 static mut HAVE_FILE: u32 = 0;       // 0=文件不存在(允许合成最小结构)
 static mut OVERSIZE: u32 = 0;        // 1=文件超过 REG_CAP
 static mut TRUNC: u32 = 0;           // 1=存在无法管理的对象(拒绝改写)
+static mut APP_OVER: u32 = 0;        // 1=应用条目数达到 APP_MAX
 static mut PARSE_BAD: u32 = 0;       // 1=本次 parse 失败
 // 失败现场(界面直接报出来): 设备上的注册表拿不到, 这一行是定位格式差异的唯一入口。
 static mut PARSE_AT: u32 = 0;        // 失败位置(字节偏移)

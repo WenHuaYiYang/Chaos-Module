@@ -79,7 +79,7 @@
 //             21 目标记录结构坏 22 不变量破 23 恢复表满 (24 已随收集式退役)
 
 use crate::font_apply;
-use crate::mem::{rd32, rd8};
+use crate::mem::rd32;
 use crate::*;
 
 const FM_SLOT: u32 = 0x2010_3174;
@@ -114,16 +114,6 @@ static mut SW_SRC: [u32; SW_CAP] = [0; SW_CAP];
 static mut SW_BAK: [[u32; BODY_WORDS]; SW_CAP] = [[0; BODY_WORDS]; SW_CAP];
 
 /// 串前缀比较(带 plausible 门, 假指针当不匹配)
-unsafe fn str_eq_prefix(p: u32, s: &[u8]) -> bool {
-    if !plausible_ptr(p) { return false; }
-    let mut i = 0usize;
-    while i < s.len() {
-        if rd8((p + i as u32) as *const u8) != s[i] { return false; }
-        i += 1;
-    }
-    true
-}
-
 // ---------------------------------------------------------------------------
 // 热替底层原语(全部只碰过门的真实 RAM 地址)
 // ---------------------------------------------------------------------------

@@ -84,10 +84,10 @@ pub(crate) unsafe fn sort_view_visible_first() {
 }
 
 /// 页7 顺序: 排除项在前; 稳定排序。
-pub(crate) unsafe fn excl_checksum(b: *const u8) -> u32 {
+pub(crate) unsafe fn excl_checksum(b: *const u8, sum_off: usize) -> u32 {
     let mut s = 0u32;
     let mut i = EXCL_HDR;
-    while i < EXCL_SUM_OFF { s = s.wrapping_add(read_volatile(b.add(i)) as u32); i += 1; }
+    while i < sum_off { s = s.wrapping_add(read_volatile(b.add(i)) as u32); i += 1; }
     s
 }
 
@@ -114,10 +114,14 @@ pub(crate) unsafe fn excl_ensure() {
         if read_volatile(b.add(k)) != EXCL_MAGIC[k] { new_ok = false; }
         k += 1;
     }
+    let mut legacy_len = false;
     if new_ok {
-        if n < EXCL_TOTAL { return; }
-        let want = read_volatile(b.add(EXCL_SUM_OFF) as *const u32);
-        if want != excl_checksum(b) { return; }   // 损坏 -> 空名单 -> 开机补偿把 keep 全部隐藏
+        if n < EXCL_HDR + EXCL_SLOT + 4 { return; }
+        // 旧版 40 槽文件: 校验和就在实际长度末尾，按实际长度校验后迁移到新容量。
+        let sum_off = if n >= EXCL_TOTAL { EXCL_SUM_OFF } else { n - 4 };
+        let want = read_volatile(b.add(sum_off) as *const u32);
+        if want != excl_checksum(b, sum_off) { return; }   // 损坏 -> 空名单
+        legacy_len = sum_off != EXCL_SUM_OFF;
     } else {
         let mut old_ok = true;
         k = 0;
@@ -128,7 +132,7 @@ pub(crate) unsafe fn excl_ensure() {
         if !old_ok { return; }
         is_old = true;
     }
-    let limit = if is_old { n } else { EXCL_SUM_OFF };
+    let limit = if is_old { n } else if legacy_len { n - 4 } else { EXCL_SUM_OFF };
     let mut i = 0usize;
     while i < EXCL_MAX {
         let o = EXCL_HDR + i * EXCL_SLOT;
@@ -152,7 +156,7 @@ pub(crate) unsafe fn excl_ensure() {
         i += 1;
     }
     excl_dedupe();
-    if is_old { let _ = excl_save(); }
+    if is_old || legacy_len { let _ = excl_save(); }
 }
 
 pub(crate) unsafe fn excl_save() -> bool {
@@ -169,7 +173,7 @@ pub(crate) unsafe fn excl_save() -> bool {
         while j < EXCL_SLOT { write_volatile(d.add(j), read_volatile(s.add(j))); j += 1; }
         i += 1;
     }
-    let sum = excl_checksum(b);
+    let sum = excl_checksum(b, EXCL_SUM_OFF);
     write_volatile(b.add(EXCL_SUM_OFF) as *mut u32, sum);
     let fd = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
     if fd < 0 { return false; }
@@ -257,6 +261,7 @@ pub(crate) unsafe fn reload() {
     TRUNC = 0;
     PARSE_BAD = 0;
     OVERSIZE = 0;
+    APP_OVER = 0;
     let keep_msg = read_volatile(core::ptr::addr_of!(MSG_KEEP) as *const u32);
     MSG_KEEP = 0;
     excl_ensure();
@@ -290,6 +295,12 @@ pub(crate) unsafe fn reload() {
     mark_dups();
     if OVERSIZE != 0 {
         wmsg("注册表过大, 只读\0");
+    } else if APP_OVER != 0 {
+        let d = core::ptr::addr_of_mut!(APP_MSG) as *mut u8;
+        let mut n = put_lit(d, "应用过多, 只读(上限 ".as_bytes());
+        n += put_u32(d.add(n), APP_MAX as u32);
+        n += put_lit(d.add(n), b")");
+        write_volatile(d.add(n), 0);
     } else if vis_bad != 0 {
         // 失败现场报到界面上: 文件/偏移/该字节/长度。设备上的注册表拿不到,
         // 这一行就是定位格式差异的唯一入口。

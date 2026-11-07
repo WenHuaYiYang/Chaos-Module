@@ -3,27 +3,6 @@
 use crate::page::*;
 use crate::page::Page;
 
-unsafe fn ring_fill(i: usize) {
-    let dst = (core::ptr::addr_of_mut!(RING_TXT) as *mut u8).add(i * 48);
-    let pct = if i == 0 { storage_pct() } else { mem_pct() };
-    if pct >= 100 {
-        write_volatile(dst.add(0), b'1');
-        write_volatile(dst.add(1), b'0');
-        write_volatile(dst.add(2), b'0');
-        write_volatile(dst.add(3), b'%');
-        write_volatile(dst.add(4), 0);
-    } else if pct >= 10 {
-        write_volatile(dst.add(0), b'0' + (pct / 10) as u8);
-        write_volatile(dst.add(1), b'0' + (pct % 10) as u8);
-        write_volatile(dst.add(2), b'%');
-        write_volatile(dst.add(3), 0);
-    } else {
-        write_volatile(dst.add(0), b'0' + pct as u8);
-        write_volatile(dst.add(1), b'%');
-        write_volatile(dst.add(2), 0);
-    }
-}
-
 pub(crate) struct InfoPage;
 
 /// 读缓存里的占用百分比(0=存储 1=内存)。render 建条时用, 不碰 procfs。

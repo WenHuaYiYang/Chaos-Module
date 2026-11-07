@@ -29,8 +29,6 @@ pub(crate) use beautify::BLUR_LEGACY_PID;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PageError {
-    /// content_create 返回 0
-    ContentFailed,
     /// 某个关键行控件创建失败
     RowFailed(usize),
 }
@@ -222,19 +220,6 @@ pub(crate) unsafe fn build_tile_right(
     r
 }
 
-/// 把整行宽度(328)的控件挂到"左边半宽按钮块"下方时, 需要向右补
-/// (内容中心 - 左块中心)=84, 否则会整体偏左半个按钮。
-pub(crate) unsafe fn build_row_under_left(
-    ctx: &PageCtx, left_tile: u32, slot: usize, spec: &RowSpec,
-) -> u32 {
-    let r = build_row(ctx, left_tile, slot, spec);
-    if r != 0 {
-        fw_api::obj_align_to(r, left_tile, fw_api::align::OUT_BOTTOM_MID,
-            TILE_CENTER_DX, 8);
-    }
-    r
-}
-
 /// 行建立后压高度(用于状态/信息行, 默认双排高度太占屏)
 pub(crate) unsafe fn row_shrink(row: u32, h: u32) {
     if row != 0 { fw_api::obj_set_size_wh(row, TILE_ROW_W, h); }
@@ -305,14 +290,6 @@ pub(crate) unsafe fn cstr_len(s: *const u8) -> usize {
     let mut n = 0usize;
     while read_volatile(s.add(n)) != 0 { n += 1; }
     n
-}
-
-pub(crate) struct RemovedPage;
-static PAGE_REMOVED: RemovedPage = RemovedPage;
-impl Page for RemovedPage {
-    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "已移除\0".as_bytes()); } }
-    fn render(&self, _ctx: &PageCtx) -> PageResult { Ok(()) }
-    fn on_click(&self, _idx: usize) {}
 }
 
 

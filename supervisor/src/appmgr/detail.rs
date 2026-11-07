@@ -357,11 +357,7 @@ pub(crate) unsafe fn detail_open_ctx(i: usize, excl: u32) {
     scan_version(core::ptr::addr_of!(D_PKG) as *const u8);
 }
 
-pub(crate) unsafe fn detail_excl_ctx() -> bool { D_EXCL != 0 }
-
 pub(crate) unsafe fn detail_valid() -> bool { D_IDX != usize::MAX && D_IDX < APP_N }
-pub(crate) unsafe fn detail_hidden() -> bool { D_HIDDEN != 0 }
-pub(crate) unsafe fn detail_bytes() -> u32 { D_SIZE }
 pub(crate) unsafe fn detail_confirm() -> bool { D_CONFIRM != 0 }
 pub(crate) unsafe fn detail_name() -> &'static [u8] {
     let p = core::ptr::addr_of!(D_NAME) as *const u8;
@@ -371,11 +367,6 @@ pub(crate) unsafe fn detail_pkg() -> &'static [u8] {
     let p = core::ptr::addr_of!(D_PKG) as *const u8;
     core::slice::from_raw_parts(p, cstr_len(p) + 1)
 }
-pub(crate) unsafe fn detail_ver() -> &'static [u8] {
-    let p = core::ptr::addr_of!(D_VER) as *const u8;
-    core::slice::from_raw_parts(p, cstr_len(p) + 1)
-}
-
 /// 详情页里切换隐藏/显示: 复用单击流程(REQ_OP), tick 里执行。
 pub(crate) unsafe fn detail_excl_on() -> bool { detail_valid() && excl_on(D_IDX) }
 
@@ -388,15 +379,6 @@ pub(crate) unsafe fn detail_toggle_excl() {
 }
 
 pub(crate) unsafe fn detail_toggle_hide() { if detail_valid() { click(D_IDX); } }
-
-pub(crate) unsafe fn detail_toggle() {
-    if !detail_valid() { return; }
-    if D_EXCL != 0 {
-        request_excl(D_IDX);
-    } else {
-        click(D_IDX);
-    }
-}
 
 /// 详情页主操作按钮文案(随入口变化)
 pub(crate) unsafe fn detail_action_label() -> &'static [u8] {

@@ -17,8 +17,9 @@ pub(crate) unsafe fn load_file(path: *const u8) -> bool {
         n += got as usize;
     }
     if n == REG_CAP {
-        // 读满上限: 无论后面还有没有字节, 都不能保证解析完整, 一律按超限只读处理。
-        OVERSIZE = 1;
+        // 读满上限后再探一个字节：只有确实还有内容才算超限，恰好等于上限的完整文件仍可解析。
+        let mut extra = [0u8; 1];
+        if fw_api::read(fd, extra.as_mut_ptr(), 1) > 0 { OVERSIZE = 1; }
     }
     fw_api::close(fd);
     REG_N = n;
@@ -204,7 +205,12 @@ pub(crate) unsafe fn scan_object(p: &mut usize, src: u8) -> u8 {
     }
     let end = *p;
     // 登记(超出上限 / 缺身份 / 身份溢出 => 截断, 拒绝改写)
-    if APP_N >= APP_MAX || !has_pkg || pkg_over {
+    if APP_N >= APP_MAX {
+        APP_OVER = 1;
+        TRUNC = 1;
+        return 0;
+    }
+    if !has_pkg || pkg_over {
         TRUNC = 1;
         return 0;
     }

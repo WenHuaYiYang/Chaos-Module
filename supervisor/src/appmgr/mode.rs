@@ -10,8 +10,11 @@ pub(crate) unsafe fn cfg_mode_read() -> u32 {
     let mut b = [0u8; 2];
     let n = fw_api::read(fd, b.as_mut_ptr(), 2);
     fw_api::close(fd);
-    if n != 2 || b[0] != b'2' { return 2; }
-    if b[1] == b'1' { 1 } else { 0 }
+    // 新版: "2" + ("0"=深度 / "1"=普通)。旧版单字节 "0"/"1" 仍兼容，避免升级后模式漂移。
+    if n == 2 && b[0] == b'2' { return if b[1] == b'1' { 1 } else { 0 }; }
+    if n >= 1 && (b[0] == b'0' || b[0] == b'1') { return if b[0] == b'1' { 1 } else { 0 }; }
+    2
+
 }
 
 pub(crate) unsafe fn cfg_mode_save() -> bool {
@@ -169,6 +172,7 @@ pub(crate) unsafe fn apply_mode_label() -> &'static [u8] {
 pub(crate) unsafe fn toggle_apply_mode() {
     apply_mode_ensure();
     let old = APPLY_MODE;
+    MODE_BEFORE = old;
     APPLY_MODE = if APPLY_MODE == 0 { 1 } else { 0 };
     if !cfg_mode_save() {
         APPLY_MODE = old;
@@ -180,6 +184,12 @@ pub(crate) unsafe fn toggle_apply_mode() {
 }
 
 pub(crate) unsafe fn mode_pending() -> bool { REQ_MODE != 0 }
+
+/// 迁移失败时恢复到切换前的模式，并让下一次开机也看到旧模式。
+unsafe fn restore_mode_before_failure() {
+    APPLY_MODE = MODE_BEFORE;
+    let _ = cfg_mode_save();
+}
 
 pub(crate) unsafe fn do_mode_apply() {
     if REQ_MODE == 0 { return; }
@@ -199,6 +209,7 @@ pub(crate) unsafe fn do_mode_apply() {
                     if move_hide_to_vis(q) { apply_pkg(false, q); }
                     j += 1;
                 }
+                restore_mode_before_failure();
                 reload();
                 wmsg_keep("切换失败, 已回滚; 请重试\0");
                 return;
@@ -215,7 +226,11 @@ pub(crate) unsafe fn do_mode_apply() {
         // 关闭深度隐藏: 把 apps.json_hide 的条目全部搬回 apps.json,
         // 但**保持原来的隐藏状态** —— 同时记入 keep 名单, 开机补偿再隐藏。
         // 这样所有应用都会重新注册(有节点), 之后普通显示立即生效。
+        // 先按深度模式读两份注册表，避免 reload() 把"可见且命中 keep"的条目误标成隐藏。
+        let target = APPLY_MODE;
+        APPLY_MODE = 0;
         reload();
+        APPLY_MODE = target;
         MIG_N = 0;
         let mut i = 0usize;
         while i < APP_N && MIG_N < APP_MAX {
@@ -244,11 +259,27 @@ pub(crate) unsafe fn do_mode_apply() {
                 }
                 KEEP_N = keep_before;          // 撤掉失败前追加的 keep 项
                 let _ = keep_save();
+                restore_mode_before_failure();
                 reload();
                 wmsg_keep("切换失败, 已回滚; 请重试\0");
                 return;
             }
-            keep_add(p);
+            if !keep_add(p) {
+                // 当前条目已经从 hide 搬回 vis，先搬回去，再回滚之前成功的条目。
+                if move_vis_to_hide(p) { apply_pkg(true, p); }
+                let mut j = 0usize;
+                while j < moved {
+                    let q = (core::ptr::addr_of!(MIG_BUF) as *const u8).add(j * PKG_CAP);
+                    if move_vis_to_hide(q) { apply_pkg(true, q); }
+                    j += 1;
+                }
+                KEEP_N = keep_before;
+                let _ = keep_save();
+                restore_mode_before_failure();
+                reload();
+                wmsg_keep("切换失败, 已回滚; 请重试\0");
+                return;
+            }
             moved += 1;
         }
         let _ = keep_save();
@@ -453,6 +484,9 @@ pub(crate) unsafe fn reg_sig_rt() -> u32 {
 pub(crate) unsafe fn watch_keep() {
     apply_mode_ensure();
     excl_ensure();
+    // 开关请求不能只依赖应用管理页的 tick：用户拨完开关立刻离开页面时，
+    // 维护定时器仍要把迁移做完，避免"配置已改、文件没搬"的跨重启不一致。
+    if REQ_MODE != 0 { do_mode_apply(); }
     WATCH_WAIT = WATCH_WAIT.wrapping_add(1);
     // 维护定时器快拍 50ms / 慢拍 1s: 4 拍 = 快时 0.2s、慢时 4s, 足够挡住重注册。
     if WATCH_WAIT % 4 != 0 { return; }

@@ -194,34 +194,6 @@ unsafe fn fs_usage_mb(src: *const u8, dst: *mut u8) -> bool {
     true
 }
 
-// 与 fs_usage_mb 同一数据源: 返回"容量最大的那行"的已用 MB(缓存清理量释放用)。
-// 读不到/解析失败返回 u32::MAX 作为"不可信"标记, 调用方据此不显示释放数。
-pub(crate) unsafe fn fs_used_mb() -> u32 {
-    let mut buf: [u8; 256] = [0; 256];
-    if read_proc(PROC_FS.as_ptr(), buf.as_mut_ptr(), 256) == 0 { return u32::MAX; }
-    let mut k = 0usize;
-    let mut best = 0u32;
-    let mut best_used = 0u32;
-    let mut found = false;
-    loop {
-        skip_space(buf.as_ptr(), &mut k);
-        let c = read_volatile(buf.as_ptr().add(k));
-        if c == 0 { break; }
-        if c == b'\n' || c == b'\r' { k += 1; continue; }
-        skip_token(buf.as_ptr(), &mut k);
-        skip_space(buf.as_ptr(), &mut k);
-        let mut o1 = false;
-        let size = num_unit_mb(buf.as_ptr(), &mut k, &mut o1);
-        skip_space(buf.as_ptr(), &mut k);
-        let mut o2 = false;
-        let used = if o1 { num_unit_mb(buf.as_ptr(), &mut k, &mut o2) } else { 0 };
-        if o1 && o2 && size > best { best = size; best_used = used; found = true; }
-        while read_volatile(buf.as_ptr().add(k)) != 0
-            && read_volatile(buf.as_ptr().add(k)) != b'\n' { k += 1; }
-    }
-    if found { best_used } else { u32::MAX }
-}
-
 // 首行(截 22 字节)写入 dst
 unsafe fn first_line(src: *const u8, dst: *mut u8) -> bool {
     let mut one: [u8; 32] = [0; 32];
@@ -246,6 +218,28 @@ pub(crate) unsafe fn stat_name(idx: usize) -> *const u8 {
 //
 // 合并前是 stat_fill(idx) + storage_pct()/mem_pct() 两个调用各读一遍同一个 procfs 文件 ——
 // 一轮刷新 5 次 open/read/close。现在一个函数读一次、同时产出文本与百分比, 一轮 3 次。
+// 内存占用比 0..100: meminfo 的 Umem 行 已用/总量。
+unsafe fn mem_pct_of(buf: *const u8, n: usize) -> u32 {
+    let Some((total, used, _)) = mem_umem(buf, n) else { return 0; };
+    if total == 0 || used > total { return 0; }
+    let p = (used as u64 * 100 / total as u64) as u32;
+    if p > 100 { 100 } else { p }
+}
+
+// 存储占用百分比 0..100: 取容量最大的挂载行，用 小/大 反推占用比。
+unsafe fn storage_pct_of(buf: *const u8) -> u32 {
+    let mut k = 0usize;
+    let mut ok = false;
+    let a = next_size(buf, &mut k, &mut ok);
+    if !ok { return 0; }
+    let b = next_size(buf, &mut k, &mut ok);
+    if !ok { return 0; }
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    if hi == 0 { return 0; }
+    let p = (lo as u128 * 100 / hi as u128) as u32;
+    if p > 100 { 100 } else { p }
+}
+
 pub(crate) unsafe fn stat_fill_pct(idx: usize) -> u32 {
     let dst = (core::ptr::addr_of_mut!(STAT_VAL) as *mut u8).add(idx * STAT_STRIDE);
     write_volatile(dst.add(0), 0);
@@ -329,42 +323,6 @@ unsafe fn next_size(src: *const u8, k: &mut usize, ok: &mut bool) -> u64 {
     int_part * mult + (frac * mult) / div
 }
 
-// 存储占用百分比 0..100。数据行 = "挂载点 容量 已用 可用 挂载点", 取首行前两个数,
-// 用 小/大 反推占用比(与列顺序无关)。这两行说的是下面的 storage_pct, 不是紧跟的 mem_pct。
-// 内存占用比 0..100: meminfo 的 Umem 行 已用/总量(mem_umem; 旧实现按固定行号取错行)
-unsafe fn mem_pct_of(buf: *const u8, n: usize) -> u32 {
-    let Some((total, used, _)) = mem_umem(buf, n) else { return 0; };
-    if total == 0 || used > total { return 0; }
-    let p = (used as u64 * 100 / total as u64) as u32;
-    if p > 100 { 100 } else { p }
-}
-
-pub(crate) unsafe fn mem_pct() -> u32 {
-    let mut buf: [u8; 512] = [0; 512];
-    let n = read_proc(PROC_MEM.as_ptr(), buf.as_mut_ptr(), 512);
-    if n == 0 { return 0; }
-    mem_pct_of(buf.as_ptr(), n)
-}
-
-unsafe fn storage_pct_of(buf: *const u8) -> u32 {
-    let mut k = 0usize;
-    let mut ok = false;
-    let a = next_size(buf, &mut k, &mut ok);
-    if !ok { return 0; }
-    let b = next_size(buf, &mut k, &mut ok);
-    if !ok { return 0; }
-    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-    if hi == 0 { return 0; }
-    let p = (lo as u128 * 100 / hi as u128) as u32;
-    if p > 100 { 100 } else { p }
-}
-
-pub(crate) unsafe fn storage_pct() -> u32 {
-    let mut buf: [u8; 256] = [0; 256];
-    if read_proc(PROC_FS.as_ptr(), buf.as_mut_ptr(), 256) == 0 { return 0; }
-    storage_pct_of(buf.as_ptr())
-}
-
 
 // ---------------------------------------------------------------------------
 // 定容行写入器
@@ -389,10 +347,6 @@ impl W {
     }
 
     /// 从缓冲区已有 `len` 字节处接着写(同一行分几段拼时用)
-    pub(crate) fn at(buf: *mut u8, cap: usize, len: usize) -> W {
-        W { buf, cap, len }
-    }
-
     /// 当前已写长度(不含 NUL)
     pub(crate) fn len(&self) -> usize { self.len }
 
@@ -450,17 +404,6 @@ impl W {
     }
 
     /// 追加 8 位十六进制(大写, 指针/句柄判据用)
-    pub(crate) unsafe fn x(&mut self, v: u32) -> &mut Self {
-        let hex = *b"0123456789ABCDEF";
-        let mut i = 7i32;
-        while i >= 0 {
-            let d = ((v >> (i * 4)) & 0xF) as usize;
-            self.c(read_volatile(hex.as_ptr().add(d)));
-            i -= 1;
-        }
-        self
-    }
-
     /// 收尾: 截断处补 NUL(缓冲区最后一字节永远留给它)
     pub(crate) unsafe fn end(&mut self) {
         let o = if self.len < self.cap { self.len } else { self.cap - 1 };

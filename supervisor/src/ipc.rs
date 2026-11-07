@@ -72,24 +72,6 @@ pub(crate) unsafe extern "C" fn chaos_read(_: *mut u8, buf: *mut u8, len: u32) -
 }
 
 
-#[inline(always)]
-pub(crate) unsafe fn file_open_ro(path: *const u8) -> i32 {
-    // 内核层 O_RDONLY=1, 不是 POSIX 的 0!
-    // 这套取值(O_RDONLY=1/O_WRONLY=2/O_CREAT=4/O_RDWR=3)与固件自带模块的用法一致,
-    // 设备节点与 /dev/console 的调用点都核对过。
-    // flag=0 → open 拿到 fd 但无访问模式 → read 必 -1 (真机 n=FFFFFFFF 根因)
-    // 写路径 file_open flag=6 = O_WRONLY|O_CREAT, 与固件自带模块的写组合一致(所以写一直成功)
-    let f: unsafe extern "C" fn(*const u8, u32, u32) -> i32 = core::mem::transmute(FW_FILE_OPEN as usize);
-    f(path, 1, 0)
-}
-
-
-#[inline(always)]
-pub(crate) unsafe fn file_close(fd: i32) -> i32 {
-    let f: unsafe extern "C" fn(i32) -> i32 = core::mem::transmute(FW_FILE_CLOSE as usize);
-    f(fd)
-}
-
 /// 字体池位文件在不在 —— 只给字体投递命令(0x30)用。
 ///
 /// 为什么必须验这一下: 池位一旦切到一个不存在或没写完的文件, 之后建出的每一张脸
