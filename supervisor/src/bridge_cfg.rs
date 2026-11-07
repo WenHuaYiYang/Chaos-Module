@@ -1,7 +1,7 @@
 //! 原生文件桥开关：持久化到 `/data/chaos/bridge.cfg`，由维护定时器落地。
 //!
-//! 文件格式：`BRG1` + 1 字节 enabled（0/1）。默认开启，保持原有
-//! “开机自动启动”的行为；用户关掉后不会在下次开机重新启动。
+//! 文件格式：`BRG1` + 1 字节 enabled（0/1）。默认关闭；首次安装不会
+//! 自动占用 L2 0x43，用户需要文件桥时在设置页手动打开。
 //!
 //! 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 放到 `chaos_shake_timer`
 //! 里做，避免在 LVGL 点击回调里创建/撤销 owner timer。
@@ -13,7 +13,7 @@ const CFG_PATH: &[u8] = b"/data/chaos/bridge.cfg\0";
 const MAGIC: &[u8; 4] = b"BRG1";
 
 static mut LOADED: u32 = 0;
-static mut ENABLED: u32 = 1;
+static mut ENABLED: u32 = 0;
 
 extern "C" {
     fn chaos_bridge_start() -> i32;
@@ -37,7 +37,7 @@ unsafe fn load() {
     }
 }
 
-/// 当前开关状态（默认开）。
+/// 当前开关状态（默认关）。
 pub(crate) unsafe fn enabled() -> bool {
     load();
     ENABLED != 0

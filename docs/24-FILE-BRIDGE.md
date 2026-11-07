@@ -78,7 +78,7 @@ Chaos 没有这些运行时。本实现保留 `band_files` 的**文件协议**�
 ## 安装与使用
 
 1. 安装 `dist/chaos-installer-p67.bin` 并重启；文件桥已并入标准包，设置页可随时开关。
-2. 默认文件桥开启。要和 Canopus 同时使用时，进 Chaos 设置页关掉「文件桥」，再在 Canopus 管理器里启用 Supervisor/`band_files`；反过来也一样，同一个 L2 0x43 只能有一个处理端。
+2. 文件桥默认关闭。需要用时进 Chaos 设置页打开「文件桥」；要和 Canopus 同时使用时，保持关闭，在 Canopus 管理器里启用 Supervisor/`band_files`。同一个 L2 0x43 只能有一个处理端。
 3. 打开 AstroBox 的 `手环文件管理器` 插件（0.1.5），连接手环。
 4. 状态应显示 `已连接 band_files（协议 v1）`，无需 Canopus 管理器。
 5. 需要访问 `/data` 以外路径时，在插件里打开开发者模式；重启后默认关闭。
