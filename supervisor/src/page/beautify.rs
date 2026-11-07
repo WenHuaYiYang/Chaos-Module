@@ -163,11 +163,11 @@ impl Page for BlurPage {
         unsafe {
             let prev = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                // (1, RowSpec::switch("corona模糊\0".as_bytes())),
-                (1, RowSpec::switch("Corona模糊(模糊v2)\0".as_bytes())),
-                (2, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (3, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊和模糊v2后生效\0".as_bytes().as_ptr())),
-                (4, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 corona模糊和模糊v2）\0".as_bytes().as_ptr())),
+                (1, RowSpec::switch("corona模糊\0".as_bytes())),
+                (2, RowSpec::switch("模糊v2\0".as_bytes())),
+                (3, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (4, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊和模糊v2后生效\0".as_bytes().as_ptr())),
+                (5, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 corona模糊和模糊v2）\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 长说明不放入会裁切的行副标题。与许可全文相同：标签只限宽，
             // 高度随换行增长；挂在原生可滚动 content 上，完整 URL 不含 Markdown 标记。

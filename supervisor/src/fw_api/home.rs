@@ -19,12 +19,22 @@ pub const BACKGROUND_NOTIFY_CREATE_SLOT: u32 = 0x4C;
 /// 延迟销毁会先把 +0x28 设为 4，故仅检查非零 root 不够。
 /// 创建在 0x9AAECC 写 root，0x9AAF90 将状态设为 5。
 /// 证据偏移是原始 vela_ap.bin 文件偏移（见 notification ABI probe）。
-pub unsafe fn background_notification_page_root() -> u32 {
-    let desc = BACKGROUND_NOTIFY_DESCS[0];
-    if rd32((desc + 0x14) as *const u32) != BACKGROUND_NOTIFY_KEYS[0]
+unsafe fn notification_root(index: usize) -> u32 {
+    let desc = BACKGROUND_NOTIFY_DESCS[index];
+    if rd32((desc + 0x14) as *const u32) != BACKGROUND_NOTIFY_KEYS[index]
         || rd8((desc + 0x28) as *const u8) == 4 { return 0; }
     let root = rd32((desc + 0x30) as *const u32);
     if safe_ptr(root) { root } else { 0 }
+}
+
+pub unsafe fn background_notification_page_root() -> u32 {
+    notification_root(0)
+}
+
+/// 通知详情页根。详情页不接管背景（避免黑色容器整块），但空消息图标
+/// 仍由 notification_icon 单独换源，所以需要这个只读根。
+pub unsafe fn background_notification_detail_root() -> u32 {
+    notification_root(1)
 }
 
 /// 登记时用复合键确认目标，避免改写其他应用。
