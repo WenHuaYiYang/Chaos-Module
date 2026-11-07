@@ -2,7 +2,7 @@
 
 版本号与容器头、关于页、`Cargo.toml` 三处同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
-## v1.1.4.dev — 2026-11-04
+## v1.1.4 — 2026-11-07
 
 - **合并模糊开关**：去掉独立的“模糊v2”，Corona 模糊开关同时启用通知 `no_message` 图标去黑底；旧 `blur_v2.cfg` 开启状态会在首次启动迁移到 `corona_blur.cfg` 并删除旧文件。
 - **修复系统模糊页行号错位**：恢复 0=系统背景、1=corona模糊、2=状态、3=旧版选项、4=模糊区域的布局，旧版选项和模糊区域不再互相打开错误页面。
@@ -16,7 +16,7 @@
 - 新增 `chaos_bridge_stop()`：把 L2 0x43 的 RX handler 恢复为固件原入口，清空 RX/TX 队列、listener 和连接状态；owner/bt timer 降到 1 Hz 空转。
 - `chaos_bridge_start()` 支持恢复：timer 已初始化时直接重启 10 ms owner tick 并重新挂接；如果 Canopus 已占用 handler，`l2_attach()` 只在当前仍是 `L2_RX` 时接管，不会强行覆盖。
 - 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 由 `chaos_shake_timer` 执行，避免在 LVGL 点击回调里创建/撤销 timer。
-- 版本 1.1.4.dev；容器头 `0x00010104`。
+- 版本 1.1.4；容器头 `0x00010104`。
 
 ## v1.1.3.dev — 2026-11-04
 
