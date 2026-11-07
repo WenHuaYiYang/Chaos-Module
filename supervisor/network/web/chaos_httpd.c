@@ -196,7 +196,7 @@ static int load_credentials(void){
     int rc=chaos_web_credentials(user,sizeof(user),password,sizeof(password));
     unsigned u=0,p=0;
     while(u<sizeof(user) && user[u])u++; while(p<sizeof(password) && password[p])p++;
-    if(!rc && (!u || u==sizeof(user) || p<8 || p>31))rc=-13;
+    if(!rc && (!u || u==sizeof(user) || p<5 || p>31))rc=-13;
     for(unsigned i=0;!rc && i<u;i++)if(user[i]<33 || user[i]>126 || user[i]==':')rc=-22;
     for(unsigned i=0;!rc && i<p;i++)if(password[i]<32 || password[i]>126)rc=-22;
     if(!rc){memcpy(joined,user,u);joined[u]=':';memcpy(joined+u+1,password,p);web_base64((const uint8_t*)joined,u+p+1,credential);}

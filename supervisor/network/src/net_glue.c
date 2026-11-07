@@ -93,7 +93,7 @@ int chaos_net_set_credentials(const char *user, const char *pass)
 {
     if(!user || !pass || strncmp(user,"chaos",6)!=0)return -22;
     unsigned w=0;while(w<=31 && pass[w]){if(pass[w]<32 || pass[w]>126)return -22;w++;}
-    if(w<8 || w>31 || pass[w]!=0)return -22;
+    if(w<5 || w>31 || pass[w]!=0)return -22; /* 默认密码 chaos 为 5 位 */
     unsigned p=lock();
     int changed=!have_credential || strcmp(web_user,"chaos")!=0 || strcmp(web_pass,pass)!=0;
     if(changed){

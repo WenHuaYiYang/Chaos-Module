@@ -23,6 +23,11 @@ struct state {
     uint32_t client_state;int32_t client_fd;
     int32_t error;
     uint16_t cid,mtu;
+    /* 配对重试(桌面栈会先广播 bond=0 快照, 见 on_bond 注释): 4s/次, 至多6次。
+     * bond_addr/bond_order: 043 上建绑定命令要哪种地址序没有设备证据 —— 扫描
+     * 回调序与反转序交替重试, 回调比较跟 bond_addr 走, 谁先配成功用谁。 */
+    uint32_t bond_attempts,bond_retry_at,bond_order;
+    uint8_t bond_addr[6];
     struct bt_probe_device devices[MAX_DEVICES];
 };
 static struct state state={.client_fd=-1,.service_result=-1};
@@ -87,22 +92,28 @@ static void on_device(void *cookie,const uint8_t *data)
 static void on_pair(void *cookie,const uint8_t *address)
 {
     (void)cookie;if(!address)return;uint32_t p=lock();
-    if(state.phase==PAIR && !state.abort && same(address,target))state.pair_reply=1;
+    if(state.phase==PAIR && !state.abort && same(address,state.bond_addr))state.pair_reply=1;
     unlock(p);
 }
 static void on_display(void *cookie,const uint8_t *address,int transport,int kind,uint32_t passkey)
 {
     (void)cookie;(void)kind;if(!address || transport!=1)return;
-    uint32_t p=lock();if(state.phase==PAIR && !state.abort && same(address,target)) {state.passkey=passkey;state.pair_confirm=1;}unlock(p);
+    uint32_t p=lock();if(state.phase==PAIR && !state.abort && same(address,state.bond_addr)) {state.passkey=passkey;state.pair_confirm=1;}unlock(p);
 }
 static void on_bond(void *cookie,const uint8_t *address,int transport,int value)
 {
     (void)cookie;if(!address || transport!=1)return;
     uint32_t p=lock();
-    if(state.phase==PAIR && same(address,target)) {
+    if(state.phase==PAIR && same(address,state.bond_addr)) {
         state.bond=(uint32_t)value;
-        if(value==2 && !state.abort)state.connect_ready=1;
-        else if(value==0 || state.abort){state.phase=IDLE;state.error=-611;state.error_stage=6;}
+        if(value==2 && !state.abort){state.connect_ready=1;state.bond_attempts=0;}
+        else if(value==0 && !state.abort){
+            /* 桌面栈(Windows/BlueZ)在重建配对前会先广播一次"未绑定"快照,
+             * 且配对确认依赖对端用户操作。value==0 不立即判死: 保持 PAIR,
+             * 由 bt_probe_poll 按 bond_retry_at 节流重试(4s/次, 至多6次),
+             * 超限才落 -611; -614(30s) 仍兜底。 */
+        }
+        else {state.phase=IDLE;state.error=-611;state.error_stage=6;}
     }
     unlock(p);
 }
@@ -279,13 +290,14 @@ void bt_probe_connect(void)
     if(prepare())return;uint32_t p=lock();
     if(state.phase==PAIR && state.pair_confirm) {
         state.pair_confirm=0;unlock(p);
-        uint8_t payload[8];memcpy(payload,target,6);payload[6]=payload[7]=1;
+        uint8_t payload[8];memcpy(payload,state.bond_addr,6);payload[6]=payload[7]=1;
         error(request(98,payload,sizeof(payload)));return;
     }
     if((state.phase!=IDLE && state.phase!=SCAN) || !state.count){state.error=-607;unlock(p);return;}
     int scanning=state.phase==SCAN;
     memcpy(target,state.devices[state.selected].address,6);state.phase=PAIR;state.abort=0;state.error=0;state.error_stage=0;
     state.started=state.ticks;state.cid=state.mtu=0;state.bond=state.pair_confirm=state.connect_ready=state.pair_reply=0;
+    state.bond_attempts=0;state.bond_retry_at=0;state.bond_order=0;memset(state.bond_addr,0,6);
     state.bnep=0;state.bnep_code=0xffff;unlock(p);
     if(scanning){p=lock();state.scan_stopped=0;unlock(p);int rc=request(31,0,0);if(rc){pair_error(1,rc);return;}}
     /* Defer bond IPC until the discovery-stopped callback. */
@@ -310,32 +322,35 @@ void bt_probe_poll(void)
         if(!state.scan_seen_start){state.error=-617;state.scan_stage=9;}
     }
     int bond=state.phase==PAIR && state.scan_stopped && !state.bond && !state.abort;
-    if(bond)state.bond=1;
+    if(bond && state.bond_attempts>6){p=lock();state.phase=IDLE;state.error=-611;state.error_stage=6;unlock(p);bond=0;}
+    else if(bond && state.ticks<state.bond_retry_at){bond=0;}
+    if(bond){state.bond=1;state.bond_attempts++;state.bond_retry_at=state.ticks+16;}
     int connect=state.phase==PAIR && state.connect_ready && !state.abort;
     int pair_reply=state.phase==PAIR && state.pair_reply && !state.abort;state.pair_reply=0;
     if(connect){state.phase=CONNECTING;state.connect_ready=0;state.started=state.ticks;}
     if((state.phase==CONNECTING || state.phase==PAIR) && state.ticks-state.started>120)state.error=-614;
     if(state.phase==LINK && state.bnep==BNEP_STATE_WAIT_FOR_CONNECTION_RESPONSE && state.ticks-state.started>40)state.error=-616;
     unlock(p);
-    if(pair_reply){uint8_t payload[7];memcpy(payload,target,6);payload[6]=1;error(request(97,payload,sizeof(payload)));}
+    if(pair_reply){uint8_t payload[7];memcpy(payload,state.bond_addr,6);payload[6]=1;error(request(97,payload,sizeof(payload)));}
     if(bond){
-        /* Match the reference's bondability preflight. Aggregate bond state
-         * may describe an LE bond: query this Classic transport separately. */
-        uint8_t payload[8]={0};memcpy(payload,target,6);payload[6]=1;
-        int pairing=request(92,payload,8);
+        /* 043 实测: cmd 92 的回复对新/旧设备不可区分(未绑定也回"已绑定"),
+         * 不能作为是否发起配对的依据 —— 之前只有先在电脑/手机上手动配过对的
+         * 设备能连上, 就是这个原因。改为连接时总是发起建绑定(94):
+         *   新设备  -> 对端弹配对确认, bond=2 回调后走连接;
+         *   已绑定  -> 栈静默完成(直接 bond=2), 或 94 被拒(rc!=0)时退回直连。
+         * 38/37 只在可用时设置 bondable 模式, 失败不拦路。
+         * 地址序: 建绑定命令要扫描序还是反转序没有设备证据 —— 奇偶次交替,
+         * 回调比较跟 bond_addr 走(bond_attempts 从 1 起: 首次=扫描序)。 */
+        p=lock();
+        if(state.bond_attempts & 1){for(unsigned i=0;i<6;i++)state.bond_addr[i]=target[5-i];state.bond_order=1;}
+        else{memcpy(state.bond_addr,target,6);state.bond_order=0;}
+        unlock(p);
+        int mode=request(38,0,0);
+        if(!mode || (mode>0 && mode<=3)){uint8_t settings[2]={(uint8_t)mode,1};request(37,settings,2);}
+        uint8_t payload[8]={0};memcpy(payload,state.bond_addr,6);payload[6]=1;
+        int rc=request(94,payload,8);
         p=lock();int ipc=state.ipc_result;unlock(p);
-        if(ipc || pairing<0 || pairing>2){pair_error(4,pairing);return;}
-        if(pairing==2){p=lock();state.bond=2;state.connect_ready=1;unlock(p);}
-        else if(pairing==0) {
-            int mode=request(38,0,0);
-            p=lock();ipc=state.ipc_result;unlock(p);
-            if(ipc || mode<0 || mode>3){pair_error(2,mode);return;}
-            uint8_t settings[2]={(uint8_t)mode,1};
-            int rc=request(37,settings,2);
-            if(rc){pair_error(3,rc);return;}
-            rc=request(94,payload,8);
-            if(rc){pair_error(5,rc);return;}
-        } /* pairing==1: already bonding; wait for the matching callback. */
+        if((rc && rc!=-11) || ipc){p=lock();state.bond=2;state.connect_ready=1;unlock(p);}
     }
     if(connect)queue(1);
 }

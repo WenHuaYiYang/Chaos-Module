@@ -7,14 +7,14 @@ pub(crate) const PAGE_WEBSRV_PID: u32 = 33;
 pub(crate) const PAGE_NETINFO_PID: u32 = 34;
 pub(crate) const PAGE_EXP_PID: u32 = 35;
 const PAN_ROWS: usize = 12;
-const WEB_ROWS: usize = 12;
-const INFO_ROWS: usize = 10;
+const WEB_ROWS: usize = 9; /* 0开关 1状态 2地址 3用户名 4密码 5设置密码 6btpan跳转 7统计 8诊断 */
+const DEV_FIRST: usize = 6; /* 设备行 6..11, 扫到几台显示几台, 其余隐藏 */
+const DEV_SLOTS: usize = 6;
+const DEV_LAST: usize = DEV_FIRST + DEV_SLOTS - 1;
 const ROW_CAP: usize = fw_api::MAX_ROWS_PER_PAGE;
-const WEB_PASSWORD_FIRST: usize = 4;
-const WEB_PASSWORD_ROWS: usize = 4;
-const WEB_PASSWORD_CHUNK: usize = 8;
-const WEB_SET_PASSWORD: usize = 8;
-const WEB_BTPAN: usize = 9;
+const WEB_SET_PASSWORD: usize = 5;
+const WEB_BTPAN: usize = 6;
+const INFO_ROWS: usize = 10;
 const _: () = assert!(PAN_ROWS <= ROW_CAP && WEB_ROWS <= ROW_CAP && INFO_ROWS <= ROW_CAP);
 
 #[repr(C)]
@@ -76,9 +76,11 @@ unsafe extern "C" fn net_worker_entry(_argc: i32, _argv: *mut *mut u8) -> i32 {
         fw_api::nsh_usleep(if view.enabled != 0 || chaos_httpd_enabled() != 0 { 20_000 } else { 100_000 });
     }
 }
-/// Lazy resident worker. Both services start disabled; no default password.
+/// Lazy resident worker. Services start disabled; default account chaos/chaos
+/// (RAM-only, cleared on reboot — 设置密码可覆盖, 5～31 位)。
 pub(crate) fn ensure_worker() {
     if WORKER_STARTED.swap(true, Ordering::AcqRel) { return; }
+    unsafe { chaos_net_set_credentials(b"chaos\0".as_ptr(), b"chaos\0".as_ptr()); }
     let pid = unsafe { fw_api::nsh_spawn(b"chaos.net\0".as_ptr(), net_worker_entry, core::ptr::null_mut()) };
     WORKER_ERROR.store(if pid > 0 { 0 } else { pid.min(-1) }, Ordering::Release);
     if pid <= 0 { WORKER_STARTED.store(false, Ordering::Release); }
@@ -104,8 +106,9 @@ static mut INFO_DIAG_CONTENT: u32 = 0;
 static mut INFO_DIAG_ANCHOR: u32 = 0;
 static mut INFO_DIAG_TEXT: [u8; 1024] = [0; 1024];
 static mut UPDATING: bool = false;
-static mut PEER_PAGE: usize = 0;
-static mut SHOWN: [Option<(u32, [u8;6])>; 4] = [None;4];
+static mut SHOWN: [Option<(u32, [u8;6])>; DEV_SLOTS] = [None;DEV_SLOTS];
+static mut DEV_BUILT: usize = 0;      /* 当前已创建的设备行数(动态创建/删除) */
+static mut DEV_SIG: [[u8;6]; DEV_SLOTS] = [[0;6];DEV_SLOTS];
 static mut WEB_HINT: &[u8] = b"\0";
 // UI-only target. published.enabled may lag several taps/worker polls. Keep
 // the latest target even after matching a snapshot: older queued enable
@@ -169,12 +172,28 @@ unsafe fn status_text(v: &NetworkView, out: &mut [u8]) {
         if v.error != 0 {
             w.s(" · ".as_bytes()).s(error_stage(v.error_stage));
             let mut d: BtDiagnostics = core::mem::zeroed(); bt_probe_diagnostics(&mut d);
-            if v.error_stage == 1 && d.ipc_result != 0 { w.s("IPC失败 ".as_bytes()); }
+            if v.error == -611 { w.s("对端未完成配对，请在电脑/手机上确认配对请求 ".as_bytes()); }
+            else if v.error_stage == 1 && d.ipc_result != 0 { w.s("IPC失败 ".as_bytes()); }
             else if v.error_stage == 1 && d.service_result > 0 { w.s("服务拒绝 ".as_bytes()); }
             else { w.s("错误 ".as_bytes()); }
             signed(&mut w, v.error);
         } } w.end();
 }
+/// 行删除: 设备行不占位、不隐藏 —— 扫到几台创建几行, 设备没了整行删掉。
+/// (HIDDEN flag 对 obj_align_to 手动定位的行不会引起重排, 必须真删。)
+unsafe fn delete_device_rows() {
+    let page = &mut PAGES[PAGE_BTPAN_PID as usize];
+    for slot in DEV_FIRST..=DEV_LAST {
+        let row = page.rows[slot];
+        if row != 0 {
+            fw_api::obj_delete(row);
+            page.rows[slot] = 0;
+            PAN_CACHE.valid[slot] = false;
+        }
+    }
+    DEV_BUILT = 0;
+}
+
 unsafe fn refresh_pan() {
     let (v, _) = snapshot(); let mut text = [0u8;128];
     set_row(PAGE_BTPAN_PID,0,"启用btpan\0".as_bytes(),b"\0",pan_selected(&v));
@@ -186,23 +205,45 @@ unsafe fn refresh_pan() {
     else { w.s("收到请求后核对配对码".as_bytes()); } w.end();
     set_row(PAGE_BTPAN_PID,4,"确认配对\0".as_bytes(),&text,false);
     set_row(PAGE_BTPAN_PID,5,"连接信息\0".as_bytes(),"IP、网关、DNS、MAC\0".as_bytes(),false);
-    let count = (v.count as usize).min(16); let pages = ((count + 3) / 4).max(1); PEER_PAGE = PEER_PAGE.min(pages-1);
-    for row in 0..4 { let index = PEER_PAGE*4 + row;
-        if index < count { let peer = &v.peers[index]; SHOWN[row] = Some((index as u32,peer.device.address));
-            let mut w = crate::text::W::new(text.as_mut_ptr(),text.len()); mac_text(&peer.device.address,true,&mut w); w.c(b' '); signed(&mut w,peer.device.rssi as i32); w.s(b" dBm"); w.end();
-            let name = if peer.device.name[0] == 0 { "未命名设备\0".as_bytes() } else { &peer.device.name }; set_row(PAGE_BTPAN_PID,6+row,name,&text,false);
-        } else { SHOWN[row] = None; set_row(PAGE_BTPAN_PID,6+row,"暂无设备\0".as_bytes(),"仅显示支持网络共享的设备\0".as_bytes(),false); }
+    /* 设备列表: 一台设备一行, 动态创建/删除 —— 没有设备就没有卡片, 不留空位。 */
+    let count = (v.count as usize).min(16);
+    let shown = count.min(DEV_SLOTS);
+    let mut sig = [[0u8;6]; DEV_SLOTS];
+    for i in 0..shown { sig[i] = v.peers[i].device.address; }
+    let stale = DEV_BUILT != shown || (0..shown).any(|i| DEV_SIG[i] != sig[i]);
+    if stale {
+        delete_device_rows();
+        if shown > 0 {
+            let ctx = PageCtx {
+                content: PAGES[PAGE_BTPAN_PID as usize].content,
+                title: PAGES[PAGE_BTPAN_PID as usize].title,
+                rows: core::ptr::addr_of_mut!(PAGES[PAGE_BTPAN_PID as usize].rows) as *mut u32,
+            };
+            let mut prev = PAGES[PAGE_BTPAN_PID as usize].rows[DEV_FIRST - 1];
+            for i in 0..shown {
+                let r = build_row(&ctx, prev, DEV_FIRST + i, &RowSpec::tap(b" \0", b" \0".as_ptr()));
+                if r == 0 { break; }
+                prev = r; DEV_BUILT = i + 1;
+            }
+        }
+        DEV_SIG = sig;
     }
-    let mut w = crate::text::W::new(text.as_mut_ptr(),text.len()); w.n((PEER_PAGE+1) as u32).c(b'/').n(pages as u32).s(" 页 · ".as_bytes()).n(count as u32).s(" 个设备".as_bytes()); w.end();
-    set_row(PAGE_BTPAN_PID,10,"上一页\0".as_bytes(),&text,false); set_row(PAGE_BTPAN_PID,11,"下一页\0".as_bytes(),&text,false);
+    for i in 0..DEV_SLOTS {
+        if i < DEV_BUILT {
+            let peer = &v.peers[i]; SHOWN[i] = Some((i as u32, peer.device.address));
+            let mut w = crate::text::W::new(text.as_mut_ptr(),text.len()); mac_text(&peer.device.address,true,&mut w); w.c(b' '); signed(&mut w,peer.device.rssi as i32); w.s(b" dBm"); w.end();
+            let name = if peer.device.name[0] == 0 { "未命名设备\0".as_bytes() } else { &peer.device.name }; set_row(PAGE_BTPAN_PID,DEV_FIRST+i,name,&text,false);
+        } else { SHOWN[i] = None; }
+    }
 }
 pub(crate) struct BtpanPage;
 pub(crate) static PAGE_BTPAN_P: BtpanPage = BtpanPage;
 impl crate::page::Page for BtpanPage {
     fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "btpan联网\0".as_bytes()); } }
     fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
-        ensure_worker(); PAN_CACHE = RowCache::EMPTY; SHOWN = [None;4]; let mut prev = ctx.title;
-        for slot in 0..PAN_ROWS { let spec = if slot == 0 { RowSpec::switch("启用btpan\0".as_bytes()) } else if slot == 1 { RowSpec::display(b" \0", b" \0".as_ptr()) } else { RowSpec::tap(b" \0", b" \0".as_ptr()) };
+        ensure_worker(); PAN_CACHE = RowCache::EMPTY; SHOWN = [None;DEV_SLOTS];
+        DEV_BUILT = 0; DEV_SIG = [[0;6];DEV_SLOTS]; let mut prev = ctx.title;
+        for slot in 0..DEV_FIRST { let spec = if slot == 0 { RowSpec::switch("启用btpan\0".as_bytes()) } else if slot == 1 { RowSpec::display(b" \0", b" \0".as_ptr()) } else { RowSpec::tap(b" \0", b" \0".as_ptr()) };
             prev = build_row(ctx,prev,slot,&spec); if prev == 0 { return Err(PageError::RowFailed(slot)); } } refresh_pan(); Ok(())
     } }
     fn is_switch_row(&self, idx: usize) -> bool { idx == 0 }
@@ -213,11 +254,11 @@ impl crate::page::Page for BtpanPage {
     fn on_click(&self, idx: usize) { unsafe {
         if UPDATING || !interactive_row(PAGE_BTPAN_PID,idx) { return; } let (v,_) = snapshot();
         match idx {
-            2 => { PEER_PAGE = 0; if !pan_selected(&v) { request_pan(true,&v); } else if WORKER_STARTED.load(Ordering::Acquire) { chaos_pan_scan(); } }
+            2 => { if !pan_selected(&v) { request_pan(true,&v); } else if WORKER_STARTED.load(Ordering::Acquire) { chaos_pan_scan(); } }
             3 => chaos_pan_disconnect(), 4 if v.phase == 4 => chaos_pan_pair_confirm(),
             5 => { nav_goto(PAGE_NETINFO_PID,0); return; }
-            6..=9 if pan_selected(&v) && WORKER_STARTED.load(Ordering::Acquire) => if let Some((index,address)) = SHOWN[idx-6] { if index < v.count.min(16) && v.peers[index as usize].device.address == address { chaos_pan_connect(index); } },
-            10 => PEER_PAGE = PEER_PAGE.saturating_sub(1), 11 => PEER_PAGE = (PEER_PAGE+1).min(3), _ => {}
+            DEV_FIRST..=DEV_LAST if pan_selected(&v) && WORKER_STARTED.load(Ordering::Acquire) => { let row = idx - DEV_FIRST; if let Some((index,address)) = SHOWN[row] { if index < v.count.min(16) && v.peers[index as usize].device.address == address { chaos_pan_connect(index); } } }
+            _ => {}
         } refresh_pan();
     } }
     fn needs_tick(&self) -> bool { true }
@@ -272,7 +313,7 @@ impl crate::page::Page for NetInfoPage {
 pub(crate) unsafe fn save_web_password(password:*const u8)->bool {
     if password.is_null() {return false;} let mut n=0;
     while n<=31 { let c=read_volatile(password.add(n)); if c==0 {break;} if !(0x20..=0x7e).contains(&c) {return false;} n+=1; }
-    if !(8..=31).contains(&n) {return false;}
+    if !(5..=31).contains(&n) {return false;}
     let mut user=[0u8;32]; let mut previous=[0u8;65];
     if chaos_web_credentials(user.as_mut_ptr(),32,previous.as_mut_ptr(),65)==0
         && cbytes(&previous)==core::slice::from_raw_parts(password,n) {
@@ -290,21 +331,14 @@ unsafe fn refresh_web() {
     let status=if err!=0 {"网络任务启动失败\0".as_bytes()} else if WEB_HINT[0]!=0 {WEB_HINT} else if !enabled {"已关闭\0".as_bytes()} else if ip.ready==0 {"等待btpan获取IP\0".as_bytes()} else if http.listening!=0 {"运行中\0".as_bytes()} else {"正在启动\0".as_bytes()};
     set_row(PAGE_WEBSRV_PID,1,"状态\0".as_bytes(),status,false); let mut text=[0u8;128]; let mut addr=[0u8;20];ip_text(&ip.ip,&mut addr);
     let mut w=crate::text::W::new(text.as_mut_ptr(),text.len()); if ip.ready!=0 {w.s(b"http://").s(cbytes(&addr)).c(b'/');} else {w.s("连接btpan后显示地址".as_bytes());}w.end();
-    set_row(PAGE_WEBSRV_PID,2,"访问地址\0".as_bytes(),&text,false); set_row(PAGE_WEBSRV_PID,3,"用户名\0".as_bytes(),b"chaos\0",false);
-    // Native list labels are single-line. Put at most eight password bytes
-    // in each full-width primary label, never ellipsize a 31-byte password.
-    let password=cbytes(&password); let segments=(password.len()+WEB_PASSWORD_CHUNK-1)/WEB_PASSWORD_CHUNK;
-    for part in 0..WEB_PASSWORD_ROWS {
-        let start=part*WEB_PASSWORD_CHUNK; let end=(start+WEB_PASSWORD_CHUNK).min(password.len());
-        let mut title=[0u8;9]; let mut w=crate::text::W::new(text.as_mut_ptr(),text.len());
-        if has_password && start<end {title[..end-start].copy_from_slice(&password[start..end]);w.s("密码 ".as_bytes()).n((part+1) as u32).c(b'/').n(segments as u32).s(" 段 · 第".as_bytes()).n((start+1) as u32).c(b'-').n(end as u32).s("位".as_bytes());}
-        else if !has_password && part==0 {title[0]=b'-';w.s("请先设置密码".as_bytes());}
-        else {title[0]=b'-';w.s("密码无后续字符".as_bytes());}w.end();
-        set_row(PAGE_WEBSRV_PID,WEB_PASSWORD_FIRST+part,&title,&text,false);
-    }
-    set_row(PAGE_WEBSRV_PID,WEB_SET_PASSWORD,"设置密码\0".as_bytes(),"8～31位英文、数字或符号\0".as_bytes(),false); set_row(PAGE_WEBSRV_PID,WEB_BTPAN,"btpan联网\0".as_bytes(),"连接或查看网络信息\0".as_bytes(),false);
-    let mut w=crate::text::W::new(text.as_mut_ptr(),text.len());w.n(http.clients).s(" 个连接 · ".as_bytes()).n(http.requests).s(" 个请求".as_bytes());w.end(); set_row(PAGE_WEBSRV_PID,10,"访问统计\0".as_bytes(),&text,false);
-    let mut w=crate::text::W::new(text.as_mut_ptr(),text.len());signed(&mut w,http.last_error);w.s(" · 失败 ".as_bytes()).n(http.failures).s(" · 拒绝 ".as_bytes()).n(http.refused);w.end(); set_row(PAGE_WEBSRV_PID,11,"服务诊断\0".as_bytes(),&text,false);
+    set_row(PAGE_WEBSRV_PID,2,"访问地址\0".as_bytes(),&text,false);
+    let username=if has_password {cbytes(&user)} else {"chaos\0".as_bytes()};
+    set_row(PAGE_WEBSRV_PID,3,"用户名\0".as_bytes(),username,false);
+    /* 密码单行整显(单行标签放不下长密码时会截断, 重进页面/重新输入可再看)。 */
+    set_row(PAGE_WEBSRV_PID,4,"密码\0".as_bytes(),if has_password {cbytes(&password)} else {"chaos\0".as_bytes()},false);
+    set_row(PAGE_WEBSRV_PID,WEB_SET_PASSWORD,"设置密码\0".as_bytes(),"5～31位英文、数字或符号\0".as_bytes(),false); set_row(PAGE_WEBSRV_PID,WEB_BTPAN,"btpan联网\0".as_bytes(),"连接或查看网络信息\0".as_bytes(),false);
+    let mut w=crate::text::W::new(text.as_mut_ptr(),text.len());w.n(http.clients).s(" 个连接 · ".as_bytes()).n(http.requests).s(" 个请求".as_bytes());w.end(); set_row(PAGE_WEBSRV_PID,7,"访问统计\0".as_bytes(),&text,false);
+    let mut w=crate::text::W::new(text.as_mut_ptr(),text.len());signed(&mut w,http.last_error);w.s(" · 失败 ".as_bytes()).n(http.failures).s(" · 拒绝 ".as_bytes()).n(http.refused);w.end(); set_row(PAGE_WEBSRV_PID,8,"服务诊断\0".as_bytes(),&text,false);
 }
 pub(crate) struct WebSrvPage;
 pub(crate) static PAGE_WEBSRV_P:WebSrvPage=WebSrvPage;
@@ -319,7 +353,7 @@ impl crate::page::Page for WebSrvPage {
     fn on_switch(&self,idx:usize) {unsafe{ if idx!=0 || UPDATING || !interactive_row(PAGE_WEBSRV_PID,idx) {return;} WEB_HINT=b"\0";
         if chaos_httpd_enabled()!=0 {chaos_httpd_set_enable(0); if chaos_httpd_enabled()!=0 {WEB_HINT="停止请求未生效，请重试\0".as_bytes();}} else {
             let mut user=[0u8;32];let mut pass=[0u8;65];
-            if chaos_web_credentials(user.as_mut_ptr(),32,pass.as_mut_ptr(),65)!=0 {WEB_HINT="请先设置8～31位密码\0".as_bytes();}
+            if chaos_web_credentials(user.as_mut_ptr(),32,pass.as_mut_ptr(),65)!=0 {WEB_HINT="请先设置5～31位密码\0".as_bytes();}
             else {ensure_worker(); if WORKER_STARTED.load(Ordering::Acquire) {chaos_httpd_set_enable(1);if chaos_httpd_enabled()==0 {WEB_HINT="启动请求未生效，请重试\0".as_bytes();}}}
         }
         WEB_CACHE.valid[0]=false;refresh_web();
