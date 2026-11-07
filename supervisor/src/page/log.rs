@@ -177,7 +177,7 @@ unsafe fn log_page_load() {
     }
 
     if count != 0 {
-        t.put_bytes(concat!("v", env!("CARGO_PKG_VERSION"), ".dev · 共 ").as_bytes());
+        t.put_bytes(concat!("v", env!("CARGO_PKG_VERSION"), " · 共 ").as_bytes());
         t.put_num(count as u32);
         t.put_bytes(" 行".as_bytes());
         t.newline();
