@@ -14,6 +14,9 @@ const MAGIC: &[u8; 4] = b"BRG1";
 
 static mut LOADED: u32 = 0;
 static mut ENABLED: u32 = 0;
+// BRIDGE_STATE 的“停止待执行”值：快速 关→开→关 时，最后一步不能把 0
+// 写回去，否则 tick 会以为“本来就没运行”而跳过 stop。
+const STATE_STOP: u32 = 0xFFFF_FFFE;
 
 extern "C" {
     fn chaos_bridge_start() -> i32;
@@ -69,9 +72,9 @@ pub(crate) unsafe fn toggle() -> bool {
     ENABLED = if on { 1 } else { 0 };
     save(on);
     // 打开时清 0，允许从停止/失败状态重新 start。
-    // 关闭时不能清 0：tick 需要看到“原先在运行”的 1，才能调用 stop；
-    // 清 0 会让 stop 分支永远不成立，桥会继续处理 L2 0x43。
-    if on { st_wr!(BRIDGE_STATE, 0); }
+    // 关闭时写“停止待执行”，即使快速 关→开→关 也能让 tick 最终 stop；
+    // 不能清 0，否则 tick 会跳过 stop，桥继续处理 L2 0x43。
+    st_wr!(BRIDGE_STATE, if on { 0 } else { STATE_STOP });
     on
 }
 
@@ -90,8 +93,8 @@ pub(crate) unsafe fn tick() {
             });
         }
     } else if state != 0 {
-        // 1 = 正在运行；0xffffffff = 上次启动失败。两种非零状态都收尾，
-        // stop 本身幂等，失败状态也顺手清回 0。
+        // 非 0 都收尾：1=运行，0xffffffff=启动失败，0xfffffffe=停止待执行。
+        // stop 本身幂等，失败/待停止状态都顺手清回 0。
         chaos_bridge_stop();
         st_wr!(BRIDGE_STATE, 0);
         log::line("文件桥: 已关闭");
