@@ -62,7 +62,7 @@ STYLE_CHANGED=0x2D：`refresh_style` 的 `0x47100/0x47160` 发送。
 `0x200D1134`（详情）和 `0x200D10C0`（聚合）。对应 initializer 位于
 `0xD0D7AC`、`0xD0D738`，名字为 `page_detail` 和 `page_aggregation`。
 
-| 字段 | 聚合页 | 详情页（不属于此图标 hook 的扫描范围） |
+| 字段 | 聚合页 | 详情页（只读图标 root，不接管背景） |
 |---|---|---|
 | `+0x14` 复合键 | `0x00140001` | `0x00140000` |
 | `+0x30` 当前 root | 初始 0，由页面框架设置/清理 | 同左 |
@@ -80,7 +80,9 @@ STYLE_CHANGED=0x2D：`refresh_style` 的 `0x47100/0x47160` 发送。
 后续 `0x9AB52C` 删除对象，`0x9AB538` 清 root。
 
 因此，在调用方保证 UI owner、非事件派发栈、原生 idle 的前提下，可以每拍从
-已核对的 home 通知根和聚合页 descriptor 重新发现晚建/重建对象，不必改写 create 槽。
+已核对的 home 通知根、聚合页和详情页 descriptor 重新发现晚建/重建对象，不必改写 create 槽。
+详情页只用于替换 `no_message` 图源；`background_pages` 仍不接管详情页背景，
+避免把固件自己的黑色内容容器改成黑块。
 聚合页最低检查包含复合键匹配、root 非零且在可写指针范围、状态 `+0x28 != 4`。
 这仍不是任意线程上的存活证明：DELETE 派发期间 descriptor 的 root 尚未清零；
 指针范围检查本身也不能防止 UAF。root/image 的 DELETE 回调与代际 token 台账仍然必要。

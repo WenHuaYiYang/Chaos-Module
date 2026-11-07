@@ -1,4 +1,4 @@
-//! 模糊 v2 独立的 no_message.bin 图源 owner（p67 / 3.101.043）。
+//! Corona 模糊开关附带的 no_message.bin 图源 owner（p67 / 3.101.043）。
 //! 只用旧版 empty_image 的纯黑 palette → alpha=0 处理；不启动旧版背景 worker。
 //! 所有图源写入都发生在 background_home 的亮屏、native-idle UI tick 中。
 
@@ -172,10 +172,14 @@ pub(crate) unsafe fn tick(wanted: bool) -> bool {
     found && complete
 }
 
-unsafe fn notification_roots() -> [u32; 2] {
-    // 每拍重新获取当前根，既覆盖主通知中心，也覆盖独立的通知聚合页和
-    // 晚建占位图；不改 create 槽，避免抢占 Corona/旧版的页面回调。
+unsafe fn notification_roots() -> [u32; 3] {
+    // 每拍重新获取当前根：home 的通知根、通知聚合页、通知详情页。
+    // 详情页不接管背景（见 background_pages），但无通知时的占位图标在详情页，
+    // 必须单独覆盖，否则它会保留 no_message 的黑色背景。
     let home = fw_api::background_home_targets().map(|roots| roots[3]).unwrap_or(0);
     let page = fw_api::background_notification_page_root();
-    [home, if page != home { page } else { 0 }]
+    let detail = fw_api::background_notification_detail_root();
+    [home,
+     if page != home { page } else { 0 },
+     if detail != home && detail != page { detail } else { 0 }]
 }

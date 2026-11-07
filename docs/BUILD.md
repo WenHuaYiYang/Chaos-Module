@@ -70,13 +70,12 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 ## 版本号规则
 
-一个版本号出现在三个地方，必须同时改：
+一个版本号出现在两个地方，必须同时改：
 
 | 位置 | 形式 | 说明 |
 |---|---|---|
 | `tools/p67_pack.py` 的 `VERSION` | `0x000X0Y0Z` | 容器头版本，`0x00010003` = **v1.0.3**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
-| `supervisor/src/page.rs` 关于页 | 字符串 `vX.Y.Z` | 用户能看到的版本 |
-| `supervisor/Cargo.toml` 的 `version` | `X.Y.Z` | 与上面保持一致 |
+| `supervisor/Cargo.toml` 的 `version` | `X.Y.Z` | 关于页通过 `env!("CARGO_PKG_VERSION")` 自动读取，无需手改 |
 
 改完补 `docs/CHANGELOG.md`，再跑一次构建。
 

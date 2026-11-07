@@ -23,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 
 const MAGIC = 0x1234a55a;
-const VERSION = 0x00010007;
+const VERSION = 0x00010104;
 const HDR = 0xa8;
 const PAIR_OFF = 0xa8;
 const PAIRS = 11;

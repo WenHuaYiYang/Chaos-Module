@@ -57,8 +57,6 @@ unsafe fn emit(prefix: &[u8], pkg: *const u8, num: Option<u32>) {
 }
 
 pub(crate) unsafe fn line(s: &str) { emit(s.as_bytes(), core::ptr::null(), None); }
-pub(crate) unsafe fn bytes(b: &[u8]) { emit(b, core::ptr::null(), None); }
-
 /// 写一个 NUL 结尾的 C 串(不把 NUL 写进文件)。
 pub(crate) unsafe fn cstr(p: *const u8) { emit(b"", p, None); }
 

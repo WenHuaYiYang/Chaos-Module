@@ -27,11 +27,24 @@ Chaos-Module/
 ├── supervisor/                  内核模块（Rust, no_std）
 │   ├── src/
 │   │   ├── lib.rs               crate 根：chaos_ctor/dtor、panic handler、isr 入口
-│   │   ├── page.rs              19 个页面实现 + PAGE_TABLE
-│   │   ├── ui.rs                页面框架、行控件、事件分发、页面存活判定
+│   │   ├── page.rs              页面框架：Page trait、行/按钮构建器、PAGE_TABLE
+│   │   ├── page/                页0..31，按功能分组
+│   │   ├── btpan.rs             页32..35：BTPAN、网页服务器、连接信息、实验性功能
+│   │   │   ├── home.rs          页 0 主页与实时状态
+│   │   │   ├── appmgr.rs        页 1/29/30 应用管理 UI
+│   │   │   ├── time.rs          页 2/3 时间与日期
+│   │   │   ├── beautify.rs      页 4/5/6/7/13/15/28 美化
+│   │   │   ├── watchface.rs     页 8/9/10 表盘
+│   │   │   ├── settings.rs      页 11/12/14/16/19 设置类
+│   │   │   ├── log.rs           页 17 运行日志
+│   │   │   ├── about.rs         页 18/20/21 关于与许可
+│   │   │   ├── system.rs        页 22/24/25/26/27 系统关于
+│   │   │   └── keyboard.rs      页 23 键盘页面包装
+│   │   ├── ui.rs                页面运行时：建页、事件分发、页面存活判定
 │   │   ├── state.rs             全局常量、页描述、槽位、静态变量
 │   │   ├── ipc.rs               /dev/chaos：命令、状态块、字体/设置投递
-│   │   ├── appmgr.rs            应用管理：隐藏/显示、排除项、两种模式
+│   │   ├── appmgr.rs            应用管理共享状态与对外 API
+│   │   ├── appmgr/              应用管理实现：json/registry/excl/mode/rewrite/detail/ops
 │   │   ├── fw_api.rs            fw_api 入口（re-export）
 │   │   ├── fw_api/              已验证固件 API 封装 + 地址表
 │   │   ├── font_*.rs            字体清单、切换、热替换
@@ -54,12 +67,24 @@ Chaos-Module/
 
 ## 页面模型
 
-- `PAGE_TABLE: [&dyn Page; 19]`（`page.rs`）—— 页号 0..18，`PAGE_COUNT` 与 `MAX_PID` 都从它派生。
+- `PAGE_TABLE: [&dyn Page; 36]`（`page.rs`）—— 页号 0..35，`PAGE_COUNT` 与 `MAX_PID` 都从它派生；页0..31 在 `page/` 子模块，32..35 在 `btpan.rs`。
 - 每个页面实现 `Page`：`fill_title` / `render` / `on_click(ctx, idx)` / 可选的 resume、destroy 钩子。
 - 行控件由 `build_rows(ctx, title, specs)` 统一建立，每行一个 LVGL 对象；行事件按**视图下标**派发，
   页面用 `match idx` 或 `idx >= N && idx < view_count()` 自守边界。
 - 页面存活用 `page_is_live(pid)`（读固件页描述符 +0x30）判定，所有渲染/分发路径都要先过这道门。
 - 句柄作废只在 `on_ui_destroy`：固件递归删对象前会回调，之后 `PAGES[pid]` 的指针全部清零。
+
+### 模块边界
+
+```text
+page.rs / page/*        页面渲染与事件；只通过 ui、fw_api 和领域服务工作
+ui.rs                   页面运行时：建页、分发、生命周期
+appmgr.rs / appmgr/*    应用管理服务：状态、持久化、隐藏/显示、卸载
+fw_api.rs / fw_api/*    固件 ABI 封装与地址表
+state.rs                全局页描述、槽位和跨模块状态
+```
+
+页面模块之间不直接调用彼此的私有实现；跨页共享的只有 `page.rs` 的框架和显式 `pub(crate)` 常量。应用管理页面只调用 `crate::appmgr` 的对外函数，不直接读它的静态缓冲区。
 
 ## IPC：`/dev/chaos`
 
@@ -114,6 +139,17 @@ Chaos 直接调用固件里已静态核对的函数地址（`supervisor/src/fw_a
 - 不做 `rmmod`：注册链上的条目会悬空（详见 [INSTALL.md](INSTALL.md#卸载与回退)）。
 - 无固件指纹校验：装错固件时模块可能加载失败或崩溃。
 - 单核、无 MMU 保护：越界写就是 HardFault，没有恢复机会。
+
+## 原生文件桥
+
+`supervisor/bridge/` 内置一个最小 CanopusConnect 兼容端，让 AstroBox 插件直接连接 Chaos：
+
+- `bridge.c`：CPC2 ConnectListen/Send/Message、L2 0x43 加密队列、owner timer
+- `band_files_embed.c`：原 `band_files` 文件协议，跑在 fake `canopus_context_v1` 上
+- `canopus_protocol.c` / `canopus_abi.h` / `canopus_services.h`：冻结的协议/ABI 头
+
+它不包含 Canopus 的 registry、descriptor、安装器或 Manager RPC。启动入口是维护定时器 `chaos_shake_timer` 里的
+`chaos_bridge_start()`（UI owner 就绪后）。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。
 
 ## 相关文档
 
