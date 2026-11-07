@@ -425,3 +425,49 @@ fn nsh_draft_survives_cancel_and_other_settings_but_success_clears_it() {
         assert_eq!(input(), b"initial draft");
     }
 }
+
+#[test]
+fn web_password_is_lowercase_supports_symbols_and_stops_at_31_bytes() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        let (parent, _, _) = setup(Completion::WebPassword);
+        assert_eq!(title(), "网页服务器密码\0".as_bytes());
+        assert!(!UPPERCASE);
+        assert_eq!(capacity(), 31);
+        for c in b"pass word" { press(*c as u32); }
+        press(KEY_SYMBOLS);
+        assert!(SYMBOL_MODE);
+        assert!(render(parent));
+        for c in b"!@#$%" { press(*c as u32); }
+        assert_eq!(input(), b"pass word!@#$%");
+        for _ in 0..40 { press(b'x' as u32); }
+        assert_eq!(LENGTH, 31);
+        assert_eq!(TEXT[31], 0);
+        assert_eq!(mock::object(INPUT_LABEL).text, input()[11..]);
+        press(KEY_DONE);
+        assert_eq!(mock::with(|ui| ui.saves.last().cloned()), Some((5, input())));
+        assert_eq!(mock::with(|ui| ui.back_count), 1);
+    }
+}
+
+#[test]
+fn invalid_web_password_stays_in_editor_and_valid_save_is_not_repeated() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        setup(Completion::WebPassword);
+        press(KEY_DONE);
+        assert!(mock::with(|ui| ui.saves.is_empty()));
+        for c in b"short" { press(*c as u32); }
+        press(KEY_DONE);
+        assert_eq!(mock::with(|ui| ui.back_count), 0);
+        assert_eq!(input(), b"short");
+        for c in b"123" { press(*c as u32); }
+        press(KEY_DONE);
+        press(KEY_DONE);
+        assert_eq!(mock::with(|ui| ui.back_count), 1);
+        assert_eq!(mock::with(|ui| ui.saves.clone()),
+                   [(5, b"short".to_vec()), (5, b"short123".to_vec())]);
+        open(core::ptr::null(), Completion::NshCommand);
+        assert!(input().is_empty(), "password must never be saved as an NSH draft");
+    }
+}

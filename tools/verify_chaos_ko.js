@@ -12,6 +12,7 @@ if (!path) { console.error('usage: node verify_chaos_ko.js <ko>'); process.exit(
 const data = fs.readFileSync(path);
 
 if (data.toString('latin1', 0, 4) !== '\x7fELF') throw new Error('not ELF');
+if (data[4] !== 1 || data[5] !== 1 || data[6] !== 1) throw new Error('expected ELF32 little-endian v1');
 if (data.readUInt16LE(16) !== 1) throw new Error('not ET_REL');
 if (data.readUInt16LE(18) !== 40) throw new Error('not ARM');
 const eEntry = data.readUInt32LE(24);
@@ -21,6 +22,7 @@ const shoff = data.readUInt32LE(32);
 const shentsize = data.readUInt16LE(46);
 const shnum = data.readUInt16LE(48);
 const shstrndx = data.readUInt16LE(50);
+if (shentsize !== 40 || shstrndx === 0 || shstrndx >= shnum || shoff + shnum * shentsize > data.length) throw new Error('invalid section table');
 const shstrOff = data.readUInt32LE(shoff + shstrndx * shentsize + 16);
 
 const secs = {};
@@ -50,14 +52,17 @@ if (secs['.symtab']) {
     if (shndx === 0) {
       let end = strtab.indexOf(0, sn);
       const nm2 = strtab.toString('latin1', sn, end);
-      if (nm2 && !nm2.startsWith('__') && nm2 !== 'rust_begin_unwind') undef.push(nm2);
+      if (nm2) undef.push(nm2);
     }
   }
 }
 console.log('未定义符号:', undef.length ? undef : '无 (OK)');
+if (!secs['.symtab'] || undef.length) throw new Error('unresolved symbols cannot be loaded by Chaos');
+if (!secs['.text'] || !secs['.text'].size) throw new Error('missing merged .text');
 
 const init = Object.keys(secs).filter((n) => n.startsWith('.init_array'));
 console.log('init_array:', init.length ? init.map((n) => [n, secs[n].size]) : '无!');
+if (!init.some((n) => secs[n].size >= 4)) throw new Error('missing module constructor');
 
 const rel = Object.keys(secs).filter((n) => n.startsWith('.rel'));
 const types = {};
@@ -70,3 +75,6 @@ for (const n of rel) {
   }
 }
 console.log('重定位类型:', types);
+if (!Object.keys(types).length || Object.keys(types).some((t) => ![2, 10, 30, 42, 47, 48].includes(Number(t)))) throw new Error('unexpected ARM relocation type');
+const allocated = Object.fromEntries(Object.entries(secs).filter(([, s]) => s.flags & 2).map(([n, s]) => [n, s.size]));
+console.log('静态加载内存（不含任务栈、动态堆、加载器开销）:', Object.values(allocated).reduce((a, b) => a + b, 0), 'bytes', allocated);

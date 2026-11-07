@@ -152,7 +152,7 @@ pub static PAGE_FETCH: [u8; 6] = *b"fetch\0";
 /// 页20: 关于 -> 开放源代码许可列表。
 pub static PAGE_LICENSES: [u8; 8] = *b"license\0";
 
-/// 页21: Corona AGPL-3.0-only / MIBAND10PRO-TUNMODULE MPL-2.0 许可正文；解析键沿用旧名。
+/// 页21: 第三方许可正文（AGPL / MPL / MIT / BSD）；解析键沿用旧名。
 pub static PAGE_LICENSE_MPL: [u8; 8] = *b"mpl2lic\0";
 
 /// 页22: 设置 -> 系统关于页面修改 -> 系统版本显示。三个预设与自定义入口。
@@ -185,9 +185,16 @@ pub static PAGE_BATCH: [u8; 6] = *b"batch\0";
 /// 页31: 主页 -> 独立 NSH 终端。
 pub static PAGE_NSH: [u8; 9] = *b"terminal\0";
 
+/// 页32: 主页 -> btpan联网(BT PAN + lwip; 见 btpan.rs / network/)。
+pub static PAGE_BTPAN: [u8; 7] = *b"btpan\0\0";
+
+/// 页33: 主页 -> 网页服务器(chaos_httpd; 见 btpan.rs / network/web/)。
+pub static PAGE_WEBSRV: [u8; 8] = *b"websrv\0\0";
+pub static PAGE_NETINFO: [u8; 8] = *b"netinfo\0";
+
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 32;                   // 注册页数(页0..页31)
+pub const PAGE_COUNT: usize = 35;                   // 注册页数(页0..页34)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

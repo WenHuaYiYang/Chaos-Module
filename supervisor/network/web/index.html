@@ -1,0 +1,1902 @@
+<!-- Adapted from the user-provided Band 11 SysPatch web console. See PROVENANCE.md. -->
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#f5f6fc">
+<title>Chaos · 设备控制台</title>
+
+<!-- Self-contained console: system fonts and inline SVG icons, no CDN. -->
+
+<style>
+/* =========================================
+   01. Material Design 3 Design Tokens
+========================================= */
+:root {
+  color-scheme: light;
+
+  --primary: #405d96;
+  --on-primary: #ffffff;
+  --primary-container: #d9e2ff;
+  --on-primary-container: #001a41;
+
+  --secondary: #565e71;
+  --secondary-container: #dae2f9;
+
+  --surface: #f8f9ff;
+  --surface-low: #f2f3fa;
+  --surface-container: #edeeF5;
+  --surface-high: #e7e8f0;
+  --surface-highest: #e1e2e9;
+
+  --on-surface: #191c24;
+  --on-surface-variant: #444750;
+
+  --outline: #747782;
+  --outline-variant: #c4c6d0;
+
+  --success: #386b48;
+  --success-container: #b9f0c3;
+  --warning: #805b00;
+  --warning-container: #ffdf9e;
+  --error: #ba1a1a;
+
+  --shadow: 0 2px 8px rgba(25,28,36,.07);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-xxl: 28px;
+
+  --sidebar-width: 260px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --primary: #b1c6ff;
+  --on-primary: #092e69;
+  --primary-container: #284577;
+  --on-primary-container: #d9e2ff;
+
+  --secondary: #bec6dc;
+  --secondary-container: #3e4759;
+
+  --surface: #111319;
+  --surface-low: #191b22;
+  --surface-container: #1e2028;
+  --surface-high: #282a32;
+  --surface-highest: #33353e;
+
+  --on-surface: #e2e2eb;
+  --on-surface-variant: #c4c6d0;
+
+  --outline: #8e909a;
+  --outline-variant: #444650;
+
+  --success: #9cd6a6;
+  --success-container: #20512f;
+  --warning: #ffdf9e;
+  --warning-container: #614600;
+  --error: #ffb4ab;
+
+  --shadow: 0 2px 12px rgba(0,0,0,.25);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Roboto", "Microsoft YaHei", sans-serif;
+  background: var(--surface);
+  color: var(--on-surface);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.icon { width: 1em; height: 1em; font-size: 22px; display: inline-block; flex-shrink: 0; vertical-align: middle; }
+
+/* =========================================
+   02. Main Layout
+========================================= */
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0,1fr);
+}
+
+.sidebar {
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  padding: 22px 14px;
+  background: var(--surface-low);
+  display: flex;
+  flex-direction: column;
+  z-index: 30;
+  border-right: 1px solid var(--outline-variant);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 26px;
+}
+
+.brand-logo {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.brand-logo .icon {
+  font-size: 27px;
+}
+
+.brand-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -.5px;
+}
+
+.brand-sub {
+  color: var(--outline);
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  margin-top: 1px;
+}
+
+.nav-label {
+  padding: 14px 14px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--outline);
+}
+
+.nav-item {
+  width: 100%;
+  height: 48px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  border-radius: 30px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 0 17px;
+  text-align: left;
+  margin-bottom: 4px;
+  transition: background .2s, color .2s;
+}
+
+.nav-item:hover {
+  background: var(--surface-high);
+}
+
+.nav-item.active {
+  background: var(--secondary-container);
+  color: var(--on-primary-container);
+  font-weight: 600;
+}
+
+.nav-item .icon {
+  font-size: 22px;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 14px 10px;
+}
+
+.device-mini {
+  background: var(--surface-container);
+  padding: 14px;
+  border-radius: var(--radius-lg);
+}
+
+.device-mini-title {
+  font-size: 12px;
+  color: var(--outline);
+  margin-bottom: 8px;
+}
+
+.device-mini-name {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  background: #36a66a;
+  display: inline-block;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.main-area {
+  min-width: 0;
+}
+
+.topbar {
+  height: 72px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(18px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.breadcrumb strong {
+  font-weight: 600;
+}
+
+.breadcrumb span {
+  color: var(--outline);
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.icon-btn {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--on-surface-variant);
+  background: transparent;
+  transition: background .2s;
+}
+
+.icon-btn:hover {
+  background: var(--surface-high);
+}
+
+.connection-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 30px;
+  background: var(--success-container);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.content {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 30px 32px 60px;
+}
+
+.page {
+  display: none;
+  animation: appear .2s ease;
+}
+
+.page.active {
+  display: block;
+}
+
+@keyframes appear {
+  from {opacity:0; transform:translateY(5px)}
+  to {opacity:1; transform:translateY(0)}
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 27px;
+}
+
+.page-title {
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -.6px;
+  margin: 0;
+}
+
+.page-description {
+  color: var(--outline);
+  margin-top: 5px;
+  font-size: 13px;
+}
+
+.section-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 15px;
+}
+
+/* =========================================
+   03. Buttons and Components
+========================================= */
+
+.btn {
+  border: 0;
+  min-height: 40px;
+  padding: 0 17px;
+  border-radius: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  transition: filter .2s, background .2s;
+}
+
+.btn:hover {
+  filter: brightness(.96);
+}
+
+.btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.btn.tonal {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.btn.outline {
+  border: 1px solid var(--outline);
+  background: transparent;
+  color: var(--on-surface);
+}
+
+.btn.danger {
+  background: var(--error);
+  color: white;
+}
+
+.btn.small {
+  min-height: 34px;
+  padding: 0 13px;
+  font-size: 12px;
+}
+
+.card {
+  background: var(--surface-container);
+  border-radius: var(--radius-xl);
+  padding: 21px;
+  min-width: 0;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 17px;
+}
+
+.card-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--on-surface-variant);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 30px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface-high);
+  color: var(--on-surface-variant);
+}
+
+.badge.success {
+  color: var(--success);
+  background: var(--success-container);
+}
+
+.badge.warning {
+  color: var(--warning);
+  background: var(--warning-container);
+}
+
+.divider {
+  height: 1px;
+  background: var(--outline-variant);
+  margin: 18px 0;
+}
+
+/* =========================================
+   04. Overview
+========================================= */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  padding: 19px;
+  background: var(--surface-container);
+  border-radius: var(--radius-xl);
+  min-width: 0;
+}
+
+.metric-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.metric-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: var(--primary);
+  background: var(--primary-container);
+}
+
+.metric-value {
+  font-size: 31px;
+  font-weight: 600;
+  letter-spacing: -1px;
+  margin-top: 15px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-unit {
+  font-size: 13px;
+  color: var(--outline);
+  margin-left: 3px;
+  font-weight: 400;
+}
+
+.metric-name {
+  font-size: 12px;
+  color: var(--outline);
+  margin-top: 5px;
+}
+
+.metric-progress {
+  height: 5px;
+  background: var(--surface-highest);
+  border-radius: 10px;
+  margin-top: 15px;
+  overflow: hidden;
+}
+
+.metric-progress > div {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width .5s;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0,1.6fr) minmax(260px,.85fr);
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.chart-card {
+  min-height: 340px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 17px;
+  font-size: 12px;
+  color: var(--outline);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.legend-dot.ram {
+  background: #9a83c7;
+}
+
+#resourceChart {
+  width: 100%;
+  height: 230px;
+  display: block;
+}
+
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.status-info {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.status-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--surface-high);
+  color: var(--on-surface-variant);
+}
+
+.status-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.status-detail {
+  font-size: 11px;
+  color: var(--outline);
+  margin-top: 2px;
+}
+
+.status-value {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bottom-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.event-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.event-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-high);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.event-text {
+  font-size: 12px;
+}
+
+.event-time {
+  color: var(--outline);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+/* =========================================
+   05. Terminal
+========================================= */
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.terminal-window {
+  border-radius: var(--radius-xl);
+  background: #171b24;
+  overflow: hidden;
+  color: #d8e2f3;
+  box-shadow: var(--shadow);
+}
+
+.terminal-top {
+  height: 48px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #222733;
+  border-bottom: 1px solid #343c4b;
+}
+
+.terminal-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.terminal-dots span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #697587;
+}
+
+.terminal-name {
+  font-size: 12px;
+  color: #aab8cc;
+}
+
+.terminal-output {
+  height: 390px;
+  padding: 20px;
+  overflow: auto;
+  font-family: "Roboto Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #d6e1f1;
+}
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  padding: 13px 18px;
+  gap: 10px;
+  background: #222733;
+  border-top: 1px solid #343c4b;
+}
+
+.terminal-prompt {
+  color: #92cba4;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.terminal-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: white;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.terminal-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+/* =========================================
+   06. Web Applications
+========================================= */
+
+.apps-layout {
+  display: grid;
+  grid-template-columns: minmax(0,1.25fr) minmax(270px,.75fr);
+  gap: 18px;
+}
+
+.upload-zone {
+  border: 1.5px dashed var(--outline);
+  border-radius: var(--radius-xl);
+  min-height: 215px;
+  padding: 30px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  cursor: pointer;
+  transition: .2s;
+  background: var(--surface-low);
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+  border-color: var(--primary);
+  background: var(--primary-container);
+}
+
+.upload-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 19px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  margin-bottom: 14px;
+}
+
+.upload-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: var(--outline);
+  margin-top: 7px;
+}
+
+.selected-file {
+  margin-top: 16px;
+  background: var(--surface-high);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: none;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-meta {
+  font-size: 11px;
+  color: var(--outline);
+}
+
+.progress-track {
+  height: 6px;
+  background: var(--surface-highest);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--primary);
+  border-radius: inherit;
+  transition: width .3s;
+}
+
+.app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.running-app {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 18px;
+}
+
+.app-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  display: grid;
+  place-items: center;
+}
+
+.app-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.app-version {
+  color: var(--outline);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+/* =========================================
+   07. Audio Studio
+========================================= */
+
+.audio-layout {
+  display: grid;
+  grid-template-columns: minmax(0,1.4fr) minmax(250px,.7fr);
+  gap: 18px;
+}
+
+.audio-main {
+  text-align: center;
+  padding: 32px 22px;
+}
+
+.audio-status {
+  color: var(--outline);
+  font-size: 13px;
+  margin: 8px 0 24px;
+}
+
+.recording-time {
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+  margin: 20px 0;
+}
+
+.record-button {
+  width: 76px;
+  height: 76px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  display: grid;
+  place-items: center;
+  margin: 24px auto;
+  box-shadow: 0 5px 18px rgba(64,93,150,.25);
+  transition: transform .2s;
+}
+
+.record-button:hover {
+  transform: scale(1.06);
+}
+
+.record-button .icon {
+  font-size: 32px;
+}
+
+.record-button.recording {
+  background: var(--error);
+  animation: recordPulse 1.6s infinite;
+}
+
+@keyframes recordPulse {
+  50% { box-shadow: 0 0 0 13px rgba(186,26,26,.12); }
+}
+
+.waveform {
+  height: 65px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.wave-bar {
+  width: 4px;
+  height: 8px;
+  background: var(--primary);
+  opacity: .45;
+  border-radius: 5px;
+}
+
+.waveform.recording .wave-bar {
+  animation: wave .7s ease-in-out infinite alternate;
+  opacity: 1;
+}
+
+.wave-bar:nth-child(3n) { animation-delay: -.4s; }
+.wave-bar:nth-child(4n) { animation-delay: -.2s; }
+.wave-bar:nth-child(5n) { animation-delay: -.6s; }
+
+@keyframes wave {
+  from { height: 8px; }
+  to { height: 48px; }
+}
+
+.audio-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.audio-tips {
+  font-size: 12px;
+  color: var(--outline);
+  line-height: 1.8;
+}
+
+/* =========================================
+   08. Logs and Settings
+========================================= */
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 560px;
+  text-align: left;
+}
+
+th {
+  font-size: 11px;
+  color: var(--outline);
+  font-weight: 600;
+  padding: 13px 12px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+td {
+  font-size: 12px;
+  padding: 15px 12px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.log-level {
+  font-weight: 600;
+}
+
+.log-level.info { color: var(--primary); }
+.log-level.warn { color: var(--warning); }
+.log-level.error { color: var(--error); }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.setting-row:last-child {
+  border: 0;
+}
+
+.setting-name {
+  font-weight: 500;
+}
+
+.setting-desc {
+  color: var(--outline);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+/* =========================================
+   09. Toast / Dialog / Mobile
+========================================= */
+
+.toast {
+  position: fixed;
+  bottom: 25px;
+  left: 50%;
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  pointer-events: none;
+  background: #292e38;
+  color: white;
+  border-radius: 30px;
+  padding: 12px 19px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  z-index: 100;
+  box-shadow: var(--shadow);
+  transition: .25s;
+  white-space: nowrap;
+  max-width: calc(100vw - 30px);
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+dialog {
+  width: min(420px, calc(100vw - 32px));
+  border: 0;
+  border-radius: var(--radius-xl);
+  padding: 25px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  box-shadow: 0 15px 50px rgba(0,0,0,.2);
+}
+
+dialog::backdrop {
+  background: rgba(0,0,0,.4);
+  backdrop-filter: blur(3px);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 24px;
+}
+
+.mobile-menu-btn,
+.mobile-bottom-nav,
+.scrim {
+  display: none;
+}
+
+/* =========================================
+   10. Responsive
+========================================= */
+
+@media(max-width:1100px) {
+  .metric-grid {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media(max-width:800px) {
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: min(290px,85vw);
+    transform: translateX(-110%);
+    transition: transform .25s;
+    box-shadow: var(--shadow);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.35);
+    z-index: 25;
+    opacity: 0;
+    pointer-events: none;
+    transition: .2s;
+  }
+
+  .scrim.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobile-menu-btn {
+    display: grid;
+  }
+
+  .topbar {
+    height: 62px;
+    padding: 0 15px;
+  }
+
+  .content {
+    padding: 24px 16px 100px;
+  }
+
+  .apps-layout,
+  .audio-layout,
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(4,1fr);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 22;
+    background: var(--surface-container);
+    border-top: 1px solid var(--outline-variant);
+    padding: 8px 5px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .mobile-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--outline);
+    border: 0;
+    background: none;
+    font-size: 10px;
+    padding: 4px;
+  }
+
+  .mobile-nav-item .icon {
+    font-size: 23px;
+    padding: 5px 18px;
+    border-radius: 20px;
+  }
+
+  .mobile-nav-item.active {
+    color: var(--on-primary-container);
+    font-weight: 600;
+  }
+
+  .mobile-nav-item.active .icon {
+    background: var(--secondary-container);
+  }
+}
+
+@media(max-width:480px) {
+  .metric-grid {
+    gap: 10px;
+  }
+
+  .metric-card {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .metric-value {
+    font-size: 25px;
+  }
+
+  .page-title {
+    font-size: 23px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .card {
+    padding: 16px;
+    border-radius: 19px;
+  }
+
+  .connection-pill {
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+
+  .breadcrumb {
+    font-size: 12px;
+  }
+
+  .terminal-output {
+    height: 340px;
+    padding: 14px;
+    font-size: 11px;
+  }
+
+  .terminal-input-row {
+    padding: 12px;
+  }
+
+  .bottom-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+<style>#login label{display:block;margin:16px 0}#login input,select{padding:9px;border:1px solid var(--outline-variant);border-radius:8px;color:var(--on-surface);background:var(--surface-container)}#login input{display:block;width:100%;margin-top:6px}#login{width:min(400px,90vw)}#terminalOutput{white-space:pre-wrap;overflow-wrap:anywhere}#selectedFile[hidden]{display:none}</style></head>
+
+<body>
+<div class="app-shell" id="shell">
+
+  <!-- ================ Sidebar ================ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10H7z M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4m14-6h4m-4 6h4"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">CHAOS</div>
+        <div class="brand-sub">DEVICE CONSOLE</div>
+      </div>
+    </div>
+
+    <div class="nav-label">设备管理</div>
+
+    <button class="nav-item active" data-page="overview">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z"/></svg>
+      设备概览
+    </button>
+
+    <button class="nav-item" data-page="terminal">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M6 8l4 4-4 4m7 0h5"/></svg>
+      NSH 终端
+    </button>
+
+    <button class="nav-item" data-page="apps">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M3 9h18 M8 9v11"/></svg>
+      网页应用
+    </button>
+
+
+    <div class="nav-label">系统</div>
+
+
+    <button class="nav-item" data-page="settings">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg>
+      设备设置
+    </button>
+
+    <div class="sidebar-bottom">
+      <div class="device-mini">
+        <div class="device-mini-title">当前设备</div>
+        <div class="device-mini-name" id="miniModel">—</div>
+        <div style="font-size:11px;color:var(--success)">
+          <span class="online-dot"></span><span id="miniConnection">未连接</span>
+        </div>
+        <div class="divider"></div>
+        <div style="font-size:11px;color:var(--outline)">
+          IP: <span id="miniIp">—</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="scrim" id="scrim"></div>
+
+  <!-- ================ Main ================ -->
+  <div class="main-area">
+
+    <header class="topbar">
+      <div class="breadcrumb">
+        <button class="icon-btn mobile-menu-btn" id="menuBtn"
+                aria-label="打开导航">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+        <span>Chaos</span>
+        <span>/</span>
+        <strong id="pageTitle">设备概览</strong>
+      </div>
+
+      <div class="top-actions">
+        <div class="connection-pill"><span class="online-dot"></span><span id="connection">未连接</span></div>
+        <button class="icon-btn" id="themeBtn" title="切换主题"
+                aria-label="切换主题">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14A8 8 0 0 1 10 4a9 9 0 1 0 10 10z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- =================================
+           PAGE 1: OVERVIEW
+      ================================== -->
+      <section class="page active" id="page-overview">
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">设备概览</h1>
+            <div class="page-description">
+              <span id="updated">登录后查看设备的实时运行状态。</span>
+            </div>
+          </div>
+          <button class="btn tonal" id="refresh">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 9a8 8 0 1 0 0 6M20 3v6h-6"/></svg>
+            刷新状态
+          </button>
+        </div>
+
+        <div class="metric-grid">
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="card-label">CPU 使用率</div>
+              <div class="metric-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10H7z M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4m14-6h4m-4 6h4"/></svg>
+              </div>
+            </div>
+            <div class="metric-value">
+              <span id="cpuValue">—</span><span class="metric-unit">%</span>
+            </div>
+            <div class="metric-name">处理器负载</div>
+            <div class="metric-progress">
+              <div id="cpuBar" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="card-label">内存使用率</div>
+              <div class="metric-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10H7z M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4m14-6h4m-4 6h4"/></svg>
+              </div>
+            </div>
+            <div class="metric-value">
+              <span id="ramValue">—</span><span class="metric-unit">%</span>
+            </div>
+            <div class="metric-name" id="ramDetail">等待设备数据</div>
+            <div class="metric-progress">
+              <div id="ramBar" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="card-label">Flash 使用率</div>
+              <div class="metric-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v6H3z M3 14h18v6H3z M6 7h2m-2 10h2"/></svg>
+              </div>
+            </div>
+            <div class="metric-value">
+              <span id="flashValue">—</span><span class="metric-unit">%</span>
+            </div>
+            <div class="metric-name">固件与文件存储</div>
+            <div class="metric-progress">
+              <div id="flashBar" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="card-label">芯片温度</div>
+              <div class="metric-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14V5a2 2 0 0 1 4 0v9a4 4 0 1 1-4 0 M12 7v10"/></svg>
+              </div>
+            </div>
+            <div class="metric-value">
+              <span id="tempValue">—</span><span class="metric-unit">°C</span>
+            </div>
+            <div class="metric-name">当前温度</div>
+            <div style="margin-top:15px">
+              <span class="badge success">暂未提供</span>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="overview-grid">
+
+          <div class="card chart-card">
+            <div class="card-header">
+              <div>
+                <div class="section-title">资源使用趋势</div>
+                <div class="page-description">最近一段时间的系统资源变化</div>
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item">
+                  <span class="legend-dot"></span>CPU
+                </span>
+                <span class="legend-item">
+                  <span class="legend-dot ram"></span>RAM
+                </span>
+              </div>
+            </div>
+            <canvas id="resourceChart"></canvas>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="section-title">设备运行状态</div>
+              <span class="badge success" id="systemState">等待连接</span>
+            </div>
+
+            <div class="status-list">
+
+              <div class="status-row">
+                <div class="status-info">
+                  <div class="status-icon">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8 16a6 6 0 0 1 8 0M11 20h2"/></svg>
+                  </div>
+                  <div>
+                    <div class="status-name">网络连接</div>
+                    <div class="status-detail">蓝牙 PAN</div>
+                  </div>
+                </div>
+                <span class="status-value" style="color:var(--success)" id="networkState">未连接</span>
+              </div>
+
+              <div class="status-row">
+                <div class="status-info">
+                  <div class="status-icon">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 0-18 0 9 9 0 1 0 18 0 M12 6v6l4 2"/></svg>
+                  </div>
+                  <div>
+                    <div class="status-name">运行时间</div>
+                    <div class="status-detail">系统启动后</div>
+                  </div>
+                </div>
+                <span class="status-value" id="uptime">—</span>
+              </div>
+
+              <div class="status-row">
+                <div class="status-info">
+                  <div class="status-icon">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5z M8 8h8m-8 4h8m-8 4h5"/></svg>
+                  </div>
+                  <div>
+                    <div class="status-name">固件版本</div>
+                    <div class="status-detail">设备构建</div>
+                  </div>
+                </div>
+                <span class="status-value" id="statusFirmware">—</span>
+              </div>
+
+              <div class="status-row">
+                <div class="status-info">
+                  <div class="status-icon">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M6 8l4 4-4 4m7 0h5"/></svg>
+                  </div>
+                  <div>
+                    <div class="status-name">NSH Shell</div>
+                    <div class="status-detail">命令行服务</div>
+                  </div>
+                </div>
+                <span class="status-value" style="color:var(--success)" id="nshState">未连接</span>
+              </div>
+
+              <div class="status-row">
+                <div class="status-info">
+                  <div class="status-icon">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 0-18 0 9 9 0 1 0 18 0 M3 12h18 M12 3c-5 5-5 13 0 18 5-5 5-13 0-18"/></svg>
+                  </div>
+                  <div>
+                    <div class="status-name">Web Server</div>
+                    <div class="status-detail">HTTP 服务</div>
+                  </div>
+                </div>
+                <span class="status-value" style="color:var(--success)">运行中</span>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <div class="bottom-grid">
+
+          <div class="card">
+            <div class="section-title">快捷操作</div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px">
+              <button class="btn tonal" onclick="navigate('terminal')">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M6 8l4 4-4 4m7 0h5"/></svg>
+                打开 NSH
+              </button>
+              <button class="btn outline" onclick="navigate('apps')">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h8l4 4v16H6z M12 18V9m-3 3 3-3 3 3"/></svg>
+                上传网页
+              </button>
+
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-title">最近事件</div>
+            <div class="event-item">
+              <div class="event-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 0-18 0 9 9 0 1 0 18 0 M7 12l3 3 7-7"/></svg>
+              </div>
+              <div>
+                <div class="event-text">设备状态</div>
+                <div class="event-time" id="eventTime">等待连接</div>
+              </div>
+            </div>
+            <div class="event-item">
+              <div class="event-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8 16a6 6 0 0 1 8 0M11 20h2"/></svg>
+              </div>
+              <div>
+                <div class="event-text" id="eventNetwork">等待局域网连接</div>
+                <div class="event-time">蓝牙 PAN</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- =================================
+           PAGE 2: NSH TERMINAL
+      ================================== -->
+      <section class="page" id="page-terminal">
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">NSH 终端</h1>
+            <div class="page-description">
+              通过 Web 控制台与设备 Shell 交互。
+            </div>
+          </div>
+          <span class="badge success">
+            <span class="online-dot"></span><span id="terminalState">未连接</span>
+          </span>
+        </div>
+
+        <div class="terminal-toolbar">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="badge">NSH</span>
+            <button class="btn tonal small" id="connectTerminal">连接</button><button class="btn outline small" id="disconnectTerminal">断开</button><button class="btn outline small" data-key="interrupt">Ctrl+C</button><button class="btn outline small" data-key="tab">Tab</button>
+          </div>
+          <button class="btn outline small" id="clearTerminal">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h12M7 7V4h6v3M6 7l1 14h6l1-14m3 3h5m-5 4h4m-4 4h3"/></svg>
+            清空终端
+          </button>
+        </div>
+
+        <div class="terminal-window">
+
+          <div class="terminal-top">
+            <div class="terminal-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="terminal-name">Chaos — NSH</div>
+            <svg class="icon"
+                  style="color:#aab8cc;font-size:18px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M6 8l4 4-4 4m7 0h5"/></svg>
+          </div>
+
+          <div class="terminal-output" id="terminalOutput"></div>
+
+          <form class="terminal-input-row" id="terminalForm">
+            <span class="terminal-prompt">›</span>
+            <input class="terminal-input" id="terminalInput"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="输入命令，例如 help">
+            <button class="icon-btn" type="submit"
+                    style="color:#a9c9ff" aria-label="发送命令">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 9-18 9 3-9z M6 12h15"/></svg>
+            </button>
+          </form>
+
+        </div>
+
+        <div class="card" style="margin-top:18px">
+          <div class="section-title">常用命令</div>
+          <div class="terminal-shortcuts">
+            <button class="btn tonal small" data-cmd="help">help</button>
+            <button class="btn outline small" data-cmd="uname -a">uname -a</button>
+            <button class="btn outline small" data-cmd="free">free</button>
+            <button class="btn outline small" data-cmd="ps">ps</button>
+            <button class="btn outline small" data-cmd="df -h">df -h</button>
+            <button class="btn outline small" data-cmd="uptime">uptime</button>
+            <button class="btn outline small" data-cmd="ls">ls</button>
+            <button class="btn outline small" data-cmd="ifconfig">ifconfig</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================================
+           PAGE 3: WEB APPLICATIONS
+      ================================== -->
+      <section class="page" id="page-apps">
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">网页应用</h1>
+            <div class="page-description">
+              上传、部署和管理设备上的 Web 应用。
+            </div>
+          </div>
+          <span class="badge">Web Manager</span>
+        </div>
+
+        <div class="apps-layout">
+
+          <div class="card">
+            <div class="card-header">
+              <div class="section-title">上传网页</div>
+              <span class="badge">最大 16 KiB</span>
+            </div>
+
+            <input type="file" id="appFile"
+                   accept=".html,.htm"
+                   hidden>
+
+            <div class="upload-zone" id="dropZone"
+                 role="button" tabindex="0">
+              <div class="upload-icon">
+                <svg class="icon"
+                      style="font-size:30px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18H6a4 4 0 0 1-1-8 7 7 0 0 1 13-1 5 5 0 0 1 0 10h-1 M12 21V11m-4 4 4-4 4 4"/></svg>
+              </div>
+              <div class="upload-title">拖放文件到这里</div>
+              <div class="upload-hint">
+                或点击选择 HTML 文件
+              </div>
+              <div style="margin-top:13px">
+                <span class="btn tonal small">选择文件</span>
+              </div>
+            </div>
+
+            <div class="selected-file" id="selectedFile">
+              <svg class="icon"
+                    style="font-size:30px;color:var(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 2h9l5 5v15H5z M14 2v6h5M8 12h8m-8 4h8"/></svg>
+              <div class="file-info">
+                <div class="file-name" id="fileName">index.html</div>
+                <div class="file-meta" id="fileMeta">0 KB</div>
+              </div>
+              <button class="icon-btn" id="removeFile"
+                      aria-label="移除文件">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5l14 14M5 19 19 5"/></svg>
+              </button>
+            </div>
+
+            <div id="deployProgress" hidden>
+              <div style="display:flex;justify-content:space-between;
+                          margin-top:15px;font-size:12px">
+                <span id="deployLabel">正在部署...</span>
+                <span id="deployPercent">0%</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-bar" id="deployBar"></div>
+              </div>
+            </div>
+
+            <div class="app-actions">
+              <button class="btn primary" id="uploadApp" disabled>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16v5h16v-5M12 17V3m-5 5 5-5 5 5"/></svg>
+                上传并部署
+              </button>
+              <button class="btn outline" id="previewBtn" disabled>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z M15 12a3 3 0 1 0-6 0 3 3 0 1 0 6 0"/></svg>
+                本地预览
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-title">运行状态</div>
+
+            <div class="running-app">
+              <div class="app-icon">
+                <svg class="icon"
+                      style="font-size:28px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 0-18 0 9 9 0 1 0 18 0 M3 12h18 M12 3c-5 5-5 13 0 18 5-5 5-13 0-18"/></svg>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div class="app-name" id="appName">暂无部署应用</div>
+                <div class="app-version" id="appVersion">
+                  等待上传
+                </div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="setting-row">
+              <div class="setting-name">运行状态</div>
+              <span class="badge" id="appState">未运行</span>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-name">服务端口</div>
+              <span>80 / HTTP</span>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-name">运行目录</div>
+              <span style="font-size:11px">模块 RAM · 重启清除</span>
+            </div>
+
+            <div class="app-actions">
+              <button class="btn primary" id="runApp" disabled>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3l14 9-14 9z"/></svg>
+                启动
+              </button>
+              <button class="btn outline" id="stopApp" disabled>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14v14H5z"/></svg>
+                停止
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <iframe id="appFrame" sandbox="allow-scripts" title="网页应用" hidden style="width:100%;height:380px;border:0;border-radius:16px"></iframe><div class="card" style="margin-top:18px">
+          <div class="card-header">
+            <div class="section-title">部署说明</div>
+            <svg class="icon"
+                  style="color:var(--outline)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 0-18 0 9 9 0 1 0 18 0 M12 11v6m0-11v1"/></svg>
+          </div>
+          <div class="page-description" style="line-height:2">
+            上传的单个 HTML 文件暂存在手环内存中，可在浏览器沙盒中打开；不能访问手环接口或外部网络。重启后清除。
+          </div>
+        </div>
+      </section>
+
+      <!-- =================================
+           PAGE 6: SETTINGS
+      ================================== -->
+      <section class="page" id="page-settings">
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">设备设置</h1>
+            <div class="page-description">
+              查看设备信息与管理连接配置。
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+
+          <div class="card">
+            <div class="section-title">设备信息</div>
+
+            <div class="setting-row">
+              <div class="setting-name">设备名称</div>
+              <span id="model">—</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-name">设备类型</div>
+              <span>p67 · Band 10 Pro</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-name">操作系统</div>
+              <span>NuttX / NSH</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-name">固件版本</div>
+              <span id="firmware">—</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-name">设备地址</div>
+              <span id="ip">—</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-title">控制台设置</div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">外观主题</div>
+                <div class="setting-desc">跟随系统界面主题</div>
+              </div>
+              <select id="theme"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">终端快捷键</div>
+                <div class="setting-desc">启用命令快捷输入</div>
+              </div>
+              <span class="badge success">已启用</span>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">资源自动刷新</div>
+                <div class="setting-desc">后台标签页暂停刷新，降低蓝牙链路负担</div>
+              </div>
+              <select id="interval"><option value="0">手动</option><option value="5" selected>5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-title">设备与显示</div><div class="setting-row"><span>终端字号</span><select id="fontSize"><option value="12">12 px</option><option value="14" selected>14 px</option><option value="16">16 px</option><option value="18">18 px</option></select></div><div id="deviceDetails"></div><div class="app-actions"><button class="btn outline" id="reboot" disabled>重启手环</button><button class="btn tonal" id="logout">退出登录</button></div>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- Mobile Bottom Navigation -->
+<nav class="mobile-bottom-nav">
+  <button class="mobile-nav-item active" data-page="overview">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z"/></svg>
+    概览
+  </button>
+  <button class="mobile-nav-item" data-page="terminal">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M6 8l4 4-4 4m7 0h5"/></svg>
+    终端
+  </button>
+  <button class="mobile-nav-item" data-page="apps">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v16H3z M3 9h18 M8 9v11"/></svg>
+    应用
+  </button>
+  <button class="mobile-nav-item" data-page="settings">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg>
+    设置
+  </button>
+</nav>
+
+<!-- Toast -->
+<div class="toast" id="toast" role="status" aria-live="polite">
+  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 0-18 0 9 9 0 1 0 18 0 M7 12l3 3 7-7"/></svg>
+  <span id="toastMessage">操作成功</span>
+</div>
+
+<!-- Confirm Dialog -->
+<dialog id="confirmDialog">
+  <h3 id="confirmTitle">确认操作</h3>
+  <p id="confirmMessage" style="color:var(--outline)">
+    是否继续？
+  </p>
+  <div class="dialog-actions">
+    <button class="btn outline" id="cancelConfirm">取消</button>
+    <button class="btn primary" id="acceptConfirm">确认</button>
+  </div>
+</dialog>
+
+<dialog id="login"><h3>连接手环</h3><p class="page-description">使用 Chaos「网页服务器」页面显示的用户名和密码登录。</p><form id="loginForm"><label>用户名<input id="username" value="chaos" autocomplete="username" required></label><label>密码<input id="password" type="password" autocomplete="current-password" required></label><button class="btn primary">登录</button></form><p class="page-description" style="margin-top:12px">仅在可信的蓝牙共享网络使用。HTTP 不加密，请勿使用重要账号的密码。</p></dialog><script src="console.js"></script></body></html>

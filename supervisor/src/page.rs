@@ -833,6 +833,8 @@ impl Page for InfoPage {
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
                 (8, RowSpec::clickable("NSH终端\0".as_bytes())),
+                (9, RowSpec::clickable("btpan联网\0".as_bytes())),
+                (10, RowSpec::clickable("网页服务器\0".as_bytes())),
                 (6, RowSpec::clickable("设置\0".as_bytes())),
                 (7, RowSpec::clickable("关于\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/版本(页14)
             ])?;
@@ -862,6 +864,8 @@ impl Page for InfoPage {
                 4 => nav_goto(10, 0),  // 表盘管理
                 5 => nav_goto(13, 0),  // 系统美化
                 8 => nav_goto(crate::terminal_ui::PAGE_PID, 0), // NSH终端
+                9 => nav_goto(crate::btpan::PAGE_BTPAN_PID, 0), // btpan联网
+                10 => nav_goto(crate::btpan::PAGE_WEBSRV_PID, 0), // 网页服务器
                 6 => nav_goto(14, 0),  // 设置(时间/日期/亮度/震动/缓存/版本)
                 7 => nav_goto(18, 0), // 关于(页18, 调试入口)
                 _ => {} // 行0-2 是数据行
@@ -2504,7 +2508,7 @@ impl Page for AboutPage {
 // ===== 页20: 关于 -> 开放源代码许可 =====
 //
 // Corona 以 AGPL-3.0-only 发布；此处保留完整许可证正文入口，同时保留项目中已有的
-// MIBAND10PRO-TUNMODULE MPL-2.0 文本，便于用户在设备上查看所有第三方许可。
+// MIBAND10PRO-TUNMODULE MPL-2.0 与网络组件的 MIT / BSD-3-Clause 文本。
 pub(crate) struct LicensesPage;
 static PAGE_LICENSESP: LicensesPage = LicensesPage;
 
@@ -2520,15 +2524,17 @@ impl Page for LicensesPage {
                     "AGPL-3.0-only\0".as_bytes().as_ptr())),
                 (1, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
                     "MPL-2.0\0".as_bytes().as_ptr())),
-                // (2, RowSpec::display("Corona 上游源代码\0".as_bytes(),
-                //     "https://github.com/AstralSightStudios/Canopus-Module-Corona\0".as_bytes().as_ptr())),
+                (2, RowSpec::tap("TinyPAN\0".as_bytes(),
+                    "MIT\0".as_bytes().as_ptr())),
+                (3, RowSpec::tap("lwIP 2.2.1\0".as_bytes(),
+                    "BSD-3-Clause\0".as_bytes().as_ptr())),
             ]).map(|_| ())
         }
     }
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            if idx < 2 {
+            if idx < 4 {
                 LICENSE_KIND = idx as u32;
                 LICENSE_PAGE = 0;
                 nav_goto(21, 0);
@@ -2539,6 +2545,8 @@ impl Page for LicensesPage {
 
 static CORONA_LICENSE_TEXT: &[u8] = include_bytes!("../corona_vendor/LICENSE");
 static MPL_LICENSE_TEXT: &[u8] = include_bytes!("../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
+static TINYPAN_LICENSE_TEXT: &[u8] = include_bytes!("../network/third_party/tinypan/LICENSE");
+static LWIP_LICENSE_TEXT: &[u8] = include_bytes!("../network/third_party/lwip/COPYING");
 static mut LICENSE_KIND: u32 = 0;
 static mut LICENSE_PAGE: usize = 0;
 static mut LICENSE_VIEW: [u8; 4096] = [0; 4096];
@@ -2546,7 +2554,12 @@ static mut LICENSE_STATUS: [u8; 48] = [0; 48];
 const LICENSE_PAGE_LINES: usize = 7;
 
 unsafe fn license_text() -> &'static [u8] {
-    if LICENSE_KIND == 0 { CORONA_LICENSE_TEXT } else { MPL_LICENSE_TEXT }
+    match LICENSE_KIND {
+        1 => MPL_LICENSE_TEXT,
+        2 => TINYPAN_LICENSE_TEXT,
+        3 => LWIP_LICENSE_TEXT,
+        _ => CORONA_LICENSE_TEXT,
+    }
 }
 
 unsafe fn license_line_count() -> usize {
@@ -2603,8 +2616,12 @@ static PAGE_LICENSEP: LicenseTextPage = LicenseTextPage;
 impl Page for LicenseTextPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe {
-            if LICENSE_KIND == 0 { put_str(buf, "Corona AGPL-3.0-only\0".as_bytes()); }
-            else { put_str(buf, "MPL-2.0 license\0".as_bytes()); }
+            put_str(buf, match LICENSE_KIND {
+                1 => "MPL-2.0 license\0".as_bytes(),
+                2 => "TinyPAN MIT\0".as_bytes(),
+                3 => "lwIP BSD-3-Clause\0".as_bytes(),
+                _ => "Corona AGPL-3.0-only\0".as_bytes(),
+            });
         }
     }
 
@@ -3374,7 +3391,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
     &PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
     &PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
-    &PAGE_LICENSEP,     // 21 Corona AGPL / MPL-2.0 全文
+    &PAGE_LICENSEP,     // 21 第三方许可全文
     &PAGE_SYSVERP,      // 22 系统关于页面修改 -> 系统版本显示
     &PAGE_KEYBOARDP,    // 23 通用英文数字键盘
     &PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改
@@ -3385,4 +3402,7 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &PAGE_DETAILP,      // 29 应用管理 -> 应用详情(P0 占位)
     &PAGE_BATCHP,       // 30 应用管理 -> 批量操作(P0 占位)
     &crate::terminal_ui::PAGE, // 31 NSH终端
+    &crate::btpan::PAGE_BTPAN_P, // 32 主页 -> btpan联网
+    &crate::btpan::PAGE_WEBSRV_P, // 33 主页 -> 网页服务器
+    &crate::btpan::PAGE_NETINFO_P, // 34 BTPAN -> 连接信息
 ];

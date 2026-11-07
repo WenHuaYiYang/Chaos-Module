@@ -87,6 +87,8 @@ mod t043 {
     /// p67 / 3.101.043 NSH chain: exact AP + host machine-code probes.
     /// See docs/NSH-SPAWN.md and docs/NSH-PTY.md. NOT device-validated.
     pub const NSH_SYSTEM: u32 = 0x0C24_0399;
+    /// Exact 3.101.043 clock_gettime dispatcher; clock id 1 is CLOCK_MONOTONIC.
+    pub const CLOCK_GETTIME: u32 = 0x0C20_1FE1;
     pub const NSH_TASK_SPAWN: u32 = 0x0C20_9771;
     pub const NSH_ATTR_INIT: u32 = 0x0C1E_A725;
     pub const NSH_ATTR_FLAGS: u32 = 0x0C1E_A781;

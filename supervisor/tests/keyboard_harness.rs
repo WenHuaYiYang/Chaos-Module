@@ -33,6 +33,16 @@ mod terminal_ui {
         crate::mock::with(|ui| { ui.saves.push((4, bytes)); ui.save_ok })
     }
 }
+mod btpan {
+    pub unsafe fn save_web_password(text: *const u8) -> bool {
+        let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| {
+            let valid = (8..=31).contains(&bytes.len()) && bytes.iter().all(|b| (32..=126).contains(b));
+            ui.saves.push((5, bytes));
+            ui.save_ok && valid
+        })
+    }
+}
 
 macro_rules! completion_mock {
     ($name:ident, $index:expr) => {

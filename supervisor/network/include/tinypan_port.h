@@ -1,0 +1,5 @@
+#ifndef SYSPATCH_TINYPAN_PORT_H
+#define SYSPATCH_TINYPAN_PORT_H
+#define TINYPAN_ENABLE_LWIP 0
+#define TINYPAN_LOG(...) ((void)0)
+#endif

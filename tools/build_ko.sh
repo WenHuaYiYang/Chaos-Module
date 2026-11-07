@@ -11,7 +11,8 @@
 #     模块的 e_flags / .ARM.attributes 一致; 硬浮点编出来的加载器不认。
 #   * -Z build-std=core,compiler_builtins —— 目标平台上没有现成的 std, 只能现编。
 #   * --gc-sections 与 -T merge_sections.ld —— 不 GC 会把 core 的整个 .text 拖进来
-#     (实测 550KB, 而 insmod 上限是 256KB); 不 merge 则 .text 大小为 0, 加载器会
+#     (历史构建约 550KB); 256KB 是旧 Canopus 安装器阈值，非已证实的 insmod 上限。
+#     不 merge 则 .text 大小为 0, 加载器会
 #     一声不吭地"装成功", 而模块里一条指令都没有。
 #
 # 链完还要 fix_ko_layout.py 把各节 sh_addr 从全 0 重排成连续布局(rust-lld -r 不会自己排),
@@ -65,10 +66,15 @@ corona_obj="$src/target/thumbv8m.main-none-eabi/release/chaos_corona_blur.o"
        -I"$src" -I"$src/corona_vendor/include" \
        -c "$src/corona_blur.c" -o "$corona_obj"
 
+# Network features are part of the Rust UI; their C implementation is required.
+python3 "$here/build_network.py" --source "$src/network"
+
+# shellcheck disable=SC2086
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
        -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
        -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
-       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj"
+       --wrap=bnep_register_frame_callback --wrap=bnep_init --wrap=bt_probe_connect_device \
+       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj" "@$src/network/build/objects.rsp"
 
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then

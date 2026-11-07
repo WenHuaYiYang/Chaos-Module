@@ -42,6 +42,8 @@ mod background_assets;
 mod blur_zone;
 mod corona_blur;
 mod notification_icon;
+mod web_nsh;
+mod btpan;
 
 mod text;
 mod explorer;

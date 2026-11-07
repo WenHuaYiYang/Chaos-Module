@@ -9,6 +9,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 path = sys.argv[1]
 data = open(path, "rb").read()
 assert data[:4] == b"\x7fELF", "not ELF"
+assert data[4:7] == b"\x01\x01\x01", "expected ELF32 little-endian v1"
 assert struct.unpack_from("<H", data, 16)[0] == 1, "not ET_REL"
 assert struct.unpack_from("<H", data, 18)[0] == 40, "not ARM"
 e_entry = struct.unpack_from("<I", data, 24)[0]
@@ -18,6 +19,8 @@ shoff = struct.unpack_from("<I", data, 32)[0]
 shentsize = struct.unpack_from("<H", data, 46)[0]
 shnum = struct.unpack_from("<H", data, 48)[0]
 shstrndx = struct.unpack_from("<H", data, 50)[0]
+assert shentsize == 40 and 0 < shstrndx < shnum, "invalid ELF32 section table"
+assert shoff + shnum * shentsize <= len(data), "truncated section table"
 shstr_off = struct.unpack_from("<I", data, shoff + shstrndx * shentsize + 16)[0]
 shstr = data[shstr_off:]
 
@@ -41,12 +44,15 @@ if symtab:
         shndx = struct.unpack_from("<H", data, se + 14)[0]
         if shndx == 0:
             nm2 = strtab[sn:strtab.find(b"\x00", sn)].decode(errors="replace")
-            if nm2 and not nm2.startswith("__") and nm2 != "rust_begin_unwind":
+            if nm2:
                 undef.append(nm2)
 print("未定义符号:", undef if undef else "无 (OK)")
+assert symtab and not undef, "unresolved symbols cannot be loaded by Chaos"
+assert secs.get(".text", (0, 0, 0, 0))[3] > 0, "missing merged .text"
 
 init = [n for n in secs if n.startswith(".init_array")]
 print("init_array:", [(n, secs[n][3]) for n in init] if init else "无!")
+assert any(secs[n][3] >= 4 for n in init), "missing module constructor"
 
 rel = [n for n in secs if n.startswith(".rel")]
 types = {}
@@ -57,3 +63,6 @@ for n in rel:
         t = r_info & 0xFF
         types[t] = types.get(t, 0) + 1
 print("重定位类型:", {t: c for t, c in sorted(types.items())})
+assert types and set(types) <= {2, 10, 30, 42, 47, 48}, "unexpected ARM relocation type"
+allocated = {name: sec[3] for name, sec in secs.items() if sec[1] & 2}
+print("静态加载内存（不含任务栈、动态堆、加载器开销）:", sum(allocated.values()), "bytes", allocated)

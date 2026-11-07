@@ -12,6 +12,7 @@
   dist/assets/chaos_icon_settings.bin  64px 设置图标
   dist/assets/lxgw.ttf             字体槽占位文件
   dist/stage/                      打包临时目录（spec.json 等）
+  dist/THIRD-PARTY-NETWORK.txt      网络组件来源、版权与许可（也随容器分发）
 
 依赖：
   * nightly Rust + rust-src + thumbv8m.main-none-eabi（build_ko.sh 使用）
@@ -36,6 +37,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from network_notices import network_notices
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 DEVICE_DIR = "xiaomi-band-10-pro"
@@ -128,6 +131,7 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
         ("chaos_icon.bin", assets / "chaos_icon.bin"),
         ("chaos_icon_settings.bin", assets / "chaos_icon_settings.bin"),
         ("lxgw.ttf", font),
+        ("THIRD-PARTY-NETWORK.txt", assets.parent / "THIRD-PARTY-NETWORK.txt"),
     ]
     out = []
     for name, path in sources:
@@ -199,6 +203,7 @@ def main() -> int:
         raise RuntimeError("--skip-ko 但 dist/chaos_sup.ko 不存在")
     shutil.copyfile(ko, assets / "chaos_sup.bin")
     print(f"ko: {ko} ({ko.stat().st_size} bytes)")
+    (dist / "THIRD-PARTY-NETWORK.txt").write_text(network_notices(repo), encoding="utf-8")
 
     fetch = dist / "fetch-module.ko"
     capatch = dist / "capatch.elf"

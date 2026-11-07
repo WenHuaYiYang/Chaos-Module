@@ -80,6 +80,7 @@ pub(crate) enum Completion {
     DeviceName,
     DeviceModel,
     NshCommand,
+    WebPassword,
 }
 
 static mut TEXT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
@@ -98,6 +99,8 @@ static mut NSH_DRAFT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
 const SYMBOL_ROWS: [&[u8]; 4] = [b"!@#$%^&*()", b"_-+=[]{}\\|", b";:'\",.<>/?", b"\x60~"];
 
 fn nsh_mode() -> bool { unsafe { COMPLETION == Completion::NshCommand as u32 } }
+fn password_mode() -> bool { unsafe { COMPLETION == Completion::WebPassword as u32 } }
+fn symbols_enabled() -> bool { nsh_mode() || password_mode() }
 fn capacity() -> usize { if nsh_mode() { NSH_CAPACITY } else { CAPACITY } }
 
 pub(crate) unsafe fn open(initial: *const u8, completion: Completion) {
@@ -118,7 +121,7 @@ pub(crate) unsafe fn open(initial: *const u8, completion: Completion) {
         }
         TEXT[LENGTH] = 0;
     }
-    UPPERCASE = COMPLETION != Completion::NshCommand as u32;
+    UPPERCASE = !symbols_enabled();
     SYMBOL_MODE = false;
     SUBMITTED = false;
     INPUT_LABEL = 0;
@@ -137,6 +140,7 @@ unsafe fn save_nsh_draft() {
 pub(crate) unsafe fn title() -> &'static [u8] {
     match COMPLETION {
         x if x == Completion::NshCommand as u32 => "NSH命令输入\0".as_bytes(),
+        x if x == Completion::WebPassword as u32 => "网页服务器密码\0".as_bytes(),
         x if x == Completion::SystemText as u32 => "自定义手环系统文本\0".as_bytes(),
         x if x == Completion::DeviceName as u32 => "自定义设备名称\0".as_bytes(),
         x if x == Completion::DeviceModel as u32 => "自定义手环型号\0".as_bytes(),
@@ -151,7 +155,7 @@ unsafe fn refresh_input() {
     {
         // Keep the insertion point visible for a long NSH command. Input is
         // ASCII-only; custom settings retain their original display behavior.
-        let offset = if nsh_mode() { LENGTH.saturating_sub(20) } else { 0 };
+        let offset = if symbols_enabled() { LENGTH.saturating_sub(20) } else { 0 };
         fw_api::label_set_text(INPUT_LABEL, (core::ptr::addr_of!(TEXT) as *const u8).add(offset));
     }
 }
@@ -314,7 +318,7 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     fw_api::obj_style_color(board, 0, 0);
 
     let mut ok = true;
-    if nsh_mode() && SYMBOL_MODE {
+    if symbols_enabled() && SYMBOL_MODE {
         for (i, row) in SYMBOL_ROWS.iter().enumerate() {
             let mut keys = [0u32; 10];
             for (j, &c) in row.iter().enumerate() { keys[j] = c as u32; }
@@ -366,7 +370,7 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     }
     if !create_key(
         parent,
-        if nsh_mode() { KEY_SYMBOLS } else { b'.' as u32 },
+        if symbols_enabled() { KEY_SYMBOLS } else { b'.' as u32 },
         96,
         bottom,
         56,
@@ -400,7 +404,7 @@ unsafe extern "C" fn key_event(event: u32) {
     }
     let code = fw_api::event_user_data(event);
     match code {
-        KEY_SYMBOLS if nsh_mode() => {
+        KEY_SYMBOLS if symbols_enabled() => {
             SYMBOL_MODE = !SYMBOL_MODE;
             render_req(PAGE_PID as usize);
             return;
@@ -441,6 +445,9 @@ unsafe extern "C" fn key_event(event: u32) {
                 x if x == Completion::NshCommand as u32 => {
                     crate::terminal_ui::submit_command(core::ptr::addr_of!(TEXT) as *const u8)
                 }
+                x if x == Completion::WebPassword as u32 => {
+                    crate::btpan::save_web_password(core::ptr::addr_of!(TEXT) as *const u8)
+                }
                 _ => false,
             };
             if saved {
@@ -450,6 +457,8 @@ unsafe extern "C" fn key_event(event: u32) {
             } else if nsh_mode() && safe_ptr(INPUT_LABEL) {
                 // Keep the buffer unchanged; the next key restores the tail.
                 fw_api::label_set_text(INPUT_LABEL, "发送失败，请重试\0".as_ptr());
+            } else if password_mode() && safe_ptr(INPUT_LABEL) {
+                fw_api::label_set_text(INPUT_LABEL, "密码需8～31位字符\0".as_ptr());
             }
             return;
         }
