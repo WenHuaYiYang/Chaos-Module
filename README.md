@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/release-v1.0.7-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v1.1.4-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -35,6 +35,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 - **设备工具**：亮度、缓存清理、时间/日期设置、震动测试。
 - **运行日志**：关键操作写入 `/data/chaos/chaos.log`，设置 → 运行日志可查看与清空。
 - **无外部依赖**：只调固件已验证的 API，不注入 JS、不依赖网络。
+- **原生文件桥**：内置 CanopusConnect 兼容端，AstroBox 文件管理器插件可直接连接，不再需要 Canopus 模块/管理器。
 
 ## 兼容性
 

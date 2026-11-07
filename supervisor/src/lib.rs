@@ -2,7 +2,6 @@
 //! 关键：register_app 内部 malloc/memset 是 thunk→段B(LVGL)，需 fops.write 上下文。
 
 #![no_std]
-#![feature(arm_target_feature)]
 #![no_main]
 #![allow(static_mut_refs)]
 
@@ -46,13 +45,31 @@ mod web_nsh;
 mod btpan;
 
 mod text;
-mod explorer;
 mod watchface;
 mod page;
 mod ui;
 mod ipc;
+mod bridge_cfg;
+
+/// Called by the C bridge only for one-shot state transitions, never per
+/// frame. Keeping it here means the bridge uses Chaos' log file and the
+/// "运行日志" page instead of a second logging path.
+#[no_mangle]
+pub extern "C" fn chaos_bridge_log(message: *const u8) {
+    if message.is_null() {
+        return;
+    }
+    unsafe {
+        let mut n = 0usize;
+        while n < 160 && *message.add(n) != 0 {
+            n += 1;
+        }
+        if let Ok(text) = core::str::from_utf8(core::slice::from_raw_parts(message, n)) {
+            crate::log::line(text);
+        }
+    }
+}
 pub(crate) use text::*;
-pub(crate) use explorer::*;
 pub(crate) use watchface::*;
 pub(crate) use page::*;
 pub(crate) use ui::*;
@@ -136,6 +153,9 @@ macro_rules! chaos_row_cb {
         unsafe extern "C" fn $name(event: u32) -> u32 { chaos_row_dispatch($idx, event) }
     };
 }
+// 未知槽位: 不派发任何页面动作。
+#[no_mangle]
+unsafe extern "C" fn chaos_row_ev_invalid(_event: u32) -> u32 { 0 }
 chaos_row_cb!(chaos_row_ev0, 0);
 chaos_row_cb!(chaos_row_ev1, 1);
 chaos_row_cb!(chaos_row_ev2, 2);
@@ -193,6 +213,30 @@ chaos_row_cb!(chaos_row_ev48, 48);
 chaos_row_cb!(chaos_row_ev49, 49);
 chaos_row_cb!(chaos_row_ev50, 50);
 chaos_row_cb!(chaos_row_ev51, 51);
+chaos_row_cb!(chaos_row_ev52, 52);
+chaos_row_cb!(chaos_row_ev53, 53);
+chaos_row_cb!(chaos_row_ev54, 54);
+chaos_row_cb!(chaos_row_ev55, 55);
+chaos_row_cb!(chaos_row_ev56, 56);
+chaos_row_cb!(chaos_row_ev57, 57);
+chaos_row_cb!(chaos_row_ev58, 58);
+chaos_row_cb!(chaos_row_ev59, 59);
+chaos_row_cb!(chaos_row_ev60, 60);
+chaos_row_cb!(chaos_row_ev61, 61);
+chaos_row_cb!(chaos_row_ev62, 62);
+chaos_row_cb!(chaos_row_ev63, 63);
+chaos_row_cb!(chaos_row_ev64, 64);
+chaos_row_cb!(chaos_row_ev65, 65);
+chaos_row_cb!(chaos_row_ev66, 66);
+chaos_row_cb!(chaos_row_ev67, 67);
+chaos_row_cb!(chaos_row_ev68, 68);
+chaos_row_cb!(chaos_row_ev69, 69);
+chaos_row_cb!(chaos_row_ev70, 70);
+chaos_row_cb!(chaos_row_ev71, 71);
+chaos_row_cb!(chaos_row_ev72, 72);
+chaos_row_cb!(chaos_row_ev73, 73);
+chaos_row_cb!(chaos_row_ev74, 74);
+chaos_row_cb!(chaos_row_ev75, 75);
 
 
 
@@ -243,6 +287,8 @@ unsafe extern "C" fn chaos_ctor() {
         // 依赖它的一切(页面 tick / desktop_scale)都不会跑。
         crate::log::kv("timer h ", st_rd!(SHAKE_TIMER));
         crate::log::line("模块加载: /dev/chaos 注册成功");
+        // The bridge is armed from chaos_shake_timer, not here: the owner
+        // loop / LVGL timer source is not ready while insmod is running.
     }
 }
 

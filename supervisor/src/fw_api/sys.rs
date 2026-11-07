@@ -418,6 +418,73 @@ pub unsafe fn quickapp_registry_find(key: *const u8) -> u32 {
     f(key)
 }
 
+/// `quickapp_launch_app(pkg, uri)` —— 启动一个已安装的快应用。`0x0C5481E4`。
+///
+/// 反汇编确认：r0 是**包名字符串指针**（不是 app_id），r1 是可选 uri。
+/// 内部 `0xC548160` 先按包名在 proxyquickapp 已装表（`0x20111B90`）里查找，
+/// 找不到时打印 `Failed to get appinfo for package: %s`（%s 就是 r0 这个包名指针，
+/// 传数字 app_id 当指针会直接 busfault —— 真机已撞过）；找到后 uri 为空就用
+/// 全局 appinfo（`0x20111ADC`），再调框架 vtable `[0x200EB6E0+8]` 拉起页面。
+///
+/// 前提：包名以 NUL 结尾、应用已安装（在已装表里）；在 UI/tick 线程调用。
+pub unsafe fn quickapp_launch_app(pkg: *const u8) -> i32 {
+    let f: unsafe extern "C" fn(*const u8, *const u8) -> i32 = transmute(0x0C54_81E5usize);
+    f(pkg, core::ptr::null())
+}
+/// 探测 proxyquickapp 已装表是否就绪。
+///
+/// 真实初始化入口是 `0xC548450(完成回调, 配置串)`：`r1` 会作为事件处理器登记到
+/// 六个子系统，传 NULL 会把这些处理器清空，传错值会 `blx` 野指针。我们手里没有
+/// 固件启动时使用的那份配置对象，**不能**安全地手动拉起它，所以这里只读表状态，
+/// 由固件自己完成初始化；调用方稍后重试即可。
+pub unsafe fn quickapp_proxy_init() -> bool {
+    let n = quickapp_app_count();
+    if n > 0 { return true; }
+    crate::log::line("补建节点: 应用表未就绪");
+    false
+}
+
+/// 只给**指定包名**补注册表节点（不碰其它应用）。
+///
+/// 深度隐藏重启后节点缺失, 单点「显示应用」若直接 `app_launcher_add` 会失败；
+/// 这里在 proxyquickapp 已装表里按包名找到该项, 用 `quickapp_register_app`
+/// 建节点（会加图标, 调用方随后 `apply_pkg(false)` 会先 del 再 add, 不会重复）。
+pub unsafe fn quickapp_register_pkg(pkg: *const u8) -> bool {
+    let mut n = quickapp_app_count();
+    // 表没就绪时只记录状态，不手动初始化 proxyquickapp（见 quickapp_proxy_init）。
+    if n <= 0 {
+        crate::log::kv("补建节点-应用表 ", if quickapp_proxy_init() { 1 } else { 0 });
+        n = quickapp_app_count();
+    }
+    if n <= 0 { return false; }
+    let n = if n > 512 { 512 } else { n };
+    let mut i = 0i32;
+    while i < n {
+        let mut info = [0u8; 0x2c];
+        if quickapp_app_item(i as u32, info.as_mut_ptr()) == 0 {
+            let key = crate::mem::rd32(info.as_ptr() as *const u32);
+            if key != 0 && crate::mem::safe_ptr(key) && cstr_same(key as *const u8, pkg) {
+                let id = crate::mem::rd16(QUICKAPP_NEXT_ID as *const u16);
+                return quickapp_register_app(id, info.as_ptr()) == 0;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+unsafe fn cstr_same(a: *const u8, b: *const u8) -> bool {
+    let mut k = 0usize;
+    while k < 256 {
+        let x = *a.add(k);
+        if x != *b.add(k) { return false; }
+        if x == 0 { return true; }
+        k += 1;
+    }
+    false
+}
+
+
 /// 遍历已装应用表，**只给注册表里查不到的 app 补节点**，返回 `(扫描数, 补建数)`。
 ///
 /// 用途：深度隐藏把条目搬进 `apps.json_hide` 后重启，固件不会为这些应用建节点，
@@ -429,7 +496,11 @@ pub unsafe fn quickapp_registry_find(key: *const u8) -> u32 {
 pub unsafe fn quickapp_resync_missing() -> (u32, u32) {
     let vb = crate::mem::rd32((APP_REGISTRY + 0x18) as *const u32);
     if vb == 0 || !crate::mem::plausible_ptr(vb) { return (0, 0); }
-    let n = quickapp_app_count();
+    let mut n = quickapp_app_count();
+    if n <= 0 {
+        let _ = quickapp_proxy_init();
+        n = quickapp_app_count();
+    }
     if n <= 0 { return (0, 0); }
     // 数量异常大说明表还没初始化好, 宁可不做也不能照着一个垃圾值循环。
     let n = if n > 512 { 512 } else { n };

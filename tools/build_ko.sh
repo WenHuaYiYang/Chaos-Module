@@ -54,12 +54,23 @@ echo "rust-lld: $lld"
 # relocatable link; the provider has no libc/runtime imports and all firmware
 # calls are encoded as audited .043 AP addresses in corona_blur.c.
 cc=${CC:-clang}
+if ! command -v "$cc" >/dev/null 2>&1; then
+  # Local fallback: the workspace's xpack GCC. CI still uses clang.
+  for cand in arm-none-eabi-gcc "$here/../../../toolchain/xpack-arm-none-eabi-gcc-15.2.1-1.1/bin/arm-none-eabi-gcc"; do
+    if command -v "$cand" >/dev/null 2>&1; then cc="$cand"; break; fi
+  done
+fi
 command -v "$cc" >/dev/null 2>&1 || {
-  echo "error: clang (or CC) is required to build the Corona blur provider" >&2
+  echo "error: clang (or CC) is required to build the C providers" >&2
   exit 1
 }
-corona_obj="$src/target/thumbv8m.main-none-eabi/release/chaos_corona_blur.o"
-"$cc" --target=thumbv8m.main-none-eabi -mcpu=cortex-m33 -mthumb -mfloat-abi=soft \
+case "$cc" in
+  *gcc) cflags_target="-mcpu=cortex-m33 -mthumb -mfloat-abi=soft" ;;
+  *)    cflags_target="--target=thumbv8m.main-none-eabi -mcpu=cortex-m33 -mthumb -mfloat-abi=soft" ;;
+esac
+obj_dir="$src/target/thumbv8m.main-none-eabi/release"
+corona_obj="$obj_dir/chaos_corona_blur.o"
+"$cc" $cflags_target \
        -ffreestanding -fno-builtin -fno-stack-protector \
        -fno-unwind-tables -fno-asynchronous-unwind-tables \
        -ffunction-sections -fdata-sections -O2 \
@@ -69,12 +80,27 @@ corona_obj="$src/target/thumbv8m.main-none-eabi/release/chaos_corona_blur.o"
 # Network features are part of the Rust UI; their C implementation is required.
 python3 "$here/build_network.py" --source "$src/network"
 
+# Native CanopusConnect file bridge. It is deliberately a C provider: the
+# CPC2/L2 paths came from the audited Canopus target pack, while the file
+# protocol is the embedded band_files source.
+bridge_objs=""
+for f in canopus_protocol band_files_embed bridge; do
+  o="$obj_dir/chaos_bridge_$f.o"
+  "$cc" $cflags_target \
+         -ffreestanding -fno-builtin -fno-stack-protector \
+         -fno-unwind-tables -fno-asynchronous-unwind-tables \
+         -ffunction-sections -fdata-sections -O1 -DBF_BRIDGE \
+         -I"$src/bridge" -c "$src/bridge/$f.c" -o "$o"
+  bridge_objs="$bridge_objs $o"
+done
+
 # shellcheck disable=SC2086
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
+       -u chaos_bridge_start -u chaos_bridge_stop \
        -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
        -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
        --wrap=bnep_register_frame_callback --wrap=bnep_init --wrap=bt_probe_connect_device \
-       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj" "@$src/network/build/objects.rsp"
+       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj" $bridge_objs "@$src/network/build/objects.rsp"
 
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then

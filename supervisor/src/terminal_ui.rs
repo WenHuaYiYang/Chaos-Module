@@ -103,8 +103,6 @@ pub(crate) unsafe fn submit_command(input: *const u8) -> bool {
     send(&command[..n + 1])
 }
 
-pub(crate) unsafe fn input_error() -> i32 { LOCAL_ERROR }
-
 /// Drain bounded work on the UI thread; this never touches a widget. It is
 /// safe to call while the keyboard is foreground, preserving long output.
 pub(crate) unsafe fn poll_output() {

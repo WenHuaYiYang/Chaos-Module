@@ -804,8 +804,3 @@ pub(crate) unsafe fn status() -> *const u8 {
         _ => "等待驱动就绪后接管\0".as_ptr(),
     }
 }
-
-/// 取证读数(界面用): 是否已装 / 命中 / 换成功 / 回退
-pub(crate) unsafe fn counters() -> (u32, u32, u32, u32) {
-    (st_rd!(RH_ON), st_rd!(RH_HIT), st_rd!(RH_OK), st_rd!(RH_FALLBACK))
-}

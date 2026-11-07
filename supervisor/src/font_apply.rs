@@ -797,12 +797,6 @@ unsafe fn fa_face_of(name: *const u8, size: u32) -> u32 {
 /// 台账条数
 pub(crate) unsafe fn cch_n() -> u32 { st_rd!(FA_CCH_N) }
 
-/// 第 i 条的记录指针(0 = 越界或该槽失败)。台账存的 face 就是管理器记录。
-pub(crate) unsafe fn cch_face_at(i: u32) -> u32 {
-    if i >= FA_CCH_CAP { return 0; }
-    st_rd!(FA_CCH_FACE[i as usize])
-}
-
 /// 按字号找我们已建好的记录(第一条非零命中; 没有 = 0)。
 pub(crate) unsafe fn cch_face_for_size(size: u32) -> u32 {
     let n = st_rd!(FA_CCH_N) as usize;

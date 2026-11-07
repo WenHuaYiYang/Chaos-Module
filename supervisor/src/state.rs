@@ -20,12 +20,6 @@ pub const FW_INIT_BUFFER: u32 = 0x0C51_3A45;       // app_launcher_add(app_id) (
 pub const FW_NOTIFY: u32 = 0x0CA9_A899;            // lvx_notification_insert_message(notif*) 固件完整链(拷贝/登记由它内部自处理; 自己手写那条手动链里的段B memset 实测必崩)
 
 // VFS (symbols: nuttx)
-pub const FW_FILE_OPEN: u32 = 0x0C1D_0A29;   // open(path, flags, mode) -> fd
-
-pub const FW_FILE_CLOSE: u32 = 0x0C1B_9D81;  // close(fd) -> 0
-
-pub const FW_FILE_READ: u32 = 0x0C1D_129D;   // read(fd, buf, len) (036 版本核对到的是 0x0C1C1E25)
-
 pub const MAX_ROWS_PER_PAGE: usize = 12;
 
 // 信息页三行实时数值(存储/内存/CPU), 每格 STAT_STRIDE 字节
@@ -119,8 +113,6 @@ pub static PAGE_TXTSUB: [u8; 8] = *b"textsub\0";
 /// 页6: 系统美化 -> 桌面图标(二级)
 pub static PAGE_ICONSUB: [u8; 8] = *b"iconsub\0";
 
-pub static PAGE_EXCL: [u8; 7] = *b"excl\0\0\0";
-
 /// 页7: 系统模糊 -> 旧版选项。保留旧的静态背景/实时截取设置，
 /// 但不再把“系统背景”和“模糊区域”重复放入此页。
 pub static PAGE_BLUR_LEGACY: [u8; 11] = *b"blurlegacy\0";
@@ -206,6 +198,7 @@ pub static mut NOTIF: [u32; 22] = [0; 22];
 pub static mut CTOR_DONE: u32 = 0; // ctor 幂等守卫(.init_array + module_main 可能双触发)
 
 pub static mut DRIVER_ON: u32 = 0; // driver 注册成功标志（dtor 幂等守卫）
+pub static mut BRIDGE_STATE: u32 = 0; // 0=未启动 1=运行 0xffff_ffff=启动失败
 
 // 非零初始化可变全局 → 产生 .data PROGBITS 节（与固件自带模块的 ELF 形状一致）
 #[used]
@@ -284,8 +277,6 @@ pub const FW_READDIR: u32 = 0x0C1E_4591;           // readdir(DIR*)->dirent*{d_t
 
 pub const FW_CLOSEDIR: u32 = 0x0C1E_4565;          // closedir(DIR*) 真机验证
 
-pub const FW_ERRNO_LOCATION: u32 = 0x0C1E_45BD;    // __errno()->int*(固件自带 config 与 nsh 的调用点核对)
-
 // NuttX dirent.h 的 d_type 取值(readdir 返回的 dirent 首字节)。
 // 只列过滤真正用到的两个; 其余取值(含 DT_UNKNOWN=0)走"不是目录也不是普通文件"那支。
 pub const DT_DIR: u8 = 4;
@@ -298,43 +289,6 @@ pub static mut BRIGHT_VAL: u32 = 128;                  // 当前手动亮度值(
 pub static mut BRIGHT_STATUS: [u8; 64] = [0; 64];      // 状态行文本缓冲
 pub static mut BRIGHT_REQ: u32 = 0;                    // 请求码: 0=无 1=设值 2=切自动 3=切全功率
 pub static mut BRIGHT_REQ_VAL: u32 = 0;                // 设值请求的目标值
-
-pub static mut FILE_LINES: [[u8; 88]; 11] = [[0; 88]; 11];   // 返回行文本在下标 10 // 目录页行文本
-
-
-
-pub static mut FILE_VIEW: [u8; 2052] = [0; 2052];     // 查看页当前块原始内容
-
-pub static mut VIEW_DT: u8 = 0;                        // 查看页目标的 dirent 类型(决定能不能读)
-pub static mut FILE_VIEW_N: i32 = 0;                    // 实读字节数; <0=错误码(-2=非普通文件未读)
-
-pub static mut VIEW_TEXT: [u8; 2200] = [0; 2200];     // 查看页 label 文本(sanitize/strings+折行)
-
-pub static mut VIEW_BACKTXT: [u8; 88] = [0; 88];      // "< Back > bN" 行文本
-
-pub static mut VIEW_BLK: u32 = 0;                       // 深读块号(skip=blk*2047 顺序读弃)
-
-pub static mut VIEW_LOADED: u32 = 0;                    // 1=当前块已读
-
-pub static mut VIEW_BINARY: u32 = 0;                    // 1=strings模式
-
-pub static mut VIEW_PATH: [u8; 160] = [0; 160];       // 查看页文件全路径
-
-pub static mut PATH_STACK: [[u8; 160]; 8] = [[0; 160]; 8];  // 路径栈(每级全路径, depth=page_id-1)
-
-pub static mut DIR_DEPTH: u32 = 0;
-
-pub static mut DIR_NAMES: [[u8; 64]; 24] = [[0; 64]; 24];
-
-pub static mut DIR_TYPES: [u8; 24] = [0; 24];
-
-pub static mut DIR_COUNT: u32 = 0;
-
-pub static mut DIR_ERR: i32 = 0;                        // opendir 失败 errno(正数)
-
-pub static mut DIR_WIN: u32 = 0;                        // 目录当前窗(8条目/窗)
-
-pub static mut DIR_WIN_SAVE: [u32; 8] = [0; 8];         // 每深度窗位保存(返回时恢复)
 
 // 表盘选择页(page8): RAM 链表枚举缓存
 pub static mut WATCH_LINES: [[u8; 88]; 11] = [[0; 88]; 11];
@@ -398,24 +352,6 @@ pub const FW_FONT_DEFAULT: u32 = 0x2CCE_1734;
 /// `memzero(+8, 0x318)`，即整块约 0x320 字节）。字体管理器单例就是这个块的第一个字
 /// （`font_apply::manager_ready` 读 `+0x1C` 取路径管理器）。静态核对
 pub const LV_GLOBAL: u32 = 0x2010_3174;
-/// `lv_global + 0x14` = 当前用于刷新的 `lv_display_t *`。取/存是一对纯指令
-/// (0x0C1052B0 `ldr r0,[r3,#0x14]; bx lr` / 0x0C1052C4 `str r0,[r3,#0x14]`)，
-/// 同一个 0x14 在 `refr_area_part`(0x0C105358) 里被当 display 用(+0x28=flush_cb,
-/// +0x25c=inv_p, +0x3C+i*0x10=inv_areas)。静态核对
-/// 重要: 上面那对取/存访问器的形状就是 LVGL 的
-/// `_lv_refr_get/set_disp_refreshing` —— **"没有 display 在刷新"时这个槽是 0**,
-/// 不是"指针取不到"。把 0 当成"忙"方向就整个反了(空闲判忙 => 累计熔断把换字关掉;
-/// 只在它非 0 的瞬间放行 => 恰好是渲染窗口)。门的正确写法曾见于 font_tree::ft_render_busy(补写已退役, 见 git 历史)。
-/// 注意: `lv_global + 0x18` 是全镜像最热的指针字段(35 次取址), 但"+0x14 与 +0x18
-/// 谁是 display"静态证不了(取用它们的代码在 0x1C 模块, 实现体已被厂商清零)。
-pub const LVG_DISP: u32 = 0x14;
-/// `disp + 0x3a` 的 **bit1** = `rendering_in_progress`。证据：`_lv_inv_area`
-/// (0x0C105164) 入口 `mov r4,r0` 存下 disp，紧接着 `ldrb.w r5,[r4,#0x3a]` +
-/// `ands r5,r5,#2` + `bne 0x0c10527c`，而 0x0c10527c 就是
-/// `!disp->rendering_in_progress` 断言体 —— **本固件断言不返回**(落到下一个函数
-/// 入口)，UI 线程挂死等看门狗。所以渲染进行中绝不能改任何对象样式。静态核对
-pub const DISP_FLAG_OFF: u32 = 0x3a;
-pub const DISP_RENDERING_BIT: u32 = 0x02;
 /// face 拷贝块 `+0x0C` = u16 `line_height`(LVGL 排版用的高度)。
 /// 证据一：`LV_FONT_DEFAULT`(0x2CCE1734) 的 +0x0C 实测是 16(个位图字体应有的行高,
 /// 不是指针)；证据二：`row_init`(0x0C4C8560) 取到行字体后
@@ -478,8 +414,3 @@ impl Page {
 pub static mut PAGES: [Page; PAGE_COUNT] = [Page::EMPTY; PAGE_COUNT];
 // 每页标题文本缓冲: 标题 = 进入该页时点的行控件名, 目录页/查看页是动态的
 pub static mut TITLE_TXT: [[u8; 48]; PAGE_COUNT] = [[0; 48]; PAGE_COUNT];
-
-// 主页圆环: [弧0, 弧1, 标签0, 标签1] / 标签文本 / 上次百分比
-pub static mut RING_H: [u32; 4] = [0; 4];
-pub static mut RING_TXT: [[u8; 48]; 2] = [[0; 48]; 2];
-pub static mut RING_PREV: [i32; 2] = [-1; 2];

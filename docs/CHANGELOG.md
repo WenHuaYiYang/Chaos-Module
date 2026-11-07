@@ -2,6 +2,66 @@
 
 版本号与容器头、关于页、`Cargo.toml` 三处同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
+## v1.1.4 — 2026-11-07
+
+- **文件桥默认关闭**：首次安装/没有 `bridge.cfg` 时不再占用 L2 0x43；需要时在设置页手动打开。关闭开关后维护 tick 会真正调用 `chaos_bridge_stop()`，恢复原 handler 并清空队列。快速「关→开→关」也不会留下仍在运行的桥。
+- **合并模糊开关**：去掉独立的“模糊v2”，Corona 模糊开关同时启用通知 `no_message` 图标去黑底；旧 `blur_v2.cfg` 开启状态会在首次启动迁移到 `corona_blur.cfg` 并删除旧文件。
+- **修复系统模糊页行号错位**：恢复 0=系统背景、1=corona模糊、2=状态、3=旧版选项、4=模糊区域的布局，旧版选项和模糊区域不再互相打开错误页面。
+- **修复通知详情页空状态图标黑底**：Corona 开关附带的 `notification_icon` 扫描新增通知详情页只读 root；详情页仍不接管背景，只替换 `no_message` 图源，避免整块黑容器。
+- **修复模式切换边界**：切换失败时同时回滚 `APPLY_MODE` 和 `appmgr_apply.cfg`；深度→普通迁移在真实深度源上取条目，不再把 keep 可见条目误判为隐藏；`keep_add` 失败会回滚；迁移请求由维护定时器兜底消费，离开页面也会完成。旧单字节 `appmgr_apply.cfg` 仍兼容。
+- **提高应用容量**：`APP_MAX` 40 → 64，注册表缓冲 32 KB → 64 KB；行事件槽位扩到 75，避免第 52 行以后错派发。超限时分别提示“应用过多”或“注册表过大”，不再落到“解析失败”。旧 40 槽 keep/excl 文件自动迁移。日志页尾部缓冲 48 KB → 16 KB，为注册表让出 RAM。
+- **恢复普通隐藏 / 深度隐藏双模式**：应用管理页行 1 恢复“深度隐藏”开关。开 = 条目搬进 `apps.json_hide`；关 = 条目留在 `apps.json`，用 `appmgr_keep.bin` 记录隐藏名单。模式持久化到 `appmgr_apply.cfg`，启动补偿、换绑看门狗和单条/批量隐藏都按当前模式分支。
+- **代码模块化**：`page.rs` 从 3,547 行拆为页面框架 + `page/` 下 10 个功能模块；`appmgr.rs` 从 2,715 行拆为共享状态/API + `appmgr/` 下 7 个职责模块。页面表、固件地址和持久化格式不变。
+- **文件桥并入标准包**：不再构建/发布 safe 包，`chaos_sup.ko` 和安装包始终包含文件桥；设置页始终显示 `文件桥` switch，但默认关闭。
+- **文件桥运行期开关**：状态持久化到 `/data/chaos/bridge.cfg`（`BRG1` + enabled）。
+- 新增 `chaos_bridge_stop()`：把 L2 0x43 的 RX handler 恢复为固件原入口，清空 RX/TX 队列、listener 和连接状态；owner/bt timer 降到 1 Hz 空转。
+- `chaos_bridge_start()` 支持恢复：timer 已初始化时直接重启 10 ms owner tick 并重新挂接；如果 Canopus 已占用 handler，`l2_attach()` 只在当前仍是 `L2_RX` 时接管，不会强行覆盖。
+- 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 由 `chaos_shake_timer` 执行，避免在 LVGL 点击回调里创建/撤销 timer。
+- 版本 1.1.4；容器头 `0x00010104`。
+
+## v1.1.3.dev — 2026-11-04
+
+- **原生文件桥**：`supervisor/bridge/` 内置最小 CanopusConnect 兼容端（`bridge.c` + `canopus_protocol.c` + `band_files_embed.c`），在 `chaos_shake_timer` 里等 UI owner 就绪后调用 `chaos_bridge_start()`。支持 AstroBox `band_files` 插件的 ConnectListen/Send/Message 与 L2 0x43 加密会话，不依赖 Canopus 模块。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。
+- 构建支持 `CHAOS_NO_BRIDGE=1` 产出 safe 包；bridge 包额外链接三个 C provider，KO 约 299 KB，safe 包约 282 KB。
+- 日志降噪：移除 `keep_apply_all()` 的逐条“开机补偿隐藏”，移除看门狗周期重放的重复日志；只在注册表真正变化时记录。
+- 版本 1.1.3.dev；容器头 `0x00010103`。
+
+## v1.1.2.dev — 2026-11-04
+
+- **原生文件桥**：Chaos 内置最小 CanopusConnect 兼容端，AstroBox 文件管理器插件可直接连接，不再需要 Canopus 模块管理器、Canopus Supervisor 或 band_files 模块；文件协议/插件 UI 不变。新增 `docs/24-FILE-BRIDGE.md`。
+
+
+- **合并官方 master `a137e9a`（官方版本 1.1.2）**：并入 Corona 模糊、通知图标、背景/状态栏调整与对应测试；开发分支版本显示为 `v1.1.2.dev`，容器头继续跟随官方 `0x00010007`。
+- **深度隐藏恢复为默认，并支持运行期免重启显示**：`apply_mode_ensure()` 改回 `APPLY_MODE = 0`；隐藏时条目进 `apps.json_hide`，开机固件不注册，避免所有快应用图标先闪一下。
+- 显示路径：`op_show_pkg` 先把条目搬回 `apps.json`，`apply_immediate` 在 `find_node == 0` 时调用 `quickapp_register_pkg`（内部 `quickapp_register_app` @ `0x0C549678`，数据来自 proxyquickapp 已装表）补节点，再清 bit0、挂图标。
+- 补建日志新增 `显示应用-应用表 N`、`显示应用-补建节点 0/1`、`显示应用-补建后仍无节点`，用于区分代理表未就绪、表里没有该包、以及节点已建但 `app_launcher_add` 失败。
+- 普通隐藏留下的 keep 名单由 `boot_apply()` 的 `deep_apply_all()` 自动迁进 `apps.json_hide`；`watch_keep()` 继续在换绑/重注册后重放深度隐藏。
+- 版本 1.1.2.dev。
+
+## v1.1.12 — 2026-11-03
+
+- **运行期补注册表节点**：反汇编确认固件 `quickapp_register_app(app_id, info)` @ `0x0C549678` 会分配并挂入注册表节点，内部调用 `app_launcher_add`；数据来自 proxyquickapp 已装表（`0x20111B90`，`quickapp_app_count` @ `0x0C54A560`、`quickapp_app_item` @ `0x0C54A818`）。固件自己的重同步在事件 9 回调 `0x0C5498A4` 与换绑入口 `0x0C5499B4`。
+- `boot_apply()` 的补节点从“第 5 次只试一次”改为每 5 次补偿重试一次，覆盖 proxyquickapp 表晚于模块就绪的情况。
+- 移除手动 `quickapp_proxy_init()` 调用：真实入口 `0x0C548450(callback, config)` 需要固件启动时那份配置对象，传 NULL 会清空六个事件处理器，旧的无参调用还可能把事件对象当回调 `blx`。改为只读已装表，等待固件初始化，并由开机补偿周期重试。
+- 补建仍失败的情况：已装表始终为 NULL，或 `quickapp_register_app` 的 `malloc(0xD0)` 返回空（日志 `no memory for page.`）。
+- 版本 1.1.12。
+
+## v1.1.11 — 2026-11-02
+
+- **快应用显示免重启**：`apply_mode_ensure()` 不再强制深度隐藏，固定普通隐藏（`APPLY_MODE = 1`）。隐藏时条目留在 `apps.json`，只写 keep 名单、置节点 `+0x3C` bit0、摘桌面图标；显示时清 bit0 并挂回图标，运行期立即生效。
+- 深度隐藏停用：固件只在开机读 `apps.json`，运行期没有安全的重新注册入口，搬走条目后无法补节点。
+- 新增一次性迁移 `migrate_deep_to_keep()`：把 `apps.json_hide` 条目搬回 `apps.json`，同时写入 keep 名单保持隐藏；名单满时回滚该条，避免应用意外露出。
+- `do_reapply()`、`boot_apply()`、`watch_keep()` 增加普通模式分支，只重放隐藏位/图标，不再调用 `deep_apply_all()` 搬文件；`do_op()`/`do_batch()` 在重读后排序，隐藏/显示后列表顺序立即更新。
+- 版本 1.1.11；`appmgr_apply.cfg` 不再读取。
+
+## v1.1.10 — 2026-11-02
+
+- **运行日志页重做显示**：日志文字从 `content` 直接子对象改为独立纵向滚动视口；按 24px MiSans 保守字宽手动折行并累计视觉行数，标签/内层 board 高度由行数换算（此固件不响应 `LV_SIZE_CONTENT`），长行不再被固定 240 高裁掉。
+- 去掉“每页 2 条”分页；一次拼出最新 60 条日志，最新在上。行首偏移改为 1024 项环形缓冲，日志行数超过 1024 时仍取到真正的尾部，而不是停在最旧一段。
+- 清空结果提示作为一次性首行消费，显示后立即清零；清空成功后不再立刻变回“暂无日志”。
+- 日志页与关于页版本号改用 `env!("CARGO_PKG_VERSION")`，不再每版手写；版本 1.1.10。
+- 重新构建 ko 与安装器容器（容器头版本保持既有值）。
+
 ## v1.0.7 — 2026-11-01
 
 - 并入系统关于页面修改（系统版本显示 / 手环系统文本 / 设备名称 / 手环型号）与通用英文数字键盘。

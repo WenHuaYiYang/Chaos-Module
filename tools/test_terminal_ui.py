@@ -13,7 +13,7 @@ def check_registration():
     state, ipc, page, ui, timer = (read(p) for p in
                                  ("state.rs", "ipc.rs", "page.rs", "ui.rs", "watchface.rs"))
     count = int(re.search(r"pub const PAGE_COUNT: usize = (\d+)", state)[1])
-    assert count == 32
+    assert count == 36
     assert "MAX_PID: usize = PAGE_COUNT - 1" in state
     assert "MAX_PAGE_ID: usize = crate::state::MAX_PID" in read("fw_api.rs")
     for declaration in ("DESC: [u32; PAGE_COUNT * 29]", "PAGES: [Page; PAGE_COUNT]",
@@ -25,9 +25,9 @@ def check_registration():
     table = page.split("pub(crate) static PAGE_TABLE:", 1)[1].split("];", 1)[0]
     assert len(re.findall(r"(?m)^\s*&[^,]+,", table)) == count
     assert "&crate::terminal_ui::PAGE" in table
-    items = ipc.split("let items: [u32; PAGE_COUNT] = [", 1)[1].split("];", 1)[0]
-    offsets = [int(s, 16) if s else 0 for s in re.findall(r"desc_addr(?:\s*\+\s*(0x[0-9A-Fa-f]+))?", items)]
-    assert offsets == [i * 116 for i in range(count)]
+    assert "&crate::btpan::PAGE_EXP_P" in table
+    assert "let mut items = [0u32; PAGE_COUNT];" in ipc
+    assert "desc_addr + i as u32 * 116" in ipc
     assert "install(meta, items.as_ptr(), PAGE_COUNT as u32)" in ipc
     assert ui.count("crate::terminal_ui::forget_ui()") >= 2
     resident = timer.split('fn chaos_shake_timer(', 1)[1]

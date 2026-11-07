@@ -86,11 +86,6 @@ pub(crate) unsafe fn uninstall() {
     crate::background_surfaces::clear_page_roots();
 }
 
-pub(crate) unsafe fn pending() -> bool {
-    st_rd!(HOOKED).iter().any(|value| *value != 0)
-        && crate::background_surfaces::pending()
-}
-
 pub(crate) unsafe fn hooked() -> bool {
     st_rd!(HOOKED).iter().any(|value| *value != 0)
 }

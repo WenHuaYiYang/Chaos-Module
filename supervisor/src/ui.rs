@@ -119,29 +119,24 @@ pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
     let at: unsafe extern "C" fn(u32, u32, u32, i32, i32) -> u32 = fw_api::obj_align_to;
     let sh: unsafe extern "C" fn(u32, u32) -> u32 = fw_api::obj_set_hidden;
     let rows = page_rows_ptr(pid);
-    let wf_page = pid == 8 || pid == 9;      // 只有这两个页用表盘列表缓冲与复选框
     let mut prev = if t != 0 { t } else { c };
     let mut k = 0usize;
     while k < slots.len() {
         let slot = slots[k];
         let mut row = read_volatile(rows.add(slot));
         if row == 0 {
-            let p = if wf_page {
-                (core::ptr::addr_of!(WATCH_LINES) as *const u8).add(slot * 88)
-            } else {
-                (core::ptr::addr_of!(FILE_LINES) as *const u8).add(slot * 88)
-            };
-            let sub: *const u8 = if wf_page && slot >= 1 && slot <= 8 {
+            let p = (core::ptr::addr_of!(WATCH_LINES) as *const u8).add(slot * 88);
+            let sub: *const u8 = if slot >= 1 && slot <= 8 {
                 (core::ptr::addr_of!(WATCH_SUB) as *const u8).add(slot * 88)
             } else { core::ptr::null() };
             // slot0 = switch(1); slot1..8 = 复选框(2); 其余 = 无
-            let tr: u32 = if wf_page && slot == 0 { fw_api::trailing::SWITCH }
-                          else if wf_page && slot >= 1 && slot <= 8 { fw_api::trailing::CHECKBOX }
+            let tr: u32 = if slot == 0 { fw_api::trailing::SWITCH }
+                          else if slot >= 1 && slot <= 8 { fw_api::trailing::CHECKBOX }
                           else { fw_api::trailing::NONE };
             row = rc(c, p, sub, tr);
             if row != 0 {
                 write_volatile(rows.add(slot), row);
-                if wf_page && slot == 0 {
+                if slot == 0 {
                     // switch 行: 事件挂在 trailing 对象上、事件码 0(=LV_EVENT_ALL),
                     // 取不到 trailing 时退回挂整行(事件码 7=CLICKED)
                     let gtr: unsafe extern "C" fn(u32) -> u32 = fw_api::row_trailing;
@@ -153,8 +148,8 @@ pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
                 }
             }
         }
-        // 注意: 这里不做统一的字号写回 —— 本路径服务目录页与表盘列表,
-        // 按 28px 统一写回会把这两类列表拉成大字(实测)。标签字号各自收窄, 见 page.rs。
+        // 注意: 这里不做统一的字号写回 —— 按 28px 写回会把表盘列表拉成大字(实测)。
+        // 标签字号各自收窄, 见 page.rs。
         if row != 0 { at(row, prev, 14, 0, 8); prev = row; }
         k += 1;
     }
@@ -173,16 +168,13 @@ pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
     }
 }
 
-// rows_layout: 本页需要哪些槽 = [条目 0..min(8,cnt)-1] + [更多(slot8, 还有下一页时)] + [返回/上级(slot9)]
-// cnt==0 时留一个 slot0 显示提示语(空目录/无表盘/管理器未就绪)
+// rows_layout: 表盘页需要哪些槽 = switch + 条目 0..7 + 更多(slot9) + 返回(slot10)
+// cnt==0 时留一个 slot1 显示提示语
 pub(crate) unsafe fn rows_layout(pid: usize) {
-    let (cnt, win) = if pid == 8 || pid == 9 {
-        (st_rd!(WF_COUNT) as usize,
-         st_rd!(WF_WIN) as usize)
-    } else {
-        (st_rd!(DIR_COUNT) as usize,
-         st_rd!(DIR_WIN) as usize)
-    };
+    // 只服务表盘列表页(8/9)；目录页退役后不再有其它行布局。
+    debug_assert!(pid == 8 || pid == 9);
+    let cnt = st_rd!(WF_COUNT) as usize;
+    let win = st_rd!(WF_WIN) as usize;
     // 只算「本窗内」的条目数: 若按全量 cnt 算, 第二屏会多建空行,
     // 并把"返回"行链到隐藏行下面 → 中间留一大片空白
     let win_base = win * 8;
@@ -195,21 +187,12 @@ pub(crate) unsafe fn rows_layout(pid: usize) {
     let mut slots = [0usize; 12];
     let mut n = 0usize;
     let mut i = 0usize;
-    if pid == 8 || pid == 9 {
-        // 表盘页/轮换页: 0=显示内置表盘 switch, 1..8=条目, 9=更多, 10=返回
-        slots[n] = 0; n += 1;
-        while i < ent { slots[n] = i + 1; n += 1; i += 1; }
-        if ent == 0 { slots[n] = 1; n += 1; }    // 空列表: 用 slot1 显示提示语
-        if (win + 1) * 8 < cnt { slots[n] = 9; n += 1; }
-        slots[n] = 10; n += 1;
-    } else {
-        // 目录页: 0..7=条目, 8=更多, 9=返回/上级
-        // (2026-10-15) slot10 缓存清理入口退役: 入口已提升到主页行7
-        while i < ent { slots[n] = i; n += 1; i += 1; }
-        if ent == 0 { slots[n] = 0; n += 1; }
-        if (win + 1) * 8 < cnt { slots[n] = 8; n += 1; }
-        slots[n] = 9; n += 1;
-    }
+    // 表盘页/轮换页: 0=显示内置表盘 switch, 1..8=条目, 9=更多, 10=返回
+    slots[n] = 0; n += 1;
+    while i < ent { slots[n] = i + 1; n += 1; i += 1; }
+    if ent == 0 { slots[n] = 1; n += 1; }    // 空列表: 用 slot1 显示提示语
+    if (win + 1) * 8 < cnt { slots[n] = 9; n += 1; }
+    slots[n] = 10; n += 1;
     rows_sync(pid, &slots[..n]);
 }
 
@@ -354,7 +337,32 @@ pub(crate) unsafe fn row_ev_fn(i: usize) -> u32 {
         42 => cb_u32(chaos_row_ev42), 43 => cb_u32(chaos_row_ev43), 44 => cb_u32(chaos_row_ev44),
         45 => cb_u32(chaos_row_ev45), 46 => cb_u32(chaos_row_ev46), 47 => cb_u32(chaos_row_ev47),
         48 => cb_u32(chaos_row_ev48), 49 => cb_u32(chaos_row_ev49), 50 => cb_u32(chaos_row_ev50),
-        _ => cb_u32(chaos_row_ev51),
+        51 => cb_u32(chaos_row_ev51),
+        52 => cb_u32(chaos_row_ev52),
+        53 => cb_u32(chaos_row_ev53),
+        54 => cb_u32(chaos_row_ev54),
+        55 => cb_u32(chaos_row_ev55),
+        56 => cb_u32(chaos_row_ev56),
+        57 => cb_u32(chaos_row_ev57),
+        58 => cb_u32(chaos_row_ev58),
+        59 => cb_u32(chaos_row_ev59),
+        60 => cb_u32(chaos_row_ev60),
+        61 => cb_u32(chaos_row_ev61),
+        62 => cb_u32(chaos_row_ev62),
+        63 => cb_u32(chaos_row_ev63),
+        64 => cb_u32(chaos_row_ev64),
+        65 => cb_u32(chaos_row_ev65),
+        66 => cb_u32(chaos_row_ev66),
+        67 => cb_u32(chaos_row_ev67),
+        68 => cb_u32(chaos_row_ev68),
+        69 => cb_u32(chaos_row_ev69),
+        70 => cb_u32(chaos_row_ev70),
+        71 => cb_u32(chaos_row_ev71),
+        72 => cb_u32(chaos_row_ev72),
+        73 => cb_u32(chaos_row_ev73),
+        74 => cb_u32(chaos_row_ev74),
+        75 => cb_u32(chaos_row_ev75),
+        _ => cb_u32(chaos_row_ev_invalid),
     }
 }
 
@@ -376,9 +384,7 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     st_wr!(FG_PAGE, pid as u32);
     shake_arm();   // 首次进入(UI线程)订阅摇一摇+建timer, 幂等
     // 页3 原来是文件管理的最后一级，现在让给日期第二步(月/日)。
-    // 这一格以前是 `if pid == 3 { DIR_DEPTH…; load_dir(); }`，目录页退役之后必须跟着删:
-    // 留着的话进日期第二屏就会拿从没填过的 PATH_STACK 跑 opendir/readdir
-    // (页2 当年占目录位时就是这么一点进去就崩)。判据要按"现在还有哪一页是目录页"写，不能按区间写。
+    // 目录页退役后这里不再有 load_dir/opendir 分支；只有表盘页 8/9 需要加载表盘清单。
     if pid == 8 || pid == 9 {
         // 两页各自独立过滤: 表盘页看 WF_SHOW_BUILTIN, 轮换页看 WF_SEL_BUILTIN
         let f = if pid == 8 {
