@@ -44,6 +44,7 @@ pub(crate) unsafe extern "C" fn chaos_on_create(_page: u32, _p1: u32, _p2: u32) 
         // 固件销毁: 框句柄状态必须在这里归零, 否则后面的删除会打到复用同一块内存的新对象上。
         crate::font_list::popup_forget(pid);
         crate::icon_apply::popup_forget(pid);
+        if pid == crate::terminal_ui::PAGE_PID as usize { crate::terminal_ui::forget_ui(); }
         st_wr!(HEAL_TRYS, 0);
     st_wr!(APP_FG, 1);   // 我们的应用在前台(逐对象补写那类跑批按这道门过滤)
 
@@ -432,6 +433,7 @@ pub(crate) unsafe extern "C" fn chaos_on_ui_destroy(page: u32) -> i32 {
     let pid = rd16((page + 0x14) as *const u16) as usize;
     if pid > MAX_PID { return 0; }
     PAGES[pid].desc = 0;
+    if pid == crate::terminal_ui::PAGE_PID as usize { crate::terminal_ui::forget_ui(); }
     PAGES[pid].root = 0;
     PAGES[pid].content = 0;
     PAGES[pid].label = 0;

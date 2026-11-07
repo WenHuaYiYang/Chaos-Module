@@ -8,11 +8,13 @@ use crate::*;
 
 pub(crate) const PAGE_PID: u32 = 23;
 const CAPACITY: usize = 31;
+const NSH_CAPACITY: usize = 255;
 
 const KEY_SHIFT: u32 = 0x100;
 const KEY_BACKSPACE: u32 = 0x101;
 const KEY_CLEAR: u32 = 0x102;
 const KEY_DONE: u32 = 0x103;
+const KEY_SYMBOLS: u32 = 0x104;
 
 const VIEWPORT_WIDTH: i32 = 336;
 const KEY_WIDTH: i32 = 56;
@@ -77,21 +79,36 @@ pub(crate) enum Completion {
     SystemText,
     DeviceName,
     DeviceModel,
+    NshCommand,
 }
 
-static mut TEXT: [u8; CAPACITY + 1] = [0; CAPACITY + 1];
+static mut TEXT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
 static mut LENGTH: usize = 0;
 static mut UPPERCASE: bool = true;
 static mut COMPLETION: u32 = 0;
 static mut INPUT_LABEL: u32 = 0;
 static mut LETTER_LABELS: [u32; 26] = [0; 26];
 static mut SHIFT_LABEL: u32 = 0;
+static mut SYMBOL_MODE: bool = false;
+static mut SUBMITTED: bool = false;
+static mut NSH_DRAFT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
+
+// All printable ASCII punctuation is available in NSH mode. Other uses keep
+// the exact original QWERTY layout and 31-byte validation limit.
+const SYMBOL_ROWS: [&[u8]; 4] = [b"!@#$%^&*()", b"_-+=[]{}\\|", b";:'\",.<>/?", b"\x60~"];
+
+fn nsh_mode() -> bool { unsafe { COMPLETION == Completion::NshCommand as u32 } }
+fn capacity() -> usize { if nsh_mode() { NSH_CAPACITY } else { CAPACITY } }
 
 pub(crate) unsafe fn open(initial: *const u8, completion: Completion) {
+    COMPLETION = completion as u32;
+    // The title's back gesture cancels editing without losing a draft. A
+    // separate buffer survives opening other settings on the shared keyboard.
+    let initial = if nsh_mode() && initial.is_null() { NSH_DRAFT.as_ptr() } else { initial };
     LENGTH = 0;
     TEXT[0] = 0;
     if !initial.is_null() {
-        while LENGTH < CAPACITY {
+        while LENGTH < capacity() {
             let c = read_volatile(initial.add(LENGTH));
             if c == 0 {
                 break;
@@ -101,16 +118,25 @@ pub(crate) unsafe fn open(initial: *const u8, completion: Completion) {
         }
         TEXT[LENGTH] = 0;
     }
-    UPPERCASE = true;
-    COMPLETION = completion as u32;
+    UPPERCASE = COMPLETION != Completion::NshCommand as u32;
+    SYMBOL_MODE = false;
+    SUBMITTED = false;
     INPUT_LABEL = 0;
     LETTER_LABELS = [0; 26];
     SHIFT_LABEL = 0;
+    save_nsh_draft();
     nav_goto(PAGE_PID, 0);
+}
+
+unsafe fn save_nsh_draft() {
+    if nsh_mode() {
+        NSH_DRAFT[..LENGTH + 1].copy_from_slice(&TEXT[..LENGTH + 1]);
+    }
 }
 
 pub(crate) unsafe fn title() -> &'static [u8] {
     match COMPLETION {
+        x if x == Completion::NshCommand as u32 => "NSH命令输入\0".as_bytes(),
         x if x == Completion::SystemText as u32 => "自定义手环系统文本\0".as_bytes(),
         x if x == Completion::DeviceName as u32 => "自定义设备名称\0".as_bytes(),
         x if x == Completion::DeviceModel as u32 => "自定义手环型号\0".as_bytes(),
@@ -123,7 +149,10 @@ unsafe fn refresh_input() {
         && page_is_live(PAGE_PID as usize)
         && safe_ptr(INPUT_LABEL)
     {
-        fw_api::label_set_text(INPUT_LABEL, core::ptr::addr_of!(TEXT) as *const u8);
+        // Keep the insertion point visible for a long NSH command. Input is
+        // ASCII-only; custom settings retain their original display behavior.
+        let offset = if nsh_mode() { LENGTH.saturating_sub(20) } else { 0 };
+        fw_api::label_set_text(INPUT_LABEL, (core::ptr::addr_of!(TEXT) as *const u8).add(offset));
     }
 }
 
@@ -148,6 +177,7 @@ unsafe fn set_key_text(label: u32, code: u32) {
             KEY_BACKSPACE => b"<\0",
             KEY_CLEAR => b"CLR\0",
             KEY_DONE => b"OK\0",
+            KEY_SYMBOLS => if SYMBOL_MODE { b"abc\0" } else { b"SYM\0" },
             _ => b"?\0",
         };
         fw_api::label_set_text(label, text.as_ptr());
@@ -283,15 +313,17 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     fw_api::obj_align(board, fw_api::align::TOP_LEFT, 0, 0);
     fw_api::obj_style_color(board, 0, 0);
 
-    let mut ok = create_char_row(board, &NUMBER_KEYS, 0);
-    if !create_char_row(board, &QWERTY_KEYS, ROW_STEP) {
-        ok = false;
-    }
-    if !create_char_row(board, &HOME_KEYS, 2 * ROW_STEP) {
-        ok = false;
-    }
-    if !create_char_row(board, &BOTTOM_KEYS, 3 * ROW_STEP) {
-        ok = false;
+    let mut ok = true;
+    if nsh_mode() && SYMBOL_MODE {
+        for (i, row) in SYMBOL_ROWS.iter().enumerate() {
+            let mut keys = [0u32; 10];
+            for (j, &c) in row.iter().enumerate() { keys[j] = c as u32; }
+            if !create_char_row(board, &keys[..row.len()], i as i32 * ROW_STEP) { ok = false; }
+        }
+    } else {
+        for (i, row) in [NUMBER_KEYS.as_slice(), QWERTY_KEYS.as_slice(), HOME_KEYS.as_slice(), BOTTOM_KEYS.as_slice()].iter().enumerate() {
+            if !create_char_row(board, row, i as i32 * ROW_STEP) { ok = false; }
+        }
     }
 
     if !create_key(
@@ -334,7 +366,7 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     }
     if !create_key(
         parent,
-        b'.' as u32,
+        if nsh_mode() { KEY_SYMBOLS } else { b'.' as u32 },
         96,
         bottom,
         56,
@@ -354,6 +386,7 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     ) {
         ok = false;
     }
+    refresh_input();
     ok
 }
 
@@ -367,6 +400,11 @@ unsafe extern "C" fn key_event(event: u32) {
     }
     let code = fw_api::event_user_data(event);
     match code {
+        KEY_SYMBOLS if nsh_mode() => {
+            SYMBOL_MODE = !SYMBOL_MODE;
+            render_req(PAGE_PID as usize);
+            return;
+        }
         KEY_SHIFT => {
             UPPERCASE = !UPPERCASE;
             refresh_case();
@@ -383,7 +421,8 @@ unsafe extern "C" fn key_event(event: u32) {
             TEXT[0] = 0;
         }
         KEY_DONE => {
-            if LENGTH == 0 {
+            if SUBMITTED { return; }
+            if LENGTH == 0 && COMPLETION != Completion::NshCommand as u32 {
                 return;
             }
             let saved = match COMPLETION {
@@ -399,15 +438,23 @@ unsafe extern "C" fn key_event(event: u32) {
                 x if x == Completion::DeviceModel as u32 => {
                     crate::device_model::save_custom(core::ptr::addr_of!(TEXT) as *const u8)
                 }
+                x if x == Completion::NshCommand as u32 => {
+                    crate::terminal_ui::submit_command(core::ptr::addr_of!(TEXT) as *const u8)
+                }
                 _ => false,
             };
             if saved {
+                SUBMITTED = true;
+                if nsh_mode() { NSH_DRAFT[0] = 0; }
                 nav_back();
+            } else if nsh_mode() && safe_ptr(INPUT_LABEL) {
+                // Keep the buffer unchanged; the next key restores the tail.
+                fw_api::label_set_text(INPUT_LABEL, "发送失败，请重试\0".as_ptr());
             }
             return;
         }
         0x20..=0xFF => {
-            if LENGTH < CAPACITY {
+            if LENGTH < capacity() {
                 let mut c = code as u8;
                 if UPPERCASE && c.is_ascii_lowercase() {
                     c -= b'a' - b'A';
@@ -419,6 +466,7 @@ unsafe extern "C" fn key_event(event: u32) {
         }
         _ => return,
     }
+    save_nsh_draft();
     refresh_input();
 }
 

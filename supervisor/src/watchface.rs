@@ -394,6 +394,8 @@ unsafe fn tick_adapt() {
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
+    // Drain terminal output on the resident UI timer even when another page is foreground.
+    crate::terminal_ui::poll_output();
     // 文件桥只在这里启动/停止：UI owner 已就绪，且开关变化由维护 tick
     // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
     crate::bridge_cfg::tick();

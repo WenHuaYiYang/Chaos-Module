@@ -25,6 +25,8 @@ mod system_text;
 mod device_name;
 mod device_model;
 mod keyboard;
+mod nsh;
+mod terminal_ui;
 mod appmgr;
 mod log;
 mod cacheclean;

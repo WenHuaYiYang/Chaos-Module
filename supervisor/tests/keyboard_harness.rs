@@ -26,6 +26,13 @@ fn nav_goto(pid: u32, _: u32) {
 fn nav_back() {
     mock::with(|ui| ui.back_count += 1);
 }
+fn render_req(pid: usize) { mock::with(|ui| ui.render_requests.push(pid)); }
+mod terminal_ui {
+    pub unsafe fn submit_command(text: *const u8) -> bool {
+        let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| { ui.saves.push((4, bytes)); ui.save_ok })
+    }
+}
 
 macro_rules! completion_mock {
     ($name:ident, $index:expr) => {
@@ -74,6 +81,7 @@ mod mock {
         pub save_ok: bool,
         pub saves: Vec<(u32, Vec<u8>)>,
         pub back_count: usize,
+        pub render_requests: Vec<usize>,
         pub fail_at: Option<usize>,
     }
 
