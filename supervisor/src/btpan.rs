@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 pub(crate) const PAGE_BTPAN_PID: u32 = 32;
 pub(crate) const PAGE_WEBSRV_PID: u32 = 33;
 pub(crate) const PAGE_NETINFO_PID: u32 = 34;
+pub(crate) const PAGE_EXP_PID: u32 = 35;
 const PAN_ROWS: usize = 12;
 const WEB_ROWS: usize = 12;
 const INFO_ROWS: usize = 10;
@@ -326,6 +327,27 @@ impl crate::page::Page for WebSrvPage {
     fn on_click(&self,idx:usize) {unsafe{if UPDATING || !interactive_row(PAGE_WEBSRV_PID,idx) {return;} match idx {WEB_SET_PASSWORD=>crate::keyboard::open(core::ptr::null(),crate::keyboard::Completion::WebPassword),WEB_BTPAN=>nav_goto(PAGE_BTPAN_PID,0),_=>{}}}}
     fn needs_tick(&self)->bool {true}
     fn tick(&self) {unsafe{if visible(PAGE_WEBSRV_PID) && fw_api::screen_is_on(){refresh_web();}}}
+}
+
+/// 主页 -> 实验性功能(页35)。收拢未稳定入口: btpan联网 / 网页服务器 / 连接信息。
+pub(crate) struct ExpPage;
+pub(crate) static PAGE_EXP_P: ExpPage = ExpPage;
+impl crate::page::Page for ExpPage {
+    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "实验性功能\0".as_bytes()); } }
+    fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
+        build_rows(ctx, ctx.title, &[
+            (0, RowSpec::tap("btpan联网\0".as_bytes(), "蓝牙网络共享实验功能\0".as_ptr())),
+            (1, RowSpec::tap("网页服务器\0".as_bytes(), "局域网控制台(实验)\0".as_ptr())),
+        ])?; Ok(())
+    } }
+    fn on_click(&self, idx: usize) { unsafe {
+        match idx {
+            0 => nav_goto(PAGE_BTPAN_PID, 0),
+            1 => nav_goto(PAGE_WEBSRV_PID, 0),
+            _ => {}
+        }
+    } }
+    fn needs_tick(&self) -> bool { false }
 }
 
 #[cfg(test)]

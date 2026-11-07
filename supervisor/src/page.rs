@@ -833,8 +833,7 @@ impl Page for InfoPage {
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
                 (8, RowSpec::clickable("NSH终端\0".as_bytes())),
-                (9, RowSpec::clickable("btpan联网\0".as_bytes())),
-                (10, RowSpec::clickable("网页服务器\0".as_bytes())),
+                (9, RowSpec::clickable("实验性功能\0".as_bytes())),
                 (6, RowSpec::clickable("设置\0".as_bytes())),
                 (7, RowSpec::clickable("关于\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/版本(页14)
             ])?;
@@ -864,8 +863,7 @@ impl Page for InfoPage {
                 4 => nav_goto(10, 0),  // 表盘管理
                 5 => nav_goto(13, 0),  // 系统美化
                 8 => nav_goto(crate::terminal_ui::PAGE_PID, 0), // NSH终端
-                9 => nav_goto(crate::btpan::PAGE_BTPAN_PID, 0), // btpan联网
-                10 => nav_goto(crate::btpan::PAGE_WEBSRV_PID, 0), // 网页服务器
+                9 => nav_goto(crate::btpan::PAGE_EXP_PID, 0), // 实验性功能(页35: btpan联网/网页服务器)
                 6 => nav_goto(14, 0),  // 设置(时间/日期/亮度/震动/缓存/版本)
                 7 => nav_goto(18, 0), // 关于(页18, 调试入口)
                 _ => {} // 行0-2 是数据行
@@ -3405,4 +3403,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &crate::btpan::PAGE_BTPAN_P, // 32 主页 -> btpan联网
     &crate::btpan::PAGE_WEBSRV_P, // 33 主页 -> 网页服务器
     &crate::btpan::PAGE_NETINFO_P, // 34 BTPAN -> 连接信息
+    &crate::btpan::PAGE_EXP_P, // 35 主页 -> 实验性功能
 ];
