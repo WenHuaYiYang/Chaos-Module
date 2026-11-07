@@ -16,7 +16,7 @@ const ROW_CAP: usize = fw_api::MAX_ROWS_PER_PAGE;
 const WEB_SET_PASSWORD: usize = 5;
 const WEB_BTPAN: usize = 6;
 const INFO_ROWS: usize = 10;
-const DIAG_ROWS: usize = 10;
+const DIAG_ROWS: usize = 11;
 const _: () = assert!(PAN_ROWS <= ROW_CAP && WEB_ROWS <= ROW_CAP && INFO_ROWS <= ROW_CAP && DIAG_ROWS <= ROW_CAP);
 
 #[repr(C)]
@@ -48,13 +48,15 @@ struct BtDiagnostics {
     device_configured: u32,
     result_cod: i32, result_iocap: i32, result_paircfg: i32,
     result_connect: i32, result_bond: i32, result_confirm: i32, result_remove: i32,
+    result_name: i32, result_name_read: i32,
+    local_name: [u8; 32],
 }
 const _: () = assert!(core::mem::size_of::<Device>() == 28);
 const _: () = assert!(core::mem::size_of::<Peer>() == 32);
 const _: () = assert!(core::mem::size_of::<NetworkView>() == 596);
 const _: () = assert!(core::mem::size_of::<IpInfo>() == 28);
 const _: () = assert!(core::mem::size_of::<HttpView>() == 28);
-const _: () = assert!(core::mem::size_of::<BtDiagnostics>() == 124);
+const _: () = assert!(core::mem::size_of::<BtDiagnostics>() == 164);
 
 unsafe extern "C" {
     fn chaos_pan_enable(on: i32);
@@ -377,7 +379,8 @@ unsafe fn refresh_diag() {
     let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
     w.s("CoD ".as_bytes()); signed(&mut w, d.result_cod);
     w.s(" IO ".as_bytes()); signed(&mut w, d.result_iocap);
-    w.s(" 3D ".as_bytes()); signed(&mut w, d.result_paircfg); w.end();
+    w.s(" 3D ".as_bytes()); signed(&mut w, d.result_paircfg);
+    w.s(" Name ".as_bytes()); signed(&mut w, d.result_name); w.end();
     set_row(PAGE_DIAG_PID, 7, "设备配置返回\0".as_bytes(), &text, false);
     let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
     w.s("Conn ".as_bytes()); signed(&mut w, d.result_connect);
@@ -385,7 +388,12 @@ unsafe fn refresh_diag() {
     w.s(" Rm ".as_bytes()); signed(&mut w, d.result_remove);
     w.s(" Cfm ".as_bytes()); signed(&mut w, d.result_confirm); w.end();
     set_row(PAGE_DIAG_PID, 8, "配对命令返回\0".as_bytes(), &text, false);
-    set_row(PAGE_DIAG_PID, 9, "最近回调\0".as_bytes(), "见下方事件列表\0".as_bytes(), false);
+    let mut w = crate::text::W::new(text.as_mut_ptr(), text.len());
+    let shown_name = cbytes(&d.local_name);
+    if shown_name.is_empty() { w.s("(未回读)".as_bytes()); } else { w.s(shown_name); }
+    w.s(" · 读 ".as_bytes()); signed(&mut w, d.result_name_read); w.end();
+    set_row(PAGE_DIAG_PID, 9, "本地蓝牙名\0".as_bytes(), &text, false);
+    set_row(PAGE_DIAG_PID, 10, "最近回调\0".as_bytes(), "见下方事件列表\0".as_bytes(), false);
     update_diag_log();
 }
 unsafe fn update_diag_log() {

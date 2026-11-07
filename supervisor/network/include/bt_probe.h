@@ -26,7 +26,8 @@ struct bt_probe_diagnostics {
     uint32_t pair_reply_result;   /* cmd 0x61 的返回(非0=配对请求被拒/失败) */
     uint32_t device_configured;   /* CoD/io cap/0x3d 设备级配置已下发 */
     /* 关键命令的返回码(>0 = 蓝牙服务拒绝, -618 = IPC 失败), 排查用。 */
-    int32_t result_cod,result_iocap,result_paircfg,result_connect,result_bond,result_confirm,result_remove;
+    int32_t result_cod,result_iocap,result_paircfg,result_connect,result_bond,result_confirm,result_remove,result_name,result_name_read;
+    char local_name[32];          /* cmd 0x23 回读的 adapter 本地名 */
 };
 void bt_probe_diagnostics(struct bt_probe_diagnostics *out);
 /* 最近 12 条蓝牙回调事件, 文本行; 返回写入字节数(不含终止符)。 */

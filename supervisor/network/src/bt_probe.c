@@ -28,7 +28,8 @@ struct state {
      * 回调序与反转序交替重试, 回调比较跟 bond_addr 走, 谁先配成功用谁。 */
     uint32_t bond_attempts,bond_retry_at,bond_order,bond_pending,bonding,bond_events;
     uint32_t bond_last_value,bond_last_transport,pair_reply_result,device_configured;
-    int32_t result_cod,result_iocap,result_paircfg,result_connect,result_bond,result_confirm,result_remove;
+    int32_t result_cod,result_iocap,result_paircfg,result_connect,result_bond,result_confirm,result_remove,result_name,result_name_read;
+    char local_name[32];
     uint32_t bond_remove_pending;
     uint8_t bond_addr[6];
     uint32_t event_head;
@@ -194,6 +195,21 @@ static int prepare(void)
         state.device_configured=1;unlock(q);
         configured=1;
     }
+    /* 本地蓝牙名: cmd 0x22 set / 0x23 get(固件 bttool "name"/"get name")。
+     * 每次 prepare 都重下发 —— 系统"设备名称"变更或重启会把 adapter 名顶回
+     * 默认值(旧版本连手机显示 Syspatch 就是这么来的), 只设一次会被覆盖。 */
+    {
+        uint8_t name[64]={0};
+        static const char label[]="Chaos-Module";
+        for(unsigned i=0;i<sizeof(label)-1 && i<63;i++)name[i]=(uint8_t)label[i];
+        int rc_set=request(0x22,name,sizeof(name));
+        uint8_t verify[64]={0};
+        int rc_get=exchange(0x23,0,0,verify,sizeof(verify));
+        uint32_t q=lock();
+        state.result_name=rc_set;state.result_name_read=rc_get;
+        for(unsigned i=0;i<32;i++)state.local_name[i]=(char)verify[i];
+        state.local_name[32]=0;unlock(q);
+    }
     return 0;
 }
 
@@ -337,9 +353,12 @@ void bt_probe_diagnostics(struct bt_probe_diagnostics *out)
     out->result_paircfg=state.result_paircfg;out->result_connect=state.result_connect;
     out->result_bond=state.result_bond;out->result_confirm=state.result_confirm;
     out->result_remove=state.result_remove;
+    out->result_name=state.result_name;
+    out->result_name_read=state.result_name_read;
+    for(unsigned i=0;i<32;i++)out->local_name[i]=state.local_name[i];
     unlock(p);
 }
-_Static_assert(sizeof(struct bt_probe_diagnostics)==124,"Rust diagnostics ABI");
+_Static_assert(sizeof(struct bt_probe_diagnostics)==164,"Rust diagnostics ABI");
 int bt_probe_device(uint32_t index,struct bt_probe_device *out)
 {uint32_t p=lock();int ok=index<state.count;if(ok)memcpy(out,&state.devices[index],sizeof(*out));unlock(p);return ok;}
 void bt_probe_connect_device(uint32_t index)

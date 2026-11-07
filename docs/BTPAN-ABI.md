@@ -156,3 +156,17 @@ bttool 命令表项 `{help="cancel bond, params: <addr>", name="removebond", han
 **诊断新增返回码**（`bt_probe_diagnostics` 124B）：`result_cod`(0x27)、`result_iocap`(0x29)、
 `result_paircfg`(0x3d)、`result_connect`(0x69)、`result_bond`(94)、`result_confirm`(0x62)、
 `result_remove`(0x5F)。>0 = 蓝牙服务拒绝，-618 = IPC 失败。
+
+## 本地蓝牙名（2026-11-08）
+
+bttool 命令表项 `{help="params: <local name>, example \"vela-bt\"", name="name", handler=0x0C6F3921}`
+→ SDK `0x0C3AF5C8` → **cmd 0x22(34)**：payload = 名字字符串，固件内 `strncpy` 上限 `0x3F`(63)
+并补 0（写 `msg+0x7F`），所以下发 64 字节（63 字符 + 终止符）即可。
+
+`bt_probe.c prepare()` 的设备初始化块里下发 **"Chaos-Module"**（一次，`configured` 守卫），
+返回码记入 `result_name`，诊断页“设备配置返回”行可见。
+
+**补充（同日第二轮）**：`0x23` = get local name（返回 64 字节到 payload）。`bt_probe.c`
+把名字设置从"一次性"改成**每次 `prepare()` 都重下发**并立刻用 `0x23` 回读：系统"设备名称"
+被修改或重启会把 adapter 名顶回默认值（旧版本连手机显示 `Syspatch` 就是这个原因），
+只在首次设置一次会被覆盖。回读值进诊断页"本地蓝牙名"行（附 `0x23` 返回码）。
