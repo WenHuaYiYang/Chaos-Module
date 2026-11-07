@@ -68,8 +68,10 @@ pub(crate) unsafe fn toggle() -> bool {
     let on = !enabled();
     ENABLED = if on { 1 } else { 0 };
     save(on);
-    // 让 tick 重新评估：0 表示“需要按配置重新应用”。
-    st_wr!(BRIDGE_STATE, 0);
+    // 打开时清 0，允许从停止/失败状态重新 start。
+    // 关闭时不能清 0：tick 需要看到“原先在运行”的 1，才能调用 stop；
+    // 清 0 会让 stop 分支永远不成立，桥会继续处理 L2 0x43。
+    if on { st_wr!(BRIDGE_STATE, 0); }
     on
 }
 
@@ -87,7 +89,9 @@ pub(crate) unsafe fn tick() {
                 "文件桥: 启动失败"
             });
         }
-    } else if state == 1 {
+    } else if state != 0 {
+        // 1 = 正在运行；0xffffffff = 上次启动失败。两种非零状态都收尾，
+        // stop 本身幂等，失败状态也顺手清回 0。
         chaos_bridge_stop();
         st_wr!(BRIDGE_STATE, 0);
         log::line("文件桥: 已关闭");
