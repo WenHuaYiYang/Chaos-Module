@@ -7,20 +7,27 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGE = (ROOT / "supervisor/src/page.rs").read_text(encoding="utf-8")
+PAGE_FILES = [ROOT / "supervisor/src/page.rs", *sorted((ROOT / "supervisor/src/page").glob("*.rs"))]
+PAGES = {path: path.read_text(encoding="utf-8") for path in PAGE_FILES}
+PAGE = "\n".join(PAGES.values())
 SOURCE_URL = "https://github.com/AstralSightStudios/Canopus-Module-Corona"
 
 
 def page_impl(name):
-    start = PAGE.index(f"impl Page for {name} {{")
-    end = PAGE.index("\n// =====", start)
-    return PAGE[start:end]
+    marker = f"impl Page for {name} {{"
+    for text in PAGES.values():
+        start = text.find(marker)
+        if start < 0:
+            continue
+        end = text.find("\n// =====", start)
+        return text[start:] if end < 0 else text[start:end]
+    raise AssertionError(f"page implementation not found: {name}")
 
 
 class CoronaUiTests(unittest.TestCase):
     def test_registered_pages_are_not_removed_placeholders(self):
         table = PAGE.split("pub(crate) static PAGE_TABLE:", 1)[1]
-        entries = re.findall(r"&([A-Z_0-9]+),", table)
+        entries = re.findall(r"&(?:\w+::)*([A-Z_0-9]+),", table)
         self.assertEqual(entries[7], "PAGE_BLUR_LEGACYP")
         self.assertEqual(entries[20], "PAGE_LICENSESP")
         self.assertEqual(entries[21], "PAGE_LICENSEP")
