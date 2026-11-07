@@ -63,20 +63,15 @@ Chaos 打开后是主页（信息页），四个一级入口：**应用管理 / 
   字体本身由独立的字体投递包安装，安装器容器里只带一个占位文件。
 - **桌面图标**：应用图标包——选择一套图标包应用，或恢复系统原图标。
   图标包由 `installer/icon_pack.lua` 投递（`CIPK` 容器）。
-- **系统背景**：恢复官方背景，同时关闭 corona模糊、模糊v2与旧版背景替换，并恢复通知原图标。
+- **系统背景**：恢复官方背景，同时关闭 corona模糊与旧版背景替换，并恢复通知原图标。
 - **corona模糊**：默认关闭；开启后使用 Corona 的 p67 模糊实现，按“模糊区域”中保存的选择
-  处理启动器、控制中心、小部件和通知中心。主开关保存在 `/data/chaos/corona_blur.cfg`。
-- **模糊v2**：使用 Corona 同款模糊，额外启用旧版通知 `no_message` 图标去黑底 hook，
-  将空消息图标的黑色背景变为透明；开关独立保存在 `/data/chaos/blur_v2.cfg`。
-  corona模糊与模糊v2共用同一个模糊引擎，任一开启就运行，不会叠加两遍模糊。
-  两个开关分别保存与显示自己的状态；关闭模糊v2而保持 corona模糊开启时，只撤销图标 hook、
-  恢复原图标，模糊继续生效。两个开关都关闭后，共用引擎退出，再按所选旧版设置或系统背景显示。
+  处理启动器、控制中心、小部件和通知中心。开关保存在 `/data/chaos/corona_blur.cfg`。
+  同一个开关同时启用通知 `no_message` 空图标去黑底 hook，不再单独提供“模糊v2”。
 - **旧版选项**：静态表盘背景、自动截取、手动生成和完全透明背景集中在这里。
-  corona模糊或模糊v2任一开启期间保留旧版设置，但不将它们混入共用引擎；两个开关都关闭后旧版设置才生效。
-- **模糊区域**：所有模糊选项（包括 corona模糊和模糊v2）共用；关闭某一区域后，该区域恢复官方系统背景。
+  corona模糊开启期间保留旧版设置，但不将它们混入共用引擎；关闭 corona模糊后旧版设置才生效。
+- **模糊区域**：Corona 模糊和通知图标去黑底共用区域掩码；关闭某一区域后，该区域恢复官方系统背景。
   选择保存在 `/data/chaos/blur_regions.cfg`，运行中修改会等待原生空闲时应用。
-  关闭“通知中心”区域也会撤销模糊v2的 `no_message` 图标去黑底 hook、恢复原图标；
-  模糊v2仍开启且重新打开通知区域时，图标去黑底才重新生效。全部关闭区域不会退回旧版模糊。
+  关闭“通知中心”区域也会撤销 `no_message` 图标去黑底 hook、恢复原图标。
 - 系统模糊页底部“说明”列出 [Corona 原始源码](https://github.com/AstralSightStudios/Canopus-Module-Corona)
   和 [Chaos 修改后源码](https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor)；
   “关于 → 开放源代码许可”可查看 AGPL-3.0-only 原文。
@@ -130,7 +125,7 @@ Q W E R T Y U I O P
 | `/data/chaos/sup.ko` | 模块本体（安装器部署） |
 | `/data/chaos/chaos_icon.bin`、`chaos_icon_settings.bin` | 桌面图标 |
 | `/data/chaos/settings.cfg` | 用户设置 |
-| `/data/chaos/corona_blur.cfg`、`blur_v2.cfg` | corona模糊与模糊v2的独立开关（共用模糊引擎） |
+| `/data/chaos/corona_blur.cfg` | Corona 模糊与通知图标去黑底的单一开关 |
 | `/data/chaos/blur_regions.cfg` | 所有模糊选项共用的区域开关 |
 | `/data/chaos/appmgr_excl.bin`、`appmgr_keep.bin`、`appmgr_apply.cfg` | 应用管理名单与配置 |
 | `/data/chaos/font/` | 字体槽位与 `index.txt` 清单 |

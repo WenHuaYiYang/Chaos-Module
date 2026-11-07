@@ -1,4 +1,4 @@
-//! 模糊 v2 独立的 no_message.bin 图源 owner（p67 / 3.101.043）。
+//! Corona 模糊开关附带的 no_message.bin 图源 owner（p67 / 3.101.043）。
 //! 只用旧版 empty_image 的纯黑 palette → alpha=0 处理；不启动旧版背景 worker。
 //! 所有图源写入都发生在 background_home 的亮屏、native-idle UI tick 中。
 

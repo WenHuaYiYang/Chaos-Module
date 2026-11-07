@@ -147,9 +147,9 @@ impl Page for AppListPage {
 //
 // 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
 // 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
-// 旧版静态背景/实时截取设置移到页7，主页面保留系统背景、corona模糊、模糊v2、
-// 旧版选项和模糊区域。两开关共用一个 Corona 引擎；v2 额外处理通知空消息图标。
-// 行号固定为 0=系统 / 1=corona / 2=v2 / 3=状态 / 4=旧版 / 5=区域 / 11=返回。
+// 旧版静态背景/实时截取设置移到页7，主页面保留系统背景、corona模糊、
+// 旧版选项和模糊区域。Corona 开关同时启用通知空消息图标去黑底。
+// 行号固定为 0=系统 / 1=corona / 2=状态 / 3=旧版 / 4=区域 / 11=返回。
 pub(crate) struct BlurPage;
 
 pub(crate) const BLUR_LEGACY_PID: u32 = 7;
@@ -164,10 +164,9 @@ impl Page for BlurPage {
             let prev = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
                 (1, RowSpec::switch("corona模糊\0".as_bytes())),
-                (2, RowSpec::switch("模糊v2\0".as_bytes())),
-                (3, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (4, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊和模糊v2后生效\0".as_bytes().as_ptr())),
-                (5, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 corona模糊和模糊v2）\0".as_bytes().as_ptr())),
+                (2, RowSpec::display(crate::background_home::status(), core::ptr::null())),
+                (3, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊后生效\0".as_bytes().as_ptr())),
+                (4, RowSpec::tap("模糊区域\0".as_bytes(), "适用于 corona模糊（含通知图标去黑底）\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 长说明不放入会裁切的行副标题。与许可全文相同：标签只限宽，
             // 高度随换行增长；挂在原生可滚动 content 上，完整 URL 不含 Markdown 标记。
@@ -184,9 +183,6 @@ impl Page for BlurPage {
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
                 fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
                 crate::corona_blur::enabled() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::corona_blur::v2_enabled() as u8);
             Ok(())
         }
     }
@@ -195,25 +191,23 @@ impl Page for BlurPage {
         unsafe {
             match idx {
                 0 => {
-                    // 选回官方背景须关闭两开关；引擎和 v2 图标都由背景生命周期安全退役。
+                    // 选回官方背景只关 Corona 开关；模糊和通知图标都由背景生命周期安全退役。
                     crate::corona_blur::set(false);
-                    crate::corona_blur::set_v2_enabled(false);
                     crate::background_home::request(0);
                 },
-                4 => nav_goto(BLUR_LEGACY_PID, 0),
-                5 => nav_goto(crate::blur_zone::PAGE_PID, 0),
+                3 => nav_goto(BLUR_LEGACY_PID, 0),
+                4 => nav_goto(crate::blur_zone::PAGE_PID, 0),
                 11 => nav_back(),
                 _ => {}
             }
         }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 2 }
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 }
 
     fn on_switch(&self, idx: usize) {
         unsafe {
             if idx == 1 { crate::corona_blur::set(!crate::corona_blur::enabled()); }
-            if idx == 2 { crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled()); }
         }
     }
 }
@@ -221,7 +215,7 @@ impl Page for BlurPage {
 // ===== 页7: 系统模糊 -> 旧版选项 =====
 //
 // 这是原系统模糊页的兼容入口。系统背景(主页面)与模糊区域(页15)不在这里重复，
-// 其余旧档位/实时截取设置全部集中到本页；corona 或 v2 任一开启时保留设置但不应用。
+// 其余旧档位/实时截取设置全部集中到本页；corona 开启时保留设置但不应用。
 pub(crate) struct BlurLegacyPage;
 
 impl Page for BlurLegacyPage {
@@ -237,7 +231,7 @@ impl Page for BlurLegacyPage {
                 (2, RowSpec::clickable("手动生成或更新表盘背景\0".as_bytes())),
                 (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
                 (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (5, RowSpec::display("关闭 corona模糊和模糊v2后生效\0".as_bytes(), core::ptr::null())),
+                (5, RowSpec::display("关闭 corona模糊后生效\0".as_bytes(), core::ptr::null())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             let mode = crate::background_home::mode();
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
@@ -408,7 +402,7 @@ impl Page for IconSubPage {
 // 四个背景替换区域的开关(数据与持久化全在 blur_zone.rs, 这里只建行与派发):
 //   行0=启动器 行1=控制中心 行2=小部件 行3=通知中心 行11=返回。
 // 开 = 正常替换(默认); 关 = 该区域保持官方模糊画面。
-// 对所有模糊选项生效，包括 corona模糊和模糊v2；关闭通知区域也恢复 v2 原图标。
+// 对 Corona 开关生效；关闭通知区域也恢复原图标和去黑底 hook。
 // 翻位后 blur_zone::set 持久化 + background_home::remount() 置 REQUEST,
 // 由背景 tick 的拆/装流程按新掩码统一重建(页面退出前就能看到拆装, 不用重启)。
 // 开关初态: 单排行, row_update 第 6 参原地补写(secondary 传 NONE 是安全的 ——
@@ -424,14 +418,14 @@ impl Page for BlurZonePage {
         unsafe {
             crate::blur_zone::ensure_loaded();
             build_rows(ctx, ctx.title, &[
-                (4, RowSpec::display("适用于所有模糊选项\0".as_bytes(),
-                    "包括 corona模糊和模糊v2\0".as_bytes().as_ptr())),
+                (4, RowSpec::display("适用于 Corona 模糊\0".as_bytes(),
+                    "包括通知图标去黑底\0".as_bytes().as_ptr())),
                 (0, RowSpec::switch("启动器\0".as_bytes())),
                 (1, RowSpec::switch("控制中心\0".as_bytes())),
                 (2, RowSpec::switch("小部件\0".as_bytes())),
                 (3, RowSpec::switch("通知中心\0".as_bytes())),
                 (5, RowSpec::display("关闭通知区域恢复原图标\0".as_bytes(),
-                    "同时撤销模糊v2图标去黑底\0".as_bytes().as_ptr())),
+                    "同时撤销通知图标去黑底\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             for i in 0..crate::blur_zone::REGION_N {
                 fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)),
