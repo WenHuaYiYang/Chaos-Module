@@ -433,6 +433,8 @@ pub(crate) unsafe fn status() -> &'static [u8] {
                 "等待空闲后更新 Corona 区域\0".as_bytes()
             } else if st_rd!(CORONA_BG_MASK) == 0 {
                 "模糊：未选择区域\0".as_bytes()
+            } else if crate::corona_blur::v2_enabled() {
+                "模糊v2模式\0".as_bytes()
             } else {
                 "Corona模糊模式\0".as_bytes()
             }
@@ -463,6 +465,7 @@ unsafe fn set_status(value: u32) {
 
 unsafe fn corona_tick() -> bool {
     let engine_active = crate::corona_blur::active();
+    let v2_active = crate::corona_blur::v2_enabled();
     if engine_active {
         let region_mask = crate::blur_zone::mask();
         if st_rd!(CORONA_BG_ACTIVE) == 0 {
@@ -492,10 +495,10 @@ unsafe fn corona_tick() -> bool {
             st_wr!(CORONA_BG_ACTIVE, 1);
             st_wr!(DIRTY, 1);
         }
-        // The single Corona switch also owns the no-message image replacement.
-        // Never restart background_pages/background_surfaces while Corona owns the scene.
+        // v2 adds only the old no-message image replacement. Never restart
+        // background_pages/background_surfaces while Corona owns the scene.
         // Use the successfully applied mask, not a still-busy desired mask.
-        let icon_wanted = engine_active && st_rd!(CORONA_BG_MASK) & 8 != 0;
+        let icon_wanted = v2_active && st_rd!(CORONA_BG_MASK) & 8 != 0;
         if (icon_wanted || crate::notification_icon::pending())
             && fw_api::screen_is_on() && crate::corona_blur::backgrounds_idle() {
             let _ = crate::notification_icon::tick(icon_wanted);

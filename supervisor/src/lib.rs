@@ -50,6 +50,8 @@ mod page;
 mod ui;
 mod ipc;
 mod bridge_cfg;
+mod screen_rotation;
+mod debug_info;
 
 /// Called by the C bridge only for one-shot state transitions, never per
 /// frame. Keeping it here means the bridge uses Chaos' log file and the

@@ -155,6 +155,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_NETINFO) as u32,
     core::ptr::addr_of!(PAGE_EXP) as u32,
     core::ptr::addr_of!(PAGE_BTDIAG) as u32,
+    core::ptr::addr_of!(PAGE_DEBUG) as u32,
 ];
 let mut pg = 0usize;
 while pg < PAGE_COUNT {

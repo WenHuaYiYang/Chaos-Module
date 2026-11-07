@@ -695,3 +695,28 @@ pub unsafe fn obj_add_flag(obj: Obj, f: u32) {
     let func: unsafe extern "C" fn(Obj, u32) = transmute(0x1C02_8BD9usize);
     func(obj, f);
 }
+
+// ===========================================================================
+// 显示方向（LVGL display rotation）
+// ===========================================================================
+//
+// 固件里 LVGL 的公开入口都在 PSRAM/SRAM 段（0x1C02xxxx / 0x1C03xxxx），flash 侧
+// 走 thunk。两个地址来自 miwear 的 display 属性表（0x2CDC17A0 起，键名与处理器成对）：
+//   `get_default`  → 0x0CAA7C74，内部无参 `bl 0x0CAC08A0` → 目标 0x1C02F868
+//   `set_rotation` → 0x0CAA75B0，内部 `bl 0x0CAC0D68` → 目标 0x1C03046C，
+//                    调用形态是 (disp, rotation)，与系统自己设方向时一致。
+// thunk 本身在 flash，直接 bl 即可，且保留了固件的重定位。
+
+/// `lv_display_get_default()` —— 取当前显示对象；取不到返回 0。
+pub unsafe fn display_default() -> u32 {
+    let f: unsafe extern "C" fn() -> u32 = transmute(0x0CAC_08A1usize);
+    f()
+}
+
+/// `lv_display_set_rotation(disp, rotation)`：0=0°、1=90°、2=180°、3=270°。
+/// LVGL 内部会同步 hor/ver 分辨率与输入设备的坐标映射，所以触摸跟着一起转。
+pub unsafe fn display_set_rotation(disp: u32, rotation: u32) {
+    if disp == 0 { return; }
+    let f: unsafe extern "C" fn(u32, u32) = transmute(0x0CAC_0D69usize);
+    f(disp, rotation);
+}

@@ -270,6 +270,7 @@ impl Page for SettingsPage {
                 (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
                 (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
                 (8, RowSpec::switch("文件桥\0".as_bytes())),
+                (9, RowSpec::switch("屏幕翻转\0".as_bytes())),
             ];
             build_rows(ctx, ctx.title, rows)?;
             fw_api::row_update(
@@ -277,6 +278,13 @@ impl Page for SettingsPage {
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
                 0, crate::bridge_cfg::enabled() as u8,
             );
+            fw_api::row_update(
+                core::ptr::read_volatile(ctx.rows.add(9)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                0, crate::screen_rotation::enabled() as u8,
+            );
+            // 开机后第一次进设置页补一次方向；已经对齐过就是一次原子读。
+            crate::screen_rotation::ensure_applied();
             Ok(())
         }
     }
@@ -296,13 +304,18 @@ impl Page for SettingsPage {
         }
     }
     fn is_switch_row(&self, idx: usize) -> bool {
-        idx == 8
+        idx == 8 || idx == 9
     }
     fn on_switch(&self, idx: usize) {
         if idx == 8 {
             unsafe {
                 let on = crate::bridge_cfg::toggle();
                 crate::log::kv("文件桥开关 ", if on { 1 } else { 0 });
+            }
+        } else if idx == 9 {
+            unsafe {
+                let flipped = crate::screen_rotation::toggle();
+                crate::log::kv("屏幕翻转 ", if flipped { 1 } else { 0 });
             }
         }
     }

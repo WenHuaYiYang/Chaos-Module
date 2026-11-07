@@ -69,6 +69,8 @@ impl Page for InfoPage {
             // 会和它打架(实测: 主页导航行 28px 观感正常, 但同一规则套到列表行就偏大)。
             // 让下一拍 tick 立即刷(周期是 20 拍, 置 19 后 +1 正好命中), 见上面那段注释
             st_wr!(STAT_TICK, 19);
+            // 开机/重启后进主页即恢复上次的屏幕方向（display 未就绪时留到下次）。
+            crate::screen_rotation::ensure_applied();
             let _ = cpu;
             Ok(())
         }

@@ -22,6 +22,7 @@ mod appmgr;
 mod about;
 mod system;
 mod keyboard;
+mod debug;
 
 pub(crate) use beautify::BLUR_LEGACY_PID;
 
@@ -331,4 +332,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &crate::btpan::PAGE_NETINFO_P, // 34 BTPAN -> 连接信息
     &crate::btpan::PAGE_EXP_P, // 35 主页 -> 实验性功能
     &crate::btpan::PAGE_DIAG_P, // 36 实验性功能 -> 蓝牙诊断
+    &debug::PAGE_DEBUGP,        // 37 调试模式 -> 调试信息(纯文本)
 ];

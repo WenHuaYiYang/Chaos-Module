@@ -126,6 +126,7 @@ impl Page for AboutPage {
                 let _ = build_rows(ctx, ctx.content, &[
                     (0, RowSpec::tap("① 重绘四个对比环\0".as_bytes(), core::ptr::null())),
                     (1, RowSpec::tap("② 导出 LVGL dump\0".as_bytes(), core::ptr::null())),
+                    (2, RowSpec::tap("③ 调试信息\0".as_bytes(), core::ptr::null())),
                 ]);
                 let msg = fw_api::label_create(ctx.content);
                 if msg != 0 {
@@ -167,6 +168,10 @@ impl Page for AboutPage {
                     crate::ui::render_req(18);
                     return;
                 }
+                if idx == 2 {
+                    nav_goto(37, 0);
+                    return;
+                }
                 crate::ui::render_req(18);
                 return;
             }
@@ -176,10 +181,10 @@ impl Page for AboutPage {
 
             // debug入口
 
-            // else if idx == 0 {
-            //     DBG_CLICKS += 1;
-            //     if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
-            // }
+            else if idx == 0 {
+                DBG_CLICKS += 1;
+                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
+            }
         }
     }
     fn needs_tick(&self) -> bool { unsafe { DBG_ON != 0 } }
