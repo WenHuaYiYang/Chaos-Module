@@ -1,0 +1,7 @@
+name,str_file_off,ref_file_off,func_entry,delta
+lv_image_buf,0x20F48B,,,
+lv_image_buf_set_palette,0x20F4B8,0x65CD00,0x65CCBC,
+lv_image_decoder,0x20F51F,,,
+lv_image_decoder_post_process,0x20F5A4,0x65D408,0x65D374,
+lv_image_header_t,0x210804,,,
+lv_image_set_src,0x254044,0x6CAF4C,0x6CACF0,

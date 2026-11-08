@@ -1,0 +1,98 @@
+module,addr_043,fw_name_043,p65_entry_run,p65_entry_file,how,gap,n_keys,decided_by,other_votes,key_string,grade
+event,0x0CAA5078,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+event,0x0C587ED0,lv_timer_create,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+event,0x0C16D544,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+fs,0x0C1D0A28,open,0x0C129980,0x00069980,池在函数之后,0x58,0,open,,../../nuttx/fs/vfs/fs_poll.c,候选：还要 Ghidra 核参数 + 模拟器核被执行
+fs,0x0C1B9D80,close,0x0C129760,0x00069760,池在函数之后,0x1C8,0,close,,fs_putfilep,候选：还要 Ghidra 核参数 + 模拟器核被执行
+fs,0x0C1D0524,lseek,,,,,0,,,../../nuttx/fs/vfs/fs_lseek. | ../../nut,命中点不在紧邻函数上（是别的表/池），待定
+fs,0x0C1D129C,read,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+fs,0x0C1D2640,write,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+fs,0x0C1D01A4,ioctl,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+fs,0x0C1E4528,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+fs,0x0C1E4590,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+fs,0x0C1E4564,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+fs,0x0C1EABE0,,0x0C4FFB84,0x0043FB84,池在函数之后,0x28,0,%s/XXXXXX,,%s/XXXXXX | ../../nuttx/libs/libc/stdio/,候选：还要 Ghidra 核参数 + 模拟器核被执行
+gfx,0x0C588628,lvx_object_set_size,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0CA48474,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0CA484EC,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C589188,lvx_object_align,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588EF0,lv_obj_align_to,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588518,lv_obj_set_hidden,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588518,lv_obj_set_hidden,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C5883F0,lv_obj_add_event_cb,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588DE8,lvx_object_delete,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588210,lv_event_get_code,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588310,lv_event_get_user_data,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C4CA0D8,lvx_msgbox_create,,,,,0,,,/resource/app/common/icon/ca | /resource,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C4CA130,lvx_msgbox_set_content,,,,,0,,,/resource/app/common/icon/ca | /resource,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588F30,lvx_label_create,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C589490,lvx_label_set_text,,,,,0,,,sport_data_manager_unregiste,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588BF8,lvx_label_set_long_mode,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C4BF898,lvx_style_apply,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588420,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C4BF87C,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C588E78,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C588248,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C588830,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C588DA0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C4BFFFC,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C588628,lvx_object_set_size,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588CB8,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C5880D0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C5883D8,lv_bar_set_range,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C588500,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C588A70,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C5890A8,lv_bar_set_value,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+gfx,0x0C86037C,,0x0C2188EC,0x001588EC,池在函数之后,0xD0,4,Use LV_FONT_DEFAULT(%p),delfont is NULL | disp is NULL,Use LV_FONT_DEFAULT(%p) | delfont is NUL,候选：还要 Ghidra 核参数 + 模拟器核被执行（其余键指向别处，只信首键）
+gfx,0x0C587B38,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C8603B0,,0x0C2188EC,0x001588EC,池在函数之后,0xD0,4,Use LV_FONT_DEFAULT(%p),delfont is NULL | disp is NULL,Use LV_FONT_DEFAULT(%p) | delfont is NUL,候选：还要 Ghidra 核参数 + 模拟器核被执行（其余键指向别处，只信首键）
+gfx,0x0C589448,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C107790,lv_obj_set_local_style_prop,0x0C0D6CE8,0x00016CE8,池在函数之后,0xEC,2,Asserted at expression: %s,,Asserted at expression: %s | obj->style_,候选：还要 Ghidra 核参数 + 模拟器核被执行
+gfx,0x0C588BB8,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C5881D8,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+gfx,0x0C5886E0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C588D58,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C587FA0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C588960,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C587BC0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C589550,lv_obj_move_to_index,0x0C0D97A8,0x000197A8,池在函数之后,0x118,4,lv_obj_move_to_index,sport_data_manager_pause | sports_view_remove_listener,[%s] %s: there no one use ma | sport_dat,候选：还要 Ghidra 核参数 + 模拟器核被执行（其余键指向别处，只信首键）
+glass,0x0C5891B0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C5883F8,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+glass,0x0C5F3770,,,,,,0,,,app_watchface_take_snapshot | watchface,命中点不在紧邻函数上（是别的表/池），待定
+glass,0x0C4B6B34,,,,,,0,,,get_sp_buff_by_dsc,命中点不在紧邻函数上（是别的表/池），待定
+home,0x0CA5FB40,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+home,0x0C587D88,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+home,0x0CA5FB40,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+home,0x0CA48258,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+home,0x0CA4E370,,0x0C22DC5C,0x0016DC5C,池在函数之后,0x10C,3,lvx_canvas_copy_area,,Type must be LVX_CHART_TYPE_ | lvx_canva,候选：还要 Ghidra 核参数 + 模拟器核被执行
+page,0x0C54CA3C,lvx_list_row_create,,,,,0,,,app_settings_state_init | setting_all_st,命中点不在紧邻函数上（是别的表/池），待定
+page,0x0C4C8C60,lvx_list_row_trailing,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+page,0x0C4C8904,lvx_list_item_update,0x0C219878,0x00159878,池在函数之后,0x38,3,lvx_list_item,,"[%s] %s: no obj,set icon err | lvx_list_",候选：还要 Ghidra 核参数 + 模拟器核被执行
+page,0x0CA67244,lvx_page_content_create,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+page,0x0C5893C0,lvx_content_pad_bottom,,,,,0,,,,命中点不在紧邻函数上（是别的表/池），待定
+page,0x0C4CA6C4,lvx_page_title_create,0x0C21B2FC,0x0015B2FC,池在函数之后,0x1A8,0,lvx_page_title_create,,,候选：还要 Ghidra 核参数 + 模拟器核被执行
+page,0x0CA6C358,page_goto,0x0C222D10,0x00162D10,池在函数之后,0x120,0,goto_page_no_check_stacktop,pagemanager,goto_page_no_check_stacktop | pagemanage,候选：还要 Ghidra 核参数 + 模拟器核被执行（其余键指向别处，只信首键）
+page,0x0CA76FB4,,0x0CA74820,0x009B4820,池在函数之后,0x80,0,create_default_slot_config,,create_default_slot_config | create_slot,候选：还要 Ghidra 核参数 + 模拟器核被执行
+picker,0x0CA67834,,0x0C240410,0x00180410,池在函数之后,0x1C8,2,lvx_zoom_picker_set_mode,,lvx_zoom_picker_set_mode | zoom_picker,候选：还要 Ghidra 核参数 + 模拟器核被执行
+picker,0x0CA67CDC,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+picker,0x0CA67A08,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+picker,0x0CA67A80,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+picker,0x0CA67CB8,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+picker,0x0CA67850,,0x0C240410,0x00180410,池在函数之后,0x1C8,2,lvx_zoom_picker_set_mode,,lvx_zoom_picker_set_mode | zoom_picker,候选：还要 Ghidra 核参数 + 模拟器核被执行
+picker,0x0CA67A18,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+sys,0x0CA95C30,,,,,,3,,,watchface_manager_delete_wat | watchface,命中点不在紧邻函数上（是别的表/池），待定
+sys,0x0C1F903C,heap_malloc,,,,,0,,,../../nuttx/net/devif/devif_,命中点不在紧邻函数上（是别的表/池），待定
+sys,0x0CA6F660,,0x0CA65C48,0x009A5C48,池在函数之后,0x50,3,brightness_set_value,,brightness_set_auto_adjustme | brightnes,候选：还要 Ghidra 核参数 + 模拟器核被执行
+sys,0x0CA6F6F8,,0x0CA65DB8,0x009A5DB8,池在函数之后,0xDC,2,brightness_set_full_power,,brightness_set_auto_adjustme | brightnes,候选：还要 Ghidra 核参数 + 模拟器核被执行
+sys,0x0CA6F7D8,,0x0CA65DB8,0x009A5DB8,池在函数之后,0xDC,0,brightness_set_full_power,,brightness_stop_agc | brightness | brigh,候选：还要 Ghidra 核参数 + 模拟器核被执行
+sys,0x0CA6EF34,,0x0CA654D0,0x009A54D0,池在函数之后,0x84,0,apply_brightness_smoothly,,apply_brightness_smoothly | brightness,候选：还要 Ghidra 核参数 + 模拟器核被执行
+sys,0x0C589050,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+sys,0x0C588810,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+sys,0x0C1F06B4,,0x0C504284,0x00444284,池在函数之后,0x20,0,Unknown error %d,,Unknown error %d | Unknown error,候选：还要 Ghidra 核参数 + 模拟器核被执行
+sys,0x0C1F8FF8,heap_free,,,,,0,,,../../nuttx/net/devif/devif_,命中点不在紧邻函数上（是别的表/池），待定
+sys,0x0C5890D0,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+sys,0x0C4C56CC,,,,,,0,,,,没有串键（要换结构对照或调用点上下文）
+sys,0x0C1E5C38,,,,,,9,,,%I:%M:%S %p | December | Friday | Monday,命中点不在紧邻函数上（是别的表/池），待定
+sys,0x0C513BC0,,0x0C7EC744,0x0072C744,池在函数之后,0x12C,0,app_launcher_update,, %s: guesture_daily_close_ti | app_launc,候选：还要 Ghidra 核参数 + 模拟器核被执行
+sys,0x0C513B2C,app_launcher_del,0x0C7EC53C,0x0072C53C,池在函数之后,0x84,2,app_launcher_del,app_launcher_update,app_launcher_del | app_launcher_update,候选：还要 Ghidra 核参数 + 模拟器核被执行（其余键指向别处，只信首键）
+sys,0x0C513A44,app_launcher_add,0x0C7EC450,0x0072C450,池在函数之后,0xE0,2,app_launcher_add,app_launcher_del,app_launcher_add | app_launcher_del,候选：还要 Ghidra 核参数 + 模拟器核被执行（其余键指向别处，只信首键）

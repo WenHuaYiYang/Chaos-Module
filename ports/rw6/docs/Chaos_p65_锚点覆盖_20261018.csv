@@ -1,0 +1,100 @@
+module,wrapper,addr_043,fw_name_043,kind,name_hits_in_p65,prototype,proof
+event,?,0x0CAA5078,,不在符号包,0,,
+event,?,0x0C587ED0,lv_timer_create,有名无串,0,"void *(canopus_lvx_event_cb, uint32_t, void ",STATIC_RECOVERED
+event,?,0x0C16D544,,不在符号包,0,,
+fs,?,0x0C1D0A28,open,有名可搜,67,"int(const char *, int, ...)",STATIC_RECOVERED
+fs,?,0x0C1B9D80,close,有名可搜,41,int(int),STATIC_RECOVERED
+fs,?,0x0C1D0524,lseek,有名可搜,3,"int64_t(int, int64_t, int)",STATIC_RECOVERED
+fs,?,0x0C1D129C,read,有名可搜,71,"int32(int, void *, uint32_t)",STATIC_RECOVERED
+fs,?,0x0C1D2640,write,有名可搜,49,"int32(int, const void *, uint32_t)",STATIC_RECOVERED
+fs,?,0x0C1D01A4,ioctl,有名可搜,4,"int32_t(int32_t, uint32_t, ...)",STATIC_RECOVERED
+fs,?,0x0C1E4528,,不在符号包,0,,
+fs,?,0x0C1E4590,,不在符号包,0,,
+fs,?,0x0C1E4564,,不在符号包,0,,
+fs,?,0x0C1EABE0,,不在符号包,0,,
+gfx,?,0x0C588628,lvx_object_set_size,有名无串,0,"void(void *object, int32_t width, int32_t he",STATIC_RECOVERED
+gfx,?,0x0CA48474,,不在符号包,0,,
+gfx,?,0x0CA484EC,,不在符号包,0,,
+gfx,?,0x0C589188,lvx_object_align,有名无串,0,"void(void *object, uint32_t align, int32_t x",STATIC_RECOVERED
+gfx,?,0x0C588EF0,lv_obj_align_to,有名无串,0,"void(void *, void *, uint32_t, int32_t, int3",STATIC_RECOVERED
+gfx,?,0x0C588518,lv_obj_set_hidden,有名无串,0,"void(void *, uint32_t)",STATIC_RECOVERED
+gfx,?,0x0C588518,lv_obj_set_hidden,有名无串,0,"void(void *, uint32_t)",STATIC_RECOVERED
+gfx,?,0x0C5883F0,lv_obj_add_event_cb,有名无串,0,"void(void *, canopus_lvx_event_cb, uint32_t,",STATIC_RECOVERED
+gfx,?,0x0C588DE8,lvx_object_delete,有名无串,0,void(void *object),STATIC_RECOVERED
+gfx,?,0x0C588210,lv_event_get_code,有名无串,0,uint32_t(void *event),STATIC_RECOVERED
+gfx,?,0x0C588310,lv_event_get_user_data,有名无串,0,void *(void *),STATIC_RECOVERED
+gfx,?,0x0C4CA0D8,lvx_msgbox_create,有名无串,0,"void *(void *parent, void *extra)",STATIC_RECOVERED
+gfx,?,0x0C4CA130,lvx_msgbox_set_content,有名无串,0,"void(void *box, uint32_t mode, const char *t",STATIC_RECOVERED
+gfx,?,0x0C588F30,lvx_label_create,有名无串,0,void *(void *parent),STATIC_RECOVERED
+gfx,?,0x0C589490,lvx_label_set_text,有名无串,0,"void(void *label, const char *text)",STATIC_RECOVERED
+gfx,?,0x0C588BF8,lvx_label_set_long_mode,有名无串,0,"void(void *label, uint32_t mode)",STATIC_RECOVERED
+gfx,?,0x0C4BF898,lvx_style_apply,有名无串,0,"int(void *, const void *, uint32_t, uint32_t",STATIC_RECOVERED
+gfx,?,0x0C588420,,不在符号包,0,,
+gfx,?,0x0C4BF87C,,不在符号包,0,,
+gfx,?,0x0C588E78,,不在符号包,0,,
+gfx,?,0x0C588248,,不在符号包,0,,
+gfx,?,0x0C588830,,不在符号包,0,,
+gfx,?,0x0C588DA0,,不在符号包,0,,
+gfx,?,0x0C4BFFFC,,不在符号包,0,,
+gfx,?,0x0C588628,lvx_object_set_size,有名无串,0,"void(void *object, int32_t width, int32_t he",STATIC_RECOVERED
+gfx,?,0x0C588CB8,,不在符号包,0,,
+gfx,?,0x0C5880D0,,不在符号包,0,,
+gfx,?,0x0C5883D8,lv_bar_set_range,有名无串,0,"void(void *, int32_t, int32_t)",STATIC_CONFIRMED
+gfx,?,0x0C588500,,不在符号包,0,,
+gfx,?,0x0C588A70,,不在符号包,0,,
+gfx,?,0x0C5890A8,lv_bar_set_value,有名无串,0,"void(void *, int32_t, uint32_t)",STATIC_CONFIRMED
+gfx,bar_set_pct,0x0C86037C,,不在符号包,0,,
+gfx,bar_set_pct,0x0C587B38,,不在符号包,0,,
+gfx,bar_set_pct,0x0C8603B0,,不在符号包,0,,
+gfx,bar_set_pct,0x0C589448,,不在符号包,0,,
+gfx,bar_set_pct,0x0C107790,lv_obj_set_local_style_prop,有名无串,0,"void (void *, uint32_t, uint32_t, uint32_t)",STATIC_RECOVERED
+gfx,bar_set_pct,0x0C588BB8,,不在符号包,0,,
+gfx,bar_set_pct,0x0C5881D8,,不在符号包,0,,
+gfx,bar_set_pct,0x0C5886E0,,不在符号包,0,,
+glass,?,0x0C588D58,,不在符号包,0,,
+glass,?,0x0C587FA0,,不在符号包,0,,
+glass,?,0x1C06C970,,不在符号包,0,,
+glass,?,0x0C588960,,不在符号包,0,,
+glass,?,0x0C587BC0,,不在符号包,0,,
+glass,?,0x0C589550,lv_obj_move_to_index,有名可搜,1,"void (void *, int32_t)",STATIC_CONFIRMED
+glass,?,0x0C5891B0,,不在符号包,0,,
+glass,?,0x0C5883F8,,不在符号包,0,,
+glass,?,0x0C5F3770,,不在符号包,0,,
+glass,?,0x0C4B6B34,,不在符号包,0,,
+home,background_notification_cache_refresh,0x0CA5FB40,,不在符号包,0,,
+home,background_surface_set_prop,0x0C587D88,,不在符号包,0,,
+home,background_home_refresh_dirty_snapshots,0x0CA5FB40,,不在符号包,0,,
+home,background_widget_cache_invalidate,0x0CA48258,,不在符号包,0,,
+home,background_card_set_prop,0x002BD924,,不在符号包,0,,
+home,background_chart_cache_invalidate,0x0CA4E370,,不在符号包,0,,
+page,?,0x0C54CA3C,lvx_list_row_create,有名无串,0,"void *(void *parent, const char *primary, co",STATIC_RECOVERED
+page,?,0x0C4C8C60,lvx_list_row_trailing,有名无串,0,void *(void *row),STATIC_RECOVERED
+page,?,0x0C4C8904,lvx_list_item_update,有名无串,0,"int(void *, const char *, const char *, cons",STATIC_RECOVERED
+page,?,0x0CA67244,lvx_page_content_create,有名无串,0,void *(void *),STATIC_RECOVERED
+page,?,0x0C5893C0,lvx_content_pad_bottom,有名无串,0,"void(void *object, int32_t value, uint32_t s",STATIC_RECOVERED
+page,?,0x0C4CA6C4,lvx_page_title_create,有名可搜,1,"void *(void *, const char *, uint32_t, canop",STATIC_RECOVERED
+page,?,0x0CA6C358,page_goto,有名无串,0,"int32_t(uint32_t page_key, uint32_t start_da",STATIC_RECOVERED
+page,?,0x0CA76FB4,,不在符号包,0,,
+picker,?,0x0CA67834,,不在符号包,0,,
+picker,?,0x0CA67CDC,,不在符号包,0,,
+picker,?,0x0CA67A08,,不在符号包,0,,
+picker,?,0x0CA67A80,,不在符号包,0,,
+picker,?,0x0CA67CB8,,不在符号包,0,,
+picker,?,0x0CA67850,,不在符号包,0,,
+picker,?,0x0CA67A18,,不在符号包,0,,
+sys,?,0x0CA95C30,,不在符号包,0,,
+sys,?,0x0C1F903C,heap_malloc,有名无串,0,void *(uint32_t),STATIC_CONFIRMED
+sys,brightness_set_value,0x0CA6F660,,不在符号包,0,,
+sys,brightness_set_auto_adjustment,0x0CA6F6F8,,不在符号包,0,,
+sys,brightness_set_full_power,0x0CA6F7D8,,不在符号包,0,,
+sys,brightness_apply_raw,0x0CA6EF34,,不在符号包,0,,
+sys,persist_get,0x0C589050,,不在符号包,0,,
+sys,persist_get,0x0C588810,,不在符号包,0,,
+sys,persist_get,0x0C1F06B4,,不在符号包,0,,
+sys,persist_get,0x0C1F8FF8,heap_free,有名无串,0,int(void *),STATIC_CONFIRMED
+sys,persist_get,0x0C5890D0,,不在符号包,0,,
+sys,persist_get,0x0C4C56CC,,不在符号包,0,,
+sys,persist_get,0x0C1E5C38,,不在符号包,0,,
+sys,persist_get,0x0C513BC0,,不在符号包,0,,
+sys,persist_get,0x0C513B2C,app_launcher_del,有名可搜,1,int(uint16_t),STATIC_RECOVERED
+sys,persist_get,0x0C513A44,app_launcher_add,有名可搜,1,int(uint16_t app_id),STATIC_RECOVERED

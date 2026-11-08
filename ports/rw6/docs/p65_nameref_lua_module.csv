@@ -1,0 +1,3 @@
+name,str_file_off,ref_file_off,func_entry,delta
+lua_module_miwear_close,0x37C020,0x998B44,0x998B10,
+lua_module_screen_close,0x37C154,0x998CE8,0x998C94,
