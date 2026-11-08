@@ -1,0 +1,105 @@
+{
+  "schema": "flint.firmware.v1",
+  "id": "firmware-watch6-p65-100043",
+  "board": "watch6-p65",
+  "target": "redmi-watch6-3.100.043",
+  "reference_bound": false,
+  "_bound_note": "参考实现那两份权威（miband.c 的 AP_BASE/AP_ALIAS_*、firmware-profiles/band10pro-p67-51930767.json）绑的是 10 Pro + 043 那一对，对本固件不成立，所以校验器把相关对账记成 skipped 并打印。下面每一项都写了它是从镜像哪一处读出来的。",
+
+  "images": {
+    "ap": {
+      "path": "fw/p65_100_043/vela_ap.bin",
+      "size": 11793540,
+      "sha256": "a19b601477569765103eaf468b937bd8026b4d68ffa5c896bde222a79e475858",
+      "xip_base": "0x0C0C0000",
+      "_base_note": "镜像自证：file 0x10 处 `14 48 00 47`（ldr r0,[pc,#0x50]; bx r0）的字面量在 file 0x64，值为 0x0C0C0015 —— 指向 file 0x14 那条 bl 的 Thumb 指针（自身 +5），只有基址取 0x0C0C0000 才自洽。与 043 同一条自证形状。",
+      "_layout_note": "段布局与 043 不同：043 是 [代码 0..~0xA00 万][名字池尾段]；本镜像名字池/只读数据在中段（约 file 0x100000..0x3FFFFF），主代码在 file 0x400000..0xB3F484。"
+    },
+    "resource": {
+      "path": "fw/p65_100_043/vela_resource.bin",
+      "optional": true,
+      "sha256": "17d0667f3ab5af38979ac29a555c3c30baaa83276d64d77263252f3cd75ff96a",
+      "_note": "218,460,160B = 106670 页 x 2048B（nand 页尺寸）恰好整除。镜像头是 `-rom1fs-`（ROMFS），与 p67 的资源包同格式。"
+    },
+    "sensor": {
+      "path": "fw/p65_100_043/vela_sensor.bin",
+      "optional": true,
+      "size": 1500676,
+      "sha256": "cca10d93d83e82253c8a965c9b57d6c1dcab3f4b94d0834a959e74714c3a47be",
+      "_note": "sensor 核（核 2）自己的镜像，OTA 里 `dd of=/dev/sensor` —— 与 ap/resource 并列的第三片存储，落在按 flash id 索引的那颗控制器（0x50160000）后面。头 16 字节实测 = BE57EC1C 00050000 00000000 2216E538：第一字与 AP 镜像里 subsys_check_boot_struct 的比较常量（file 0x8A71EC）逐字相同，这条就是「AP 从第三片 NOR 读 sensor 镜像的引导结构」的自证；第四字 0x2216E538 是它自己的运行地址（0x22000000 窗内）。等级：已验证（镜像内容与固件常量同值）。",
+      "_provenance": "fw 包解包产物现读（xxd + sha256sum）；比较常量与读取链取自镜像 file 0x8A7150/0x8A8DFC 反编译"
+    }
+  },
+
+  "boot": {
+    "pc": "0x0C0C0011",
+    "sp_bootstrap": "0x2019FFF0",
+    "sp_after_crt0": "0x2019FFE0",
+    "msplim_after_crt0": "0x2019F3E0",
+    "control_after_crt0": "0x00000000",
+    "slice_start": "0x0C0C0018",
+    "_note": "与 043 同一条形状：file 0x10 ldr/bx 到 0x14 的 bl（预初始化到 0x0C0C1B58），0x1A 写 MSP=0x2019FFE0、0x20 写 MSPLIM=0x2019F3E0、0x26 清 CONTROL、0x2A isb。两个 SP 都从 flash 字面量读出（file 0x68/0x6C）。引导期 SP 0x2019FFF0 由 RAM 顶 0x201A0000 推来（自证见 best1502_r0.soc.json 的 sram._note）。"
+  },
+
+  "vector_table": {
+    "build_fn": "0x0C0C0090",
+    "base": "0x20166000",
+    "slots": 110,
+    "src_flash_table": "0x2C0C2208",
+    "src_real_entries": 16,
+    "default_handler": "0x0C0C0085",
+    "vtor_write_site": "0x0C0C00B2",
+    "scb_base_literal": "0x0C0C00C8",
+    "vtor_offset": "0x8",
+    "return_site": "0x0C0C0032",
+    "_note": "逐字读过 0x0C0C0090：r2=0x20166000 是新表基址（池 @0x0C0C00BC），循环到 cmp r3,#0x6E（110 槽）为止，前 16 槽从 0x2C0C2208（flash cache 别名，file 0x2208）抄、其余填 0x0C0C0085 那个自环跳板（0x0C0C0084 处 nop x4 + FA E7），最后 str r2,[r3,#8] 写 VTOR（r3 = 0xE000ED00）。重要: 槽数 110 与 043 的 94 不同，向量表基址/源表也全不同。源表 [0]=0x2019FFE0（与 crt0 写进 MSP 的那一格相同，互证）。"
+  },
+
+  "relocate": {
+    "copy_src": "0x2CBFF308",
+    "copy_dst": "0x2019E724",
+    "copy_dst_end": "0x2019E728",
+    "bss_begin": "0x2019E728",
+    "bss_end": "0x2019E728",
+    "loop_entry": "0x0C0C003A",
+    "_note": "搬运/清零循环形态与 043 相同（0x0C0C003A 起），但两段的尺寸都异常小：.data 只搬 4 字节、.bss 为空（043 是 147KB+350KB）。且 copy_src 按 `2C 域 = 0x2C0C0000+file` 归一后落在镜像外（file 0xBFF308 > 0xB3F484，但在同一公式下 0x2C0C2208 的源表命中 file 0x2208 是准的）。两个疑点都待模拟器跑起来核对：要么 p65 的 .data 初始化另有机制（数据放 PSRAM 运行时副本），要么这一段的池值有别的读法。"
+  },
+
+  "init_calls": ["0x0C0C0090", "0x0C0C01D4", "0x0C0C0394"],
+  "preinit_callee": "0x0C0C1B58",
+  "preinit_bl_site": "0x0C0C0014",
+
+  "assertions": [
+    {"addr": "0x0C0C0010", "bytes": "14 48 00 47", "why": "crt0 前导：ldr r0,[pc,#0x50] + bx r0"},
+    {"addr": "0x0C0C0090", "bytes": "0A 4A 00 23 11 46 30 B5", "why": "建向量表函数序言"},
+    {"addr": "0x0C0C0084", "bytes": "00 BF 00 BF 00 BF 00 BF FA E7", "why": "默认 handler = nop x4 + b ."},
+    {"addr": "0x0C0C2208", "words": ["0x2019FFE0", "0x0C0C0085", "0x0C0C0085"], "why": "源表 [0]=初值 SP（与 crt0 写 MSP 的值相同），[1]=跳板"},
+    {"addr": "0x0C0C00BC", "word": "0x20166000", "why": "新表基址字面量"},
+    {"addr": "0x0C0C00C4", "word": "0x2C0C2208", "why": "源表字面量（cache 别名）"},
+    {"addr": "0x0C0C00C8", "word": "0xE000ED00", "why": "SCB 基址字面量（VTOR 走 base+8）"},
+    {"addr": "0x0C0C0014", "bytes": "01 F0 A0 FD", "why": "preinit bl 到 0x0C0C1B58"}
+  ],
+
+  "storage": {
+    "nor": {"address": "0xFC0000", "image_offset": "0xF00000", "size": "0x40000"},
+    "resource": {"first_page": 0, "page_count": 106670},
+    "journal_format": "mbflash1",
+    "_note": "照抄 p67 的结构待核：nor.address = (xip_base & 0xFFFFFF) + image_offset = 0xC0000 + 0xF00000 = 0xFC0000（校验器重算）。journal_format 是 p67 实测值，p65 的待模拟器核。page_count = p65 resource 大小 / 2048 现算。"
+  },
+
+  "rtos_sites": {
+    "critical_section": "unmodeled",
+    "mask_state_check": "unmodeled",
+    "thread_context_restore": "unmodeled",
+    "stack_switch_helper": "unmodeled",
+    "_note": "p65 的调度站点待定位（锚点定位工作线的一部分）。unmodeled = 校验器跳过、不写进 .prf、模拟器不设钩子。"
+  },
+
+  "lvgl_sites": {
+    "refr_area_part": "unmodeled",
+    "flush_cb_call": "unmodeled",
+    "lv_timer_handler": "unmodeled",
+    "lv_timer_set_period": "unmodeled",
+    "_note": "p65 的 LVGL 站点待定位。unmodeled = 校验器跳过。"
+  }
+}

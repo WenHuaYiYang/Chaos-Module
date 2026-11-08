@@ -1,0 +1,21 @@
+{
+  "schema": "flint.firmware.v1",
+  "id": "firmware-rw6-p65-3100043",
+  "board": "watch6-p65",
+  "target": "redmi-watch6-3.100.043",
+  "reference_bound": false,
+  "_bound_note": "RW6 的镜像, 用于对照 launcher 的滚动缩放实现(4 列). xip_base 由 0x64 处字面量 0x0C0C0015 反推。",
+  "images": {
+    "ap": {
+      "path": "fw_pkg_rw6/vela_ap.bin",
+      "size": 11793540,
+      "sha256": "a19b601477569765103eaf468b937bd8026b4d68ffa5c896bde222a79e475858",
+      "xip_base": "0x0C0C0000"
+    }
+  },
+  "boot": {
+    "pc": "0x0C0C0011",
+    "sp_bootstrap": "0x2019FFE0"
+  },
+  "_note": "名字表在 0x260000-0x280000 一带(2167 个标识符), 但名字 VA 的 4 字节引用为 0 处, 所以 find_fn_by_name 那套在这里不适用, 改用 Ghidra 的 text/xref。"
+}

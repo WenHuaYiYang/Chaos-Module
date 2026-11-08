@@ -14,6 +14,7 @@
 | 查固件 LVGL 类描述与构造入口 | [LVGL-MAP.md](LVGL-MAP.md) |
 | 看版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
 | 对比基线版本的完整改动 | [CHANGELOG-DEV.md](CHANGELOG-DEV.md)（开发者） · [CHANGELOG-USER.md](CHANGELOG-USER.md)（使用者） |
+| 看 Redmi Watch 6（RW6 / p65）的移植线 | [ports/rw6/README.md](../ports/rw6/README.md)（独立目录，不影响 10 Pro 主线） |
 
 ## 文档清单
 
@@ -35,4 +36,4 @@
 
 - **版本号**：容器头 `0x000X0Y0Z` 对应 `vX.Y.Z`，页面里显示的是同一个号（见 [BUILD.md](BUILD.md#版本号规则)）。
 - **文档与代码同 PR**：改行为就改对应文档，改版本就补 CHANGELOG。
-- 固件研究、地址手册、格式分析不在本仓库，见研究仓库的 `docs/`。
+- 固件研究、地址手册、格式分析原则上不在本仓库，见研究仓库的 `docs/`；例外是 [`ports/rw6/docs/`](../ports/rw6/docs/)，RW6 移植线自带该平台的地址表与容器格式结论。

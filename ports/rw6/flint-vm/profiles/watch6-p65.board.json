@@ -1,0 +1,71 @@
+{
+  "schema": "flint.board.v1",
+  "id": "watch6-p65",
+  "soc": "best1502_r0",
+  "_note": "Redmi Watch 6 (p65) 板级。多数字段先照抄 band10pro-p67 待核 —— 显示几何是镜像自证（432x514 相邻 u16 出现 5 次），其余（TE 引脚/panel 号/触摸/充电/模拟）等模拟器跑起来后按固件行为逐项核对。照抄值不得当已验证用。",
+  "display": {
+    "width": 432,
+    "height": 514,
+    "framebuffer_bpp": 24,
+    "pitch_bytes": 1296,
+    "te_gpio": 59,
+    "te_period_ticks": 41666667,
+    "panel_id": 4690224,
+    "panel_driver": "lcd_icna3312",
+    "ddb": "350120",
+    "_te_gpio_note": "59 = bank1(40089000) bit27。依据是固件自己在显示初始化里开的唯一一条 GPIO 中断：400M 条跑到面板初始化之后，bank1 的中断使能与公共使能都只有 0x08000000 这一位，bank0 全 0（见设备窗口 dump）。旧值 47 是从 p67 板照抄、本来标注待核。等级: 推断待核 —— 判据是 TE 沿被驱动接走（gpio 中断>0）且随后 frame_start(+0x224) 被写。",
+    "_ddb_note": "面板 DDB 三字节（DSI 读 0x04 的应答载荷）。取值来自固件自己的识别表：读引擎把三字节落成小端字后与四个候选比 —— 0x00200135/0x00200145（rm690c0 · VSN 屏，分支日志 '######vsn p01'）与 0x00200245/0x00200235（rm690c0 · TM 屏，'######TM p01'），另有一族 0x0030xxxx 走 icna3312（0x0C41E5FE/0x0C41E5DA 两个分支，file 0x41E59x）。本板真屏的供应商无法静态定，取 VSN 株 0x00200135（与 10 Pro 同族 rm690c0；物理屏归属未核）。校验器只查它是 6 位十六进制。",
+    "_pitch_note": "派生量 = 432*24/8 = 1296；校验器会重算比对。",
+    "_driver_note": "p65 镜像同时含 lcd_icna3312 与 lcd_rm690c0 两个驱动名字符串；主用哪个未定，先按 icna3312 试。te_gpio / panel_id / te_period_ticks 均为 p67 的照抄值，待核。",
+    "_dims_note": "432x514 自证：镜像内相邻 u16 常量对出现 5 次（p67 的 336x480 出现 3 次做对照）。"
+  },
+  "touch": {
+    "model": "inferred-report",
+    "i2c_controller": 5,
+    "address": "0x20",
+    "irq_gpio": 76,
+    "firmware_blobs": [],
+    "input_nodes": [
+      "/dev/input0",
+      "/dev/lra0"
+    ],
+    "_note": "整段照抄 p67 待核。p65 的触摸芯片/地址/IRQ 未自证；chip_id 按校验器规则留成缺项（没本板证据就不写），blobs 空，等启动链跑起来看触摸初始化访问哪里。"
+  },
+  "charger": {
+    "model": "sc7061",
+    "i2c_controller": 0,
+    "address": "0x07",
+    "_note": "总线与地址来自固件行为：2G 条运行里 p65 的充电器探测（[CHARGER][BESPOWER]cxc i2c0 → SY6103X → SC7061）8 条命令全在 i2c0 上、无应答、末端从地址 7（p67 口径的 i2c3 上命令 0）。充电 IC 具体应答值未核。"
+  },
+  "analog": {
+    "battery_channel": 4,
+    "thermistor_channels": [
+      2,
+      5
+    ],
+    "thermistor_mv": 260,
+    "battery_divider_uv_per_mv": 4900,
+    "_note": "照抄 p67 待核。"
+  },
+  "nand": {
+    "model": "spi-nand-compat",
+    "i2c_or_flash_controller": 1,
+    "page_size": 2048,
+    "spare_size": 64,
+    "pages_per_block": 64,
+    "page_count": 262144,
+    "jedec_id": [
+      "0xC8",
+      "0xF4",
+      "0xC8"
+    ],
+    "feature_b0": 1,
+    "prog_cache_pages": 4,
+    "_note": "整段照抄 p67 待核。p65 的 resource 镜像 218,460,160B = 106670 页 x 2048B 恰好整除，与本 nand 页尺寸自洽；器件容量/ID 待固件行为自证。"
+  },
+  "_provenance": {
+    "display.width/height": "p65 镜像自证：432x514 相邻 u16 对 5 处",
+    "display.panel_driver": "p65 镜像字符串 lcd_icna3312 / lcd_rm690c0 各在",
+    "其余": "照抄 band10pro-p67.board.json，全部待核（reference 目标链是 p67 专用，对本板不成立）"
+  }
+}

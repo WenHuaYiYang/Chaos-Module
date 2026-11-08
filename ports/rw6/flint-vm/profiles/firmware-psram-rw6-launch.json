@@ -1,0 +1,20 @@
+{
+  "schema": "flint.firmware.v1",
+  "id": "firmware-psram-rw6-launch",
+  "board": "watch6-p65",
+  "target": "redmi-watch6-3.100.043 PSRAM 切片(launcher 代码+串池)",
+  "reference_bound": false,
+  "_bound_note": "运行期从 QEMU QMP xp 读出的 PSRAM 0x1C020000 起 2.25MB。静态 AP 镜像里没有这段代码, launcher 渲染层的真身在 PSRAM。切片文件在 build/ 下(不入库), 换机需重 dump。",
+  "images": {
+    "ap": {
+      "path": "build/rw6_measure/psram_1C020000.bin",
+      "size": 2359296,
+      "xip_base": "0x1C020000"
+    }
+  },
+  "boot": {
+    "pc": "0x1C020000",
+    "sp_bootstrap": "0x0"
+  },
+  "_note": "只给 Ghidra 建工程用, 不参与 flint 引导。"
+}
