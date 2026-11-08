@@ -1,0 +1,20 @@
+{
+  "schema": "flint.firmware.v1",
+  "id": "firmware-psram-rw6-ap",
+  "board": "watch6-p65",
+  "target": "redmi-watch6-3.100.043 launcher blob 直接从 AP 镜像还原（不经模拟器）",
+  "reference_bound": false,
+  "_bound_note": "实测口径：活体 8MB PSRAM dump 与 fw_pkg_rw6/vela_ap.bin 逐 4KB 块相同，代码半段差 0x2FDC4、串池半段差 0x2F5C4（work/rw6_desktop_measure/blob_from_ap.py 负责切片并把 0x3C/0x38/0x18 别名指针统一成 0x1C 基）。这份文件与分析用的活体 dump 等价，来源是入库的固件镜像，所以 RW6 渲染层的静态分析不再依赖那台不稳的 guest。",
+  "images": {
+    "ap": {
+      "path": "build/rw6_measure/rw6_blob_ap.bin",
+      "size": 8388608,
+      "xip_base": "0x1C000000"
+    }
+  },
+  "boot": {
+    "pc": "0x1C000000",
+    "sp_bootstrap": "0x0"
+  },
+  "_note": "只给 Ghidra 建工程用，不进 flint 跑。地址口径 = 运行地址（0x1C000000 基）。"
+}
