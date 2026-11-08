@@ -36,6 +36,25 @@ static mut CORONA_BG_ACTIVE: u32 = 0;
 // Last successfully committed shared region mask; a busy commit must not
 // consume a newer selection. Zero is valid: Corona owns no blurred regions.
 static mut CORONA_BG_MASK: u32 = 0;
+// 所有权看门狗：连续几拍发现 corona 已经不再持有原生 owner（被 DELETE/手势
+// 摘掉但没人重新 commit）时，把状态归零让下一拍重新 commit。丢了所有权还继续
+// 认定 CORONA_BG_ACTIVE==1，表现就是"模糊不动了，换什么档位都是透明"。
+static mut CORONA_OWN_LOST: u32 = 0;
+// commit 连续失败计数；到阈值就先把 corona 完整下架、让旧引擎接管一段时间，
+// 到点再自动重试一次（否则界面会一直停在"看着像坏了"的状态）。
+static mut CORONA_FAIL: u32 = 0;
+static mut CORONA_HOLD: u32 = 0;      // >0 = 暂停拍数，期间旧引擎接管
+static mut CORONA_HOLD_ARM: u32 = 0;  // 下架序列走完后进入暂停
+static mut CORONA_COOLDOWN: u32 = 0;  // 丢所有权后歇几拍再重装（防抖）
+
+/// 连续失败多少拍才降级（tick 50ms → 100 拍 ≈ 5s）。
+const CORONA_FAIL_LIMIT: u32 = 100;
+/// 降级持续多少拍（≈ 20s），到期重试一次。
+const CORONA_HOLD_TICKS: u32 = 400;
+/// 所有权连续丢失多少拍才认定真的丢了（避免手势过程中的瞬态误判）。
+const CORONA_OWN_LOST_LIMIT: u32 = 3;
+/// 重装冷却（≈ 2s）：丢所有权后的重试间隔，避免 commit/丢失高频抖动。
+const CORONA_RETRY_TICKS: u32 = 40;
 // 模块注入后给其他模块留出启动窗口，约 50 * 50ms = 2.5 秒。
 static mut BOOT_DELAY: u32 = 0;
 
@@ -310,15 +329,24 @@ unsafe fn original(index: usize, a: u32, b: u32, c: u32, d: u32) -> u32 {
     fw_api::background_invoke(fw_api::BACKGROUND_HOME_ORIGINALS[index], a, b, c, d)
 }
 
+/// Corona（或 v2，同一套引擎）正在接管场景时，旧引擎一律不许动这些根。
+/// 暂停期（CORONA_HOLD）例外：那时 corona 已完整下架，旧引擎必须能干活。
+unsafe fn corona_owns_scene() -> bool {
+    st_rd!(CORONA_HOLD) == 0
+        && (crate::corona_blur::active() || st_rd!(CORONA_BG_ACTIVE) != 0)
+}
+
 unsafe extern "C" fn home_signal(a: u32, b: u32, c: u32, d: u32) -> u32 {
-    if a == fw_api::BACKGROUND_HOME_DESC && b == 0x12 { unmount(); }
+    // corona 接管期间的 unmount 是旧引擎的破坏性动作（会 restore 旧台账、
+    // 卸掉 background_pages 钩子），状态 1/2 下必须禁止 —— 交给 corona_tick 管。
+    if a == fw_api::BACKGROUND_HOME_DESC && b == 0x12 && !corona_owns_scene() { unmount(); }
     let result = original(0, a, b, c, d);
     if a == fw_api::BACKGROUND_HOME_DESC && b == 0x12 { st_wr!(REQUEST, 1); }
     result
 }
 
 unsafe extern "C" fn home_create(a: u32, b: u32, c: u32, d: u32) -> u32 {
-    if a == fw_api::BACKGROUND_HOME_DESC { unmount(); }
+    if a == fw_api::BACKGROUND_HOME_DESC && !corona_owns_scene() { unmount(); }
     let result = original(1, a, b, c, d);
     if a == fw_api::BACKGROUND_HOME_DESC { st_wr!(REQUEST, 1); }
     result
@@ -331,7 +359,7 @@ unsafe extern "C" fn home_resume(a: u32, b: u32, c: u32, d: u32) -> u32 {
 }
 
 unsafe extern "C" fn home_delete(a: u32, b: u32, c: u32, d: u32) -> u32 {
-    if a == fw_api::BACKGROUND_HOME_DESC { unmount(); }
+    if a == fw_api::BACKGROUND_HOME_DESC && !corona_owns_scene() { unmount(); }
     let result = original(3, a, b, c, d);
     if a == fw_api::BACKGROUND_HOME_DESC { st_wr!(REQUEST, 1); }
     result
@@ -358,6 +386,12 @@ pub(crate) unsafe fn generate() {
 }
 
 pub(crate) unsafe fn mode() -> u32 { st_rd!(MODE) }
+
+/// 调试页只读快照：(接管态, 已生效区域掩码, 暂停拍数, 失败计数, 丢所有权计数)。
+pub(crate) unsafe fn corona_debug() -> (u32, u32, u32, u32, u32) {
+    (st_rd!(CORONA_BG_ACTIVE), st_rd!(CORONA_BG_MASK),
+     st_rd!(CORONA_HOLD), st_rd!(CORONA_FAIL), st_rd!(CORONA_OWN_LOST))
+}
 
 /// 按模糊区域掩码过滤目标面: 关闭的区域槽位置 0 —— SCENE/enable 全链都把
 /// parent==0 当"跳过", 于是该区域保持官方模糊画面(见 blur_zone.rs 槽位表)。
@@ -427,6 +461,10 @@ unsafe fn realtime_follow() {
 }
 
 pub(crate) unsafe fn status() -> &'static [u8] {
+    // 降级期间说人话：这段时间是系统背景在生效，不是"正在切模糊"。
+    if st_rd!(CORONA_HOLD) != 0 {
+        return "模糊引擎已暂停，系统背景生效中\0".as_bytes();
+    }
     if crate::corona_blur::active() {
         return if st_rd!(CORONA_BG_ACTIVE) == 1 {
             if st_rd!(CORONA_BG_MASK) != crate::blur_zone::mask() {
@@ -463,15 +501,49 @@ unsafe fn set_status(value: u32) {
     if value != st_rd!(STATUS) { st_wr!(STATUS, value); st_wr!(DIRTY, 1); }
 }
 
+/// 记一次 corona 失败。到阈值就安排“先下架、再暂停”，返回 true 表示已安排。
+unsafe fn corona_failure(step: u32) -> bool {
+    let fails = st_rd!(CORONA_FAIL).saturating_add(step);
+    if fails < CORONA_FAIL_LIMIT {
+        st_wr!(CORONA_FAIL, fails);
+        return false;
+    }
+    st_wr!(CORONA_FAIL, 0);
+    if st_rd!(CORONA_BG_ACTIVE) == 1 {
+        // 已接管：先走正常下架序列（commit(false) → poll 到干净），完成后进暂停。
+        st_wr!(CORONA_BG_ACTIVE, 2);
+        st_wr!(CORONA_HOLD_ARM, 1);
+    } else {
+        // 从来没接上：直接让旧引擎接管。
+        st_wr!(CORONA_BG_ACTIVE, 0);
+        st_wr!(CORONA_HOLD, CORONA_HOLD_TICKS);
+    }
+    st_wr!(DIRTY, 1);
+    true
+}
+
 unsafe fn corona_tick() -> bool {
+    // 暂停期：corona 已完整下架，这段时间完全交给旧引擎；到点再试一次。
+    if st_rd!(CORONA_HOLD) != 0 {
+        st_wr!(CORONA_HOLD, st_rd!(CORONA_HOLD) - 1);
+        if st_rd!(CORONA_HOLD) != 0 { return false; }
+    }
     let engine_active = crate::corona_blur::active();
     let v2_active = crate::corona_blur::v2_enabled();
     if engine_active {
         let region_mask = crate::blur_zone::mask();
         if st_rd!(CORONA_BG_ACTIVE) == 0 {
-            // Do not tear down an old scene during a native swipe or while
-            // its roots cannot be validated for style restoration.
-            if !fw_api::screen_is_on() || !crate::corona_blur::backgrounds_idle() {
+            if !fw_api::screen_is_on() { return true; }
+            // 等 native 空闲期间也继续服务 Corona：滚动标记的自愈就在 poll 里，
+            // 不 poll 的话“标记卡住 → 永远等不到空闲”会互相锁死。
+            if !crate::corona_blur::backgrounds_idle() {
+                crate::corona_blur::backgrounds_poll();
+                return true;
+            }
+            if st_rd!(CORONA_COOLDOWN) != 0 {
+                // 刚丢过所有权：歇几拍再重装，避免 commit/丢 高频抖动。
+                st_wr!(CORONA_COOLDOWN, st_rd!(CORONA_COOLDOWN) - 1);
+                crate::corona_blur::backgrounds_poll();
                 return true;
             }
             if (st_rd!(ATTACHED) != 0 || !SCENE.unmounted() || crate::background_pages::hooked())
@@ -489,11 +561,31 @@ unsafe fn corona_tick() -> bool {
                 // Keep servicing the applied configuration while a live mask
                 // update or a quick off/on waits for native retirement.
                 if st_rd!(CORONA_BG_ACTIVE) != 0 { crate::corona_blur::backgrounds_poll(); }
+                let _ = corona_failure(1);
                 return true;
             }
+            st_wr!(CORONA_FAIL, 0);
             st_wr!(CORONA_BG_MASK, region_mask);
             st_wr!(CORONA_BG_ACTIVE, 1);
             st_wr!(DIRTY, 1);
+        }
+        // 所有权看门狗：原生 owner 可能被它自己的 DELETE/手势处理摘掉而不经
+        // commit。继续认定 CORONA_BG_ACTIVE==1 就会"模糊不动、换什么档位都透明"。
+        // 只在主表盘上判定（前台应用的过渡里 owner 本来就可能为空）。
+        if fw_api::top_app_id() == fw_api::HOME_APP_ID
+            && !crate::corona_blur::backgrounds_owned() {
+            let lost = st_rd!(CORONA_OWN_LOST) + 1;
+            st_wr!(CORONA_OWN_LOST, lost);
+            if lost >= CORONA_OWN_LOST_LIMIT {
+                st_wr!(CORONA_OWN_LOST, 0);
+                st_wr!(CORONA_BG_ACTIVE, 0);
+                st_wr!(CORONA_COOLDOWN, CORONA_RETRY_TICKS);
+                st_wr!(DIRTY, 1);
+                crate::corona_blur::backgrounds_poll();
+                return true;
+            }
+        } else {
+            st_wr!(CORONA_OWN_LOST, 0);
         }
         // v2 adds only the old no-message image replacement. Never restart
         // background_pages/background_surfaces while Corona owns the scene.
@@ -541,6 +633,11 @@ unsafe fn corona_tick() -> bool {
         st_wr!(REFRESH, 0);
         set_status(0);
         st_wr!(DIRTY, 1);
+        // 降级：这次下架是“放弃重试”触发的，旧引擎接管一段后再自动重试。
+        if st_rd!(CORONA_HOLD_ARM) != 0 {
+            st_wr!(CORONA_HOLD_ARM, 0);
+            st_wr!(CORONA_HOLD, CORONA_HOLD_TICKS);
+        }
     }
     false
 }

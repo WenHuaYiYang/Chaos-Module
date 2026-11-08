@@ -8,6 +8,16 @@ macro_rules! st_rd { ($value:expr) => { $value }; }
 macro_rules! st_wr { ($slot:expr, $value:expr) => { $slot = $value }; }
 static mut CORONA_BG_ACTIVE: u32 = 0;
 static mut CORONA_BG_MASK: u32 = 0;
+static mut CORONA_FAIL: u32 = 0;
+static mut CORONA_HOLD: u32 = 0;
+static mut CORONA_HOLD_ARM: u32 = 0;
+static mut CORONA_COOLDOWN: u32 = 0;
+static mut CORONA_OWN_LOST: u32 = 0;
+// 与 background_home.rs 里的常量保持一致（这里只做主机侧模型）。
+const CORONA_FAIL_LIMIT: u32 = 100;
+const CORONA_HOLD_TICKS: u32 = 400;
+const CORONA_OWN_LOST_LIMIT: u32 = 3;
+const CORONA_RETRY_TICKS: u32 = 40;
 static mut ATTACHED: u32 = 0;
 static mut SOURCE_MODE: u32 = 0;
 static mut REFRESH: u32 = 0;
@@ -23,7 +33,7 @@ struct State {
     enabled: bool, screen: bool, idle: bool, targets: bool, pages: bool,
     scene_unmounted: bool, unmount_ok: bool, release_ok: bool, cleanup_pending: bool,
     commit_rc: i32, region_mask: u32, commits: Vec<(bool, u32)>,
-    calls: Vec<&'static str>, status: u32,
+    calls: Vec<&'static str>, status: u32, top: u32, owned: bool,
     saved_mask: Option<u8>, opens: u32, reads: u32,
     v2_enabled: bool, icon_hooked: bool, icon_restore_ok: bool,
 }
@@ -32,6 +42,7 @@ impl State {
         Self { enabled: false, screen: true, idle: true, targets: true, pages: false,
                scene_unmounted: true, unmount_ok: true, release_ok: true, cleanup_pending: false,
                commit_rc: 0, region_mask: 0x0f, commits: Vec::new(), calls: Vec::new(), status: 99,
+               top: 200, owned: true,
                saved_mask: None, opens: 0, reads: 0,
                v2_enabled: false, icon_hooked: false, icon_restore_ok: true }
     }
@@ -45,6 +56,8 @@ fn reset() {
     unsafe {
         CORONA_BG_ACTIVE = 0; CORONA_BG_MASK = 0; ATTACHED = 0; SOURCE_MODE = 0; REFRESH = 0;
         REQUEST = 0; GENERATE = 0; MODE = 0; DIRTY = 0; BOOT_DELAY = 0;
+        CORONA_FAIL = 0; CORONA_HOLD = 0; CORONA_HOLD_ARM = 0;
+        CORONA_COOLDOWN = 0; CORONA_OWN_LOST = 0;
         DELETED = [(0, 0); 4];
         region_storage::reset();
     }
@@ -76,6 +89,8 @@ mod fw_api {
     }
     pub unsafe fn close(fd: i32) { assert_eq!(fd, 1); }
     pub unsafe fn screen_is_on() -> bool { crate::with(|s| s.screen) }
+    pub const HOME_APP_ID: u32 = 200;
+    pub unsafe fn top_app_id() -> u32 { crate::with(|s| s.top) }
     pub unsafe fn background_home_targets() -> Option<[u32; 4]> {
         crate::with(|s| s.targets.then_some([10, 20, 30, 40]))
     }
@@ -125,6 +140,7 @@ mod corona_blur {
     pub unsafe fn v2_enabled() -> bool { crate::with(|s| s.v2_enabled) }
     pub unsafe fn active() -> bool { enabled() || v2_enabled() }
     pub unsafe fn backgrounds_idle() -> bool { crate::with(|s| s.idle) }
+    pub unsafe fn backgrounds_owned() -> bool { crate::with(|s| s.owned) }
     pub unsafe fn backgrounds_pending() -> bool { crate::with(|s| s.cleanup_pending) }
     pub unsafe fn backgrounds_poll() { crate::with(|s| s.calls.push("poll")); }
     pub unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 {
@@ -191,9 +207,56 @@ fn busy_enable_is_retried_without_losing_desired_state() {
 fn existing_scene_is_not_torn_down_during_swipe_or_without_roots() {
     reset(); with(|s| { s.enabled = true; s.idle = false; });
     unsafe { ATTACHED = 1; assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 0); }
-    with(|s| { assert!(s.calls.is_empty()); s.idle = true; s.targets = false; });
+    // 忙的时候只服务 Corona（滚动标记的自愈就挂在 poll 上），绝不拆旧场景。
+    with(|s| {
+        assert_eq!(s.calls, ["poll"]);
+        for call in ["unmount", "clear", "release", "uninstall"] {
+            assert!(!s.calls.contains(&call), "native busy must not mutate the old scene");
+        }
+        s.calls.clear(); s.idle = true; s.targets = false;
+    });
     unsafe { assert!(corona_tick()); }
     with(|s| assert!(s.calls.is_empty()));
+}
+
+#[test]
+fn lost_native_ownership_recommits_instead_of_staying_stuck() {
+    reset(); with(|s| s.enabled = true);
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 1); }
+    with(|s| { s.owned = false; s.calls.clear(); });
+    // 连续两拍只计数；第三拍才认定原生 owner 真的被摘掉了。
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 1); }
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 1); }
+    unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 0); }
+    with(|s| { s.owned = true; s.calls.clear(); });
+    unsafe {
+        assert!(CORONA_COOLDOWN > 0, "a lost owner must be retried after a cooldown");
+        let mut ticks = 0;
+        while CORONA_BG_ACTIVE != 1 && ticks < 200 { assert!(corona_tick()); ticks += 1; }
+        assert_eq!(CORONA_BG_ACTIVE, 1);
+        assert_eq!(CORONA_BG_MASK, 0x0f);
+    }
+    with(|s| assert!(s.commits.contains(&(true, 0x0f))));
+}
+
+#[test]
+fn persistent_commit_failure_degrades_to_legacy_then_retries() {
+    reset(); with(|s| { s.enabled = true; s.commit_rc = -2145; });
+    unsafe {
+        let mut ticks = 0;
+        while CORONA_HOLD == 0 && ticks < 300 { assert!(corona_tick()); ticks += 1; }
+        assert!(CORONA_HOLD > 0, "persistent failure must degrade to the legacy engine");
+        assert_eq!(CORONA_BG_ACTIVE, 0);
+        assert_eq!(ticks, CORONA_FAIL_LIMIT);
+    }
+    with(|s| s.commit_rc = 0);
+    unsafe {
+        let mut ticks = 0;
+        while CORONA_BG_ACTIVE != 1 && ticks < 1000 { let _ = corona_tick(); ticks += 1; }
+        assert_eq!(CORONA_BG_ACTIVE, 1);
+        assert_eq!(CORONA_HOLD, 0);
+        assert_eq!(CORONA_FAIL, 0);
+    }
 }
 
 #[test]

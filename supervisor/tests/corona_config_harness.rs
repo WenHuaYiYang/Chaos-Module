@@ -120,6 +120,10 @@ pub extern "C" fn chaos_corona_backgrounds_poll() { with(|s| s.polls += 1); }
 pub extern "C" fn chaos_corona_backgrounds_pending() -> u32 { with(|s| s.pending) }
 #[no_mangle]
 pub extern "C" fn chaos_corona_backgrounds_idle() -> i32 { with(|s| s.idle) }
+#[no_mangle]
+pub extern "C" fn chaos_corona_backgrounds_owned() -> u32 { 1 }
+#[no_mangle]
+pub extern "C" fn chaos_corona_diagnostics(_out: *mut u8, _capacity: u32) -> u32 { 0 }
 
 unsafe fn assert_modes(corona: bool, v2: bool) {
     assert_eq!(corona_blur::enabled(), corona);

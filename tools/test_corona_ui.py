@@ -24,6 +24,11 @@ def page_impl(name):
     raise AssertionError(f"page implementation not found: {name}")
 
 
+def live_code(text):
+    """去掉整行注释：corona模糊 按钮按要求注释停用，断言只针对仍然生效的代码。"""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("//"))
+
+
 class CoronaUiTests(unittest.TestCase):
     def test_registered_pages_are_not_removed_placeholders(self):
         table = PAGE.split("pub(crate) static PAGE_TABLE:", 1)[1]
@@ -36,14 +41,17 @@ class CoronaUiTests(unittest.TestCase):
         self.assertIn("addr_of!(PAGE_BLUR_LEGACY)", names)
 
     def test_main_page_preserves_entries_and_clarifies_shared_region_scope(self):
-        main = page_impl("BlurPage")
-        for text in ("系统背景", "corona模糊", "模糊v2", "旧版选项", "模糊区域",
-                     "适用于所有模糊选项（包括 corona模糊和模糊v2）"):
+        raw = page_impl("BlurPage")
+        main = live_code(raw)
+        for text in ("系统背景", "模糊v2", "旧版选项", "模糊区域",
+                     "适用于所有模糊选项（含通知图标去黑底）"):
             self.assertIn(text, main)
         self.assertNotIn("Corona 固定覆盖四区", main)
         self.assertNotIn("仅对旧版选项生效", main)
         self.assertIn("mode() == 0 && !crate::corona_blur::active()", main)
-        self.assertIn('(1, RowSpec::switch("corona模糊', main)
+        # corona模糊 按钮按要求注释停用；保留注释原文便于随时恢复。
+        self.assertNotIn('(1, RowSpec::switch("corona模糊', main)
+        self.assertIn('// (1, RowSpec::switch("corona模糊', raw)
         self.assertIn('(2, RowSpec::switch("模糊v2', main)
         self.assertIn('4 => nav_goto(BLUR_LEGACY_PID, 0)', main)
         self.assertIn('5 => nav_goto(crate::blur_zone::PAGE_PID, 0)', main)
@@ -55,13 +63,13 @@ class CoronaUiTests(unittest.TestCase):
                         action.index("crate::background_home::request(0)"))
 
     def test_main_row_indices_match_build_navigation_and_switch_dispatch(self):
-        main = page_impl("BlurPage")
+        main = live_code(page_impl("BlurPage"))
         render = main.split("let prev = build_rows", 1)[1].split("let label", 1)[0]
         row_indices = [int(slot) for slot in re.findall(r"\((\d+), RowSpec::", render)]
-        self.assertEqual(row_indices, [0, 1, 2, 3, 4, 5, 11])
+        # 行1（corona模糊）已停用，槽位留空，其余行号不变。
+        self.assertEqual(row_indices, [0, 2, 3, 4, 5, 11])
         expected_rows = (
             '(0, RowSpec::check("系统背景',
-            '(1, RowSpec::switch("corona模糊',
             '(2, RowSpec::switch("模糊v2',
             '(3, RowSpec::display(crate::background_home::status()',
             '(4, RowSpec::tap("旧版选项',
@@ -75,18 +83,17 @@ class CoronaUiTests(unittest.TestCase):
         self.assertIn("5 => nav_goto(crate::blur_zone::PAGE_PID, 0)", click)
         self.assertIn("11 => nav_back()", click)
         self.assertNotRegex(click, r"(?m)^\s*[123]\s*=>")
-        self.assertIn("fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 2 }", main)
+        self.assertIn("fn is_switch_row(&self, idx: usize) -> bool { idx == 2 }", main)
         switch = main.split("fn on_switch", 1)[1]
-        self.assertIn("crate::corona_blur::set(!crate::corona_blur::enabled())", switch)
+        self.assertNotIn("crate::corona_blur::set(!crate::corona_blur::enabled())", switch)
         self.assertIn("crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled())", switch)
 
     def test_switch_feedback_uses_each_setting_not_the_shared_engine(self):
-        render = page_impl("BlurPage").split("fn on_click", 1)[0]
+        render = live_code(page_impl("BlurPage")).split("fn on_click", 1)[0]
         updates = re.findall(r"fw_api::row_update\((.*?);", render, re.DOTALL)
-        self.assertEqual(len(updates), 3)
+        self.assertEqual(len(updates), 2)
         expected = {
             0: "mode() == 0 && !crate::corona_blur::active()",
-            1: "crate::corona_blur::enabled() as u8",
             2: "crate::corona_blur::v2_enabled() as u8",
         }
         for update in updates:
@@ -100,7 +107,7 @@ class CoronaUiTests(unittest.TestCase):
         for text in ("静态背景图(表盘)", "自动截取替换图片", "手动生成或更新表盘背景", "完全透明背景（实验性）"):
             self.assertIn(text, legacy)
             self.assertNotIn(text, main)
-        self.assertIn("关闭 corona模糊和模糊v2后生效", main)
+        self.assertIn("关闭上面的模糊开关后生效", main)
         self.assertIn("关闭 corona模糊后生效", legacy)
 
     def test_region_page_explains_scope_includes_corona(self):

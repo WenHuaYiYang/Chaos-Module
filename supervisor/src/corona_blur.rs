@@ -15,6 +15,8 @@ extern "C" {
     fn chaos_corona_backgrounds_poll();
     fn chaos_corona_backgrounds_pending() -> u32;
     fn chaos_corona_backgrounds_idle() -> i32;
+    fn chaos_corona_backgrounds_owned() -> u32;
+    fn chaos_corona_diagnostics(out: *mut u8, capacity: u32) -> u32;
 }
 
 static mut LOADED: bool = false;
@@ -127,5 +129,18 @@ pub(crate) unsafe fn backgrounds_pending() -> bool {
 /// image descriptors; publication/retirement remain entirely in Corona.
 pub(crate) unsafe fn backgrounds_idle() -> bool {
     chaos_corona_backgrounds_idle() != 0
+}
+
+/// Still owns the scene? The native owners are torn down by their own DELETE /
+/// gesture handling; when that happens without a commit the module would keep
+/// believing it owns the scene and simply stop painting (blur gone, page left
+/// transparent). Rust re-commits once this reports 0 for a few ticks.
+pub(crate) unsafe fn backgrounds_owned() -> bool {
+    chaos_corona_backgrounds_owned() != 0
+}
+
+/// 只读诊断文本（key=value 逐行，C 侧保证带终止符）。返回写入长度；0 = 未写入。
+pub(crate) unsafe fn diagnostics(out: &mut [u8]) -> usize {
+    chaos_corona_diagnostics(out.as_mut_ptr(), out.len() as u32) as usize
 }
 

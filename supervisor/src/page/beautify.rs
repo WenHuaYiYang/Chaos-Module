@@ -147,9 +147,9 @@ impl Page for AppListPage {
 //
 // 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
 // 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
-// 旧版静态背景/实时截取设置移到页7，主页面保留系统背景、corona模糊、模糊v2、
-// 旧版选项和模糊区域。两开关共用一个 Corona 引擎；v2 额外处理通知空消息图标。
-// 行号固定为 0=系统 / 1=corona / 2=v2 / 3=状态 / 4=旧版 / 5=区域 / 11=返回。
+// 旧版静态背景/实时截取设置移到页7，主页面保留系统背景、模糊v2、
+// 旧版选项和模糊区域。corona模糊那一行（行1）已按要求注释停用，行号留空位。
+// 行号固定为 0=系统 / (1=corona 停用) / 2=v2 / 3=状态 / 4=旧版 / 5=区域 / 11=返回。
 pub(crate) struct BlurPage;
 
 pub(crate) const BLUR_LEGACY_PID: u32 = 7;
@@ -163,11 +163,15 @@ impl Page for BlurPage {
         unsafe {
             let prev = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                (1, RowSpec::switch("corona模糊\0".as_bytes())),
+                // 行1 = corona模糊开关：按要求停用（保留空位，不重排其它行号）。
+                // 引擎本身没删：模糊v2 是同一套 Corona 引擎，corona_blur::active()
+                // 只要 v2 打开就成立；旧配置若还是 1，点一下“系统背景”即可关掉它
+                // （on_click 分支仍然调用 corona_blur::set(false)）。
+                // (1, RowSpec::switch("corona模糊\0".as_bytes())),
                 (2, RowSpec::switch("模糊v2\0".as_bytes())),
                 (3, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (4, RowSpec::tap("旧版选项\0".as_bytes(), "关闭 corona模糊和模糊v2后生效\0".as_bytes().as_ptr())),
-                (5, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（包括 corona模糊和模糊v2）\0".as_bytes().as_ptr())),
+                (4, RowSpec::tap("旧版选项\0".as_bytes(), "关闭上面的模糊开关后生效\0".as_bytes().as_ptr())),
+                (5, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（含通知图标去黑底）\0".as_bytes().as_ptr())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 长说明不放入会裁切的行副标题。与许可全文相同：标签只限宽，
             // 高度随换行增长；挂在原生可滚动 content 上，完整 URL 不含 Markdown 标记。
@@ -181,9 +185,10 @@ impl Page for BlurPage {
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
                 fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
                 (crate::background_home::mode() == 0 && !crate::corona_blur::active()) as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::corona_blur::enabled() as u8);
+            // 行1（corona模糊）已停用，不再刷新勾选态。
+            // fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
+            //     fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+            //     crate::corona_blur::enabled() as u8);
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)), fw_api::NONE_PTR,
                 fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
                 crate::corona_blur::v2_enabled() as u8);
@@ -208,13 +213,15 @@ impl Page for BlurPage {
         }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 1 || idx == 2 }
+    fn is_switch_row(&self, idx: usize) -> bool { idx == 2 }
 
     fn on_switch(&self, idx: usize) {
         unsafe {
-            if idx == 1 {
-                crate::corona_blur::set(!crate::corona_blur::enabled());
-            } else if idx == 2 {
+            // 行1（corona模糊）已停用：不接开关事件，避免它被“看不见的手”翻开。
+            // if idx == 1 {
+            //     crate::corona_blur::set(!crate::corona_blur::enabled());
+            // } else
+            if idx == 2 {
                 crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled());
             }
         }

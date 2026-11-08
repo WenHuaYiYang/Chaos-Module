@@ -46,3 +46,23 @@ pages 38
 ## 背景
 
 这些数据原先临时挂在设置页最后一行，现已全部移到本页，设置页恢复为纯开关布局。
+
+## 模糊引擎段（`-- blur --`）
+
+“模糊莫名其妙失效 / 换什么档位都透明”就看这一段：
+
+```
+-- blur --
+mode 0 engine 1 v2 1
+cov 1 mask 15 reg 15
+hold 0 fail 0 lost 0
+enabled=1 owned=1 owner=… draw=1 imgslot=0 latch=0
+src=1 pend=0 arm=0 gate=10
+try=… copy=… pub=… draws=… surf=7 commit=… cfail=… latchclr=… natidle=1
+```
+
+- `cov`：`CORONA_BG_ACTIVE`（0=未接管 1=已接管 2=下架中）；`mask` 与 `reg` 不一致表示还在等空闲；
+- `hold`：降级暂停剩余拍数；`fail`/`lost`：连续 commit 失败、连续丢所有权计数；
+- 后半段是 C 侧 `chaos_corona_diagnostics()` 的原文（纯只读，不调 native）。
+
+判读表见 `docs/CORONA-BLUR-RECOVERY.md`。

@@ -63,12 +63,15 @@ Chaos 打开后是主页（信息页），四个一级入口：**应用管理 / 
   字体本身由独立的字体投递包安装，安装器容器里只带一个占位文件。
 - **桌面图标**：应用图标包——选择一套图标包应用，或恢复系统原图标。
   图标包由 `installer/icon_pack.lua` 投递（`CIPK` 容器）。
-- **系统背景**：恢复官方背景，同时关闭 corona模糊与旧版背景替换，并恢复通知原图标。
-- **corona模糊**：默认关闭；开启后使用 Corona 的 p67 模糊实现，按“模糊区域”中保存的选择
-  处理启动器、控制中心、小部件和通知中心。开关保存在 `/data/chaos/corona_blur.cfg`。
-  「corona模糊」只跑 Corona 引擎；「模糊v2」在同一引擎上额外启用通知 `no_message` 空图标去黑底 hook，两个开关各自独立持久化（`corona_blur.cfg` / `blur_v2.cfg`）。
+- **系统背景**：恢复官方背景，同时关闭模糊引擎（含遗留的 corona 配置）与旧版背景替换，并恢复通知原图标。
+- **模糊v2**：默认关闭；开启后使用 Corona 的 p67 模糊实现，按“模糊区域”中保存的选择
+  处理启动器、控制中心、小部件和通知中心，并额外启用通知 `no_message` 空图标去黑底 hook。
+  开关保存在 `/data/chaos/blur_v2.cfg`。
+  > 原来那一行「corona模糊」开关已在代码里注释停用（两个开关本来就是**同一套引擎**，
+  > 留着只会让人以为有两套算法）。老用户若还留着 `corona_blur.cfg`=1，点一次“系统背景”即可清掉；
+  > 引擎本身没删，写回 `enabled()==true` 就能恢复那个入口。
 - **旧版选项**：静态表盘背景、自动截取、手动生成和完全透明背景集中在这里。
-  corona模糊开启期间保留旧版设置，但不将它们混入共用引擎；关闭 corona模糊后旧版设置才生效。
+  模糊引擎开启期间保留旧版设置，但不将它们混入共用引擎；引擎关闭后旧版设置才生效。
 - **模糊区域**：Corona 模糊和通知图标去黑底共用区域掩码；关闭某一区域后，该区域恢复官方系统背景。
   选择保存在 `/data/chaos/blur_regions.cfg`，运行中修改会等待原生空闲时应用。
   关闭“通知中心”区域也会撤销 `no_message` 图标去黑底 hook、恢复原图标。
@@ -125,7 +128,8 @@ Q W E R T Y U I O P
 | `/data/chaos/sup.ko` | 模块本体（安装器部署） |
 | `/data/chaos/chaos_icon.bin`、`chaos_icon_settings.bin` | 桌面图标 |
 | `/data/chaos/settings.cfg` | 用户设置 |
-| `/data/chaos/corona_blur.cfg` | Corona 模糊与通知图标去黑底的单一开关 |
+| `/data/chaos/blur_v2.cfg` | 模糊v2 开关（Corona 引擎 + 通知图标去黑底） |
+| `/data/chaos/corona_blur.cfg` | 旧的 corona模糊 开关，入口已停用；保留只为不丢老配置 |
 | `/data/chaos/blur_regions.cfg` | 所有模糊选项共用的区域开关 |
 | `/data/chaos/appmgr_excl.bin`、`appmgr_keep.bin`、`appmgr_apply.cfg` | 应用管理名单与配置 |
 | `/data/chaos/font/` | 字体槽位与 `index.txt` 清单 |

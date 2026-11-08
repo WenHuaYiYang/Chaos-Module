@@ -14,6 +14,10 @@ int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask);
 void chaos_corona_backgrounds_poll(void);
 
 static int p67_blur_native_idle(void) { return idle; }
+/* 生产实现里由自愈/计数器引用的外部件，这里打桩（不含任何 native 读）。 */
+static uint32_t chaos_corona_commits, chaos_corona_commit_fails;
+static unsigned latch_rescues;
+static void chaos_corona_latch_rescue(void) { ++latch_rescues; }
 
 static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
     const char *paths[] = {bg->launcher, bg->control_center, bg->notifications, bg->widgets};

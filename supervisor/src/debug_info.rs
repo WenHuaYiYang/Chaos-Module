@@ -60,6 +60,26 @@ pub(crate) unsafe fn refresh() -> *const u8 {
         w.c(b'\n');
     }
 
+    // ---- 模糊引擎 ----
+    // 现场数据：接管态 / 区域掩码 / 暂停与失败计数 + C 侧 Corona 状态机快照。
+    // "模糊莫名其妙失效"就看这里：owned=0 表示原生 owner 被摘掉，
+    // latch=1 表示固件的滚动手势标记没清（上游 poll 会在门口直接 return）。
+    w.s(b"-- blur --").c(b'\n');
+    w.s(b"mode ").n(crate::background_home::mode())
+        .s(b" engine ").n(if crate::corona_blur::active() { 1 } else { 0 })
+        .s(b" v2 ").n(if crate::corona_blur::v2_enabled() { 1 } else { 0 }).c(b'\n');
+    let (active, mask, hold, fail, lost) = crate::background_home::corona_debug();
+    w.s(b"cov ").n(active).s(b" mask ").n(mask)
+        .s(b" reg ").n(crate::blur_zone::mask()).c(b'\n');
+    w.s(b"hold ").n(hold).s(b" fail ").n(fail).s(b" lost ").n(lost).c(b'\n');
+    let mut diag = [0u8; 320];
+    let n = crate::corona_blur::diagnostics(&mut diag);
+    if n > 0 {
+        w.s(&diag[..n]);
+    } else {
+        w.s(b"(diag unavailable)").c(b'\n');
+    }
+
     // ---- 系统 ----
     w.s(b"-- system --").c(b'\n');
     let (app, page) = fw_api::top_page_ids();

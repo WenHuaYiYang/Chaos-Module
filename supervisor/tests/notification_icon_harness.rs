@@ -139,6 +139,8 @@ mod background_assets {
 mod fw_api {
     pub unsafe fn background_home_targets() -> Option<[u32; 4]> { crate::with(|s| s.roots) }
     pub unsafe fn background_notification_page_root() -> u32 { crate::with(|s| s.page_root) }
+    // 详情页根：只被 notification_icon 做空图标换源时读取，桩里复用同一个根。
+    pub unsafe fn background_notification_detail_root() -> u32 { crate::with(|s| s.page_root) }
     pub unsafe fn obj_child_count(object: u32) -> i32 {
         crate::with(|s| {
             s.tree_reads.push(object);

@@ -105,6 +105,27 @@ int rh_platform_request_full_redraw(void) {
 #include "corona_vendor/src/p67_backgrounds.inc"
 
 static unsigned chaos_corona_enabled, chaos_corona_in_call;
+/* 0x201102D9u 是固件 launcher 的“滚动/手势进行中”标记：手势开始时被置 1，
+ * 由固件自己的滚动结束回调清零。手势被打断（例如滑动途中切走应用）时它可能
+ * 一直保持 1，于是上游 poll 在门口就 return，背景钩子再也装不回去 —— 现象就是
+ * 模糊“莫名其妙失效”，重启才恢复。这里只做最后一道自愈：把这条标记以外的
+ * 一切都确认空闲（native 渲染/层任务空闲、没有 native 快照、上游不忙）并持续
+ * 60 次调用后才清零，避免打断真实手势。 */
+static unsigned chaos_corona_latch_calls;
+static uint32_t chaos_corona_latch_clears, chaos_corona_commits, chaos_corona_commit_fails;
+
+static void chaos_corona_latch_rescue(void) {
+    if (!P67_U8(0x201102d9u)) { chaos_corona_latch_calls = 0; return; }
+    if (p67_busy || load32(P67_IMAGE_SLOT) || !p67_blur_native_idle()) {
+        chaos_corona_latch_calls = 0;
+        return;
+    }
+    if (++chaos_corona_latch_calls > 60u) {
+        P67_U8(0x201102d9u) = 0;
+        chaos_corona_latch_calls = 0;
+        ++chaos_corona_latch_clears;
+    }
+}
 
 int chaos_corona_backgrounds_idle(void) {
     unsigned i;
@@ -113,6 +134,26 @@ int chaos_corona_backgrounds_idle(void) {
     for (i = 0; i < 3u; ++i)
         if (!p67_surface_idle(&p67_surfaces[i])) return 0;
     return 1;
+}
+
+/* Ownership watchdog. The native owners are torn down by their own DELETE /
+ * gesture handling; when that happens without a matching commit the module
+ * would keep believing it still owns the scene and stop painting (blur gone,
+ * root bg_opa left at 0 => everything looks transparent). Rust polls this and
+ * re-commits when it flips to 0. */
+uint32_t chaos_corona_backgrounds_owned(void) {
+    unsigned i;
+    if (!chaos_corona_enabled || chaos_corona_in_call) return 1u;
+    if (rh_background_is_blur(p67_path[p67_path_index])) {
+        if (!p67_owner || p67_draw_owner != load32(P67_ROOT_SLOT)) return 0u;
+        /* No pixels yet and nothing being captured => nothing to paint. */
+        if (!p67_blur_source && !p67_blur_pending) return 0u;
+    }
+    for (i = 0; i < 3u; ++i) {
+        struct p67_surface *s = &p67_surfaces[i];
+        if (rh_background_is_blur(p67_surface_path(s)) && !s->owner) return 0u;
+    }
+    return 1u;
 }
 
 int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask) {
@@ -124,7 +165,9 @@ int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask) {
     const char *blur = RH_BG_BLUR;
     unsigned i, j;
     int result;
-    if (chaos_corona_in_call || !p67_blur_native_idle()) return -2145;
+    if (chaos_corona_in_call) return -2145;
+    chaos_corona_latch_rescue();
+    if (!p67_blur_native_idle()) return -2145;
     chaos_corona_in_call = 1;
     /* bit0 launcher, bit1 control-center, bit2 widgets, bit3 notifications.
      * Every unselected surface is explicitly the native system background. */
@@ -146,13 +189,18 @@ int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask) {
             for (j = 0; j < RH_PATH; ++j) { backgrounds.widgets[j] = blur[j]; if (!blur[j]) break; }
     }
     result = rh_platform_backgrounds_commit(&backgrounds);
-    if (!result) chaos_corona_enabled = !!enabled;
+    ++chaos_corona_commits;
+    if (result) ++chaos_corona_commit_fails;
+    else chaos_corona_enabled = !!enabled;
     chaos_corona_in_call = 0;
     return result;
 }
 
 void chaos_corona_backgrounds_poll(void) {
     if (chaos_corona_in_call) return;
+    /* 自愈也挂在 poll 上：标记卡住时上游 poll 会在门口直接 return，
+     * 而 commit 又要求 idle —— 只有 poll 是每拍都跑的那条路。 */
+    chaos_corona_latch_rescue();
     chaos_corona_in_call = 1;
     rh_platform_backgrounds_poll();
     chaos_corona_in_call = 0;
@@ -182,5 +230,57 @@ uint32_t chaos_corona_backgrounds_pending(void) {
              s->moving || s->dirty))) return 1u;
     }
     return 0u;
+}
+
+/* ===== 只读诊断文本（调试页用） =====
+ * 纯整数读取：不调用 native、不改状态、不做 I/O。失败返回 0 且不写 out。 */
+struct chaos_text { char *out; uint32_t used, capacity; unsigned failed; };
+static void chaos_text_s(struct chaos_text *w, const char *text) {
+    while (*text) {
+        if (w->used + 1u >= w->capacity) { w->failed = 1; return; }
+        w->out[w->used++] = *text++;
+    }
+}
+static void chaos_text_u(struct chaos_text *w, uint32_t value) {
+    char digits[10]; unsigned n = 0;
+    do { digits[n++] = (char)('0' + value % 10u); value /= 10u; } while (value);
+    while (n) {
+        if (w->used + 1u >= w->capacity) { w->failed = 1; return; }
+        w->out[w->used++] = digits[--n];
+    }
+}
+static void chaos_text_kv(struct chaos_text *w, const char *key, uint32_t value) {
+    chaos_text_s(w, key);
+    chaos_text_s(w, "=");
+    chaos_text_u(w, value);
+    chaos_text_s(w, "\n");
+}
+uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
+    struct chaos_text w = {out, 0, capacity, 0};
+    unsigned i, surfaces = 0;
+    if (!out || capacity < 2u) return 0u;
+    chaos_text_kv(&w, "enabled", chaos_corona_enabled);
+    chaos_text_kv(&w, "owned", chaos_corona_backgrounds_owned());
+    chaos_text_kv(&w, "owner", p67_owner);
+    chaos_text_kv(&w, "draw", p67_draw_owner == load32(P67_ROOT_SLOT) ? 1u : 0u);
+    chaos_text_kv(&w, "imgslot", load32(P67_IMAGE_SLOT) ? 1u : 0u);
+    chaos_text_kv(&w, "latch", P67_U8(0x201102d9u) ? 1u : 0u);
+    chaos_text_kv(&w, "src", p67_blur_source ? 1u : 0u);
+    chaos_text_kv(&w, "pend", p67_blur_pending);
+    chaos_text_kv(&w, "arm", p67_blur_armed);
+    chaos_text_kv(&w, "gate", p67_blur_core_gate);
+    chaos_text_kv(&w, "try", p67_blur_attempts);
+    chaos_text_kv(&w, "copy", p67_blur_copies);
+    chaos_text_kv(&w, "pub", p67_blur_publishes);
+    chaos_text_kv(&w, "draws", p67_blur_draws);
+    for (i = 0; i < 3u; ++i) surfaces |= p67_surfaces[i].owner ? (1u << i) : 0u;
+    chaos_text_kv(&w, "surf", surfaces);
+    chaos_text_kv(&w, "commit", chaos_corona_commits);
+    chaos_text_kv(&w, "cfail", chaos_corona_commit_fails);
+    chaos_text_kv(&w, "latchclr", chaos_corona_latch_clears);
+    chaos_text_kv(&w, "natidle", (uint32_t)p67_blur_native_idle());
+    if (w.failed) return 0u;
+    out[w.used] = 0;
+    return w.used;
 }
 

@@ -119,9 +119,13 @@ def check_c_abi_contract() -> None:
         "if (region_mask & 2u)",
         "if (region_mask & 4u)",
         "if (region_mask & 8u)",
-        "if (chaos_corona_in_call || !p67_blur_native_idle()) return -2145;",
+        # 忙碌闸门（重入 + native 未空闲）。两段之间插入了滚动标记自愈，
+        # 语义不变：任一条件成立都拒绝本次 commit。
+        "if (chaos_corona_in_call) return -2145;",
+        "chaos_corona_latch_rescue();",
+        "if (!p67_blur_native_idle()) return -2145;",
         "result = rh_platform_backgrounds_commit(&backgrounds);",
-        "if (!result) chaos_corona_enabled = !!enabled;",
+        "else chaos_corona_enabled = !!enabled;",
         "if (chaos_corona_in_call) return;",
         "chaos_corona_backgrounds_pending",
         "rh_platform_request_full_redraw",
@@ -200,10 +204,15 @@ def run_harnesses() -> None:
 def run_owner_harness() -> None:
     """Compile production Rust owner functions with host-only ABI stubs."""
     source = (ROOT / "supervisor/src/background_home.rs").read_text()
+    signatures = {
+        "corona_tick": "() -> bool",
+        "pending": "() -> bool",
+        "remount": "()",
+        "corona_failure": "(step: u32) -> bool",
+    }
     generated = "\n".join(
-        "unsafe fn " + name + "()" + (" -> bool" if name != "remount" else "")
-        + " {" + rust_function(source, name) + "}\n"
-        for name in ("corona_tick", "pending", "remount")
+        "unsafe fn " + name + signatures[name] + " {" + rust_function(source, name) + "}\n"
+        for name in signatures
     )
     with tempfile.TemporaryDirectory(prefix="chaos-corona-owner-") as directory:
         temp = Path(directory)
