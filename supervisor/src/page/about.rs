@@ -145,9 +145,10 @@ impl Page for AboutPage {
                 (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
                 (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
-                (7, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
-                (8, RowSpec::clickable("开放源代码许可\0".as_bytes())),
+                (6, RowSpec::display("Lh杨\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
+                (7, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
+                (8, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
+                (9, RowSpec::clickable("开放源代码许可\0".as_bytes())),
             ])?;
             Ok(())
         }
@@ -175,7 +176,7 @@ impl Page for AboutPage {
                 crate::ui::render_req(18);
                 return;
             }
-            if idx == 8 {
+            if idx == 9 {
                 nav_goto(20, 0);
             }
 
