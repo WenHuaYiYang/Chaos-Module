@@ -100,9 +100,26 @@ int rh_platform_request_full_redraw(void) {
     return -1;
 }
 
+/* Keep the upstream implementation intact. Its fallback position dispatch
+ * cooperates with honeycomb before the native screenshot path executes. */
+extern int chaos_honeycomb_pre_scroll(void *event);
+#ifndef CHAOS_CORONA_NATIVE_POSITION
+#define CHAOS_CORONA_NATIVE_POSITION ((void (*)(void *))(uintptr_t)0x0c517d9du)
+#endif
+static void chaos_corona_launcher_position(void *event) {
+    if (!chaos_honeycomb_pre_scroll(event))
+        CHAOS_CORONA_NATIVE_POSITION(event);
+}
+#define P67_NATIVE(address) ((address) == 0x0c517d9du ? \
+    (uintptr_t)chaos_corona_launcher_position : (uintptr_t)(address))
+
 /* Sole implementation entry: includes launcher -> native provider/state
  * machine, then all three panels and the control-center battery hooks. */
 #include "corona_vendor/src/p67_backgrounds.inc"
+
+uint32_t rh_platform_launcher_scroll_callback(void) {
+    return (uint32_t)(uintptr_t)p67_scroll;
+}
 
 static unsigned chaos_corona_enabled, chaos_corona_in_call;
 /* 0x201102D9u 是固件 launcher 的“滚动/手势进行中”标记：手势开始时被置 1，

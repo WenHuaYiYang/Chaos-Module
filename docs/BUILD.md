@@ -95,10 +95,12 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 [`.github/workflows/build.yml`](../.github/workflows/build.yml) 在 push / PR / 手动触发时：
 
 1. 安装 nightly 工具链（`dtolnay/rust-toolchain@nightly`，未钉版本）；
-2. 执行 `sh tools/build_ko.sh`（只编译模块，不打包容器）；
-3. 上传 `supervisor/chaos_sup.ko` 作为 artifact。
+2. 执行 `python3 tools/test_honeycomb.py`，运行蜂窝布局/控制器主机回归；
+3. 执行 `CC=cc python3 tools/test_corona_blur.py`，运行背景与蜂窝转场协作回归；
+4. 执行 `sh tools/build_ko.sh`（只编译模块，不打包容器）；
+5. 上传 `supervisor/chaos_sup.ko` 作为 artifact。
 
-CI 不跑测试、不打容器、不校验 `dist/` 可复现性——发布前请在本地跑一次完整构建。
+CI 运行蜂窝视图主机测试，不打容器、不校验 `dist/` 可复现性——发布前请在本地跑一次完整构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md)。
 
 ## 无 cc 的环境
 

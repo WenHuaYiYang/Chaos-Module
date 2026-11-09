@@ -443,6 +443,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     }
     // 2.5 桌面图标缩放(与页面无关: 固件 launcher 桌面不是我们的页, 前台页 tick 不会跑到)
     crate::desktop_scale::tick();
+    crate::honeycomb::tick();
     // 3. 消费重建请求(lv_timer 上下文销毁/重建对象树是安全的)
     let rq = st_rd!(RENDER_REQ);
     if rq != RENDER_NONE {

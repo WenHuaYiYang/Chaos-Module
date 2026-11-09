@@ -16,6 +16,8 @@ mod icon_apply;
 mod res_hook;
 mod time_set;
 mod desktop_scale;
+mod honeycomb_layout;
+mod honeycomb;
 mod settings_entry;
 mod system_update_entry;
 mod launcher_entry;
