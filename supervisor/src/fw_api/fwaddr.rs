@@ -33,6 +33,35 @@ pub mod proto_drift {}
 
 /// 3.101.043（小米手环 10 Pro / best1503）—— 默认目标
 mod t043 {
+    // p67/.043 honeycomb: exact AP, audited by tools/verify_honeycomb_abi.py.
+    // Runtime hooks are per-instance RAM descriptors, never flash patches.
+    pub const LAUNCHER_GRID_SLOT: u32 = 0x2011_02EC;
+    pub const LAUNCHER_ROOT_SLOT: u32 = 0x2011_02F4;
+    pub const LAUNCHER_GRID_CLASS: u32 = 0x2CD2_024C;
+    pub const LAUNCHER_GRID_CTOR: u32 = 0x0C51_4981;
+    pub const LAUNCHER_GRID_DTOR: u32 = 0x0C51_47C1;
+    pub const LAUNCHER_GRID_EVENT: u32 = 0x0C51_5ECD;
+    pub const LAUNCHER_ICON_CLICK: u32 = 0x0C51_7419;
+    pub const LAUNCHER_GRID_REFRESH: u32 = 0x0C51_5CF9;
+    pub const LAUNCHER_POSITION_EVENT: u32 = 0x0C51_7D9D;
+    pub const LAUNCHER_SNAPSHOT_SLOT: u32 = 0x2011_02DC;
+    pub const LAUNCHER_TRANSITION_SLOT: u32 = 0x2011_02D9;
+    pub const LAUNCHER_CREATE_SNAPSHOT: u32 = 0x0C51_76FD;
+    /// Native layout consumes icon user_data rectangles then commits coordinates.
+    pub const LAUNCHER_COMMIT_RECTS: u32 = 0x0C51_4655;
+    pub const LAYOUT_REGISTER: u32 = 0x0C58_8C99;
+    pub const OBJ_SET_LAYOUT: u32 = 0x0C58_8BA9;
+    pub const OBJ_GET_STYLE_VALUE: u32 = 0x0C18_7F19;
+    pub const OBJ_EVENT_COUNT: u32 = 0x0C58_8A49;
+    pub const OBJ_EVENT_DESCRIPTOR: u32 = 0x0C58_7C91;
+    pub const OBJ_REMOVE_EVENT_CALLBACK: u32 = 0x0C58_9571;
+    pub const OBJ_EVENT_BASE: u32 = 0x0C58_8CC9;
+    pub const EVENT_INPUT_DEVICE: u32 = 0x0C58_8DA9;
+    pub const EVENT_CURRENT_TARGET: u32 = 0x0C58_8CE9;
+    pub const INPUT_DEVICE_VECTOR: u32 = 0x0C58_8681;
+    pub const INPUT_DEVICE_POINT: u32 = 0x0C58_7B51;
+    pub const IMAGE_SET_ZOOM: u32 = 0x0C58_81B9;
+    pub const ANIMATION_DELETE: u32 = 0x0C58_88C9;
     /// `app_launcher_add(app_id)`：把**注册表在册**的应用立即加回桌面。
     /// 043 官方符号包里这一段叫 `init_buffer`，1 参。
     pub const APP_LAUNCHER_ADD: u32 = 0x0C51_3A45;

@@ -94,6 +94,7 @@ impl Page for BeautifyPage {
 // 桌面图标的三条排版参数都在 desktop_scale 那张写表层: 行0 = 缩放折线(同 RW6),
 // 行1 = 排距锚点(同 RW6), 行2 = 外列内缩(同 RW6)。三个开关都默认开, 关掉就把
 // 对应的表写回固件原值 —— 实现路径只有一条, 开关只改参数。
+// 蜂窝与这些开关互斥：蜂窝开时清空 RW6 三项；点开任一 RW6 项则关闭蜂窝。
 pub(crate) struct AppListPage;
 
 impl Page for AppListPage {
@@ -107,6 +108,7 @@ impl Page for AppListPage {
                 (0, RowSpec::switch("缩放同 RW6\0".as_bytes())),
                 (1, RowSpec::switch("排距同 RW6\0".as_bytes())),
                 (2, RowSpec::switch("内缩同 RW6\0".as_bytes())),
+                (3, RowSpec::switch("蜂窝视图\0".as_bytes())),
                 (11, RowSpec::clickable("返回\0".as_bytes()))])?;
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
@@ -117,6 +119,9 @@ impl Page for AppListPage {
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
                 crate::desktop_scale::inset_on() as u8);
+            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)),
+                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+                crate::honeycomb::enabled() as u8);
             Ok(())
         }
     }
@@ -125,7 +130,7 @@ impl Page for AppListPage {
         unsafe { if idx == 11 { nav_back(); } }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx < 3 }
+    fn is_switch_row(&self, idx: usize) -> bool { idx < 4 }
 
     fn on_switch(&self, idx: usize) {
         unsafe {
@@ -135,6 +140,8 @@ impl Page for AppListPage {
                 crate::desktop_scale::set_pitch(!crate::desktop_scale::pitch_on());
             } else if idx == 2 {
                 crate::desktop_scale::set_inset(!crate::desktop_scale::inset_on());
+            } else if idx == 3 {
+                crate::honeycomb::toggle();
             } else {
                 return;
             }

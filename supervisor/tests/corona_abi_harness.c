@@ -12,6 +12,10 @@ static unsigned reenter_commit, reenter_poll, reentry_checks;
 
 int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask);
 void chaos_corona_backgrounds_poll(void);
+static unsigned honeycomb_consumes, position_forwards;
+static int chaos_honeycomb_pre_scroll(void *event) { assert(event); return honeycomb_consumes; }
+static void native_position(void *event) { assert(event); ++position_forwards; }
+#define CHAOS_CORONA_NATIVE_POSITION native_position
 
 static int p67_blur_native_idle(void) { return idle; }
 /* 生产实现里由自愈/计数器引用的外部件，这里打桩（不含任何 native 读）。 */
@@ -127,6 +131,8 @@ int main(void) {
         assert(!chaos_corona_enabled && !chaos_corona_in_call);
     }
     assert(commits == 40);
-    puts("Chaos C ABI: 16 masks, mixed system/blur paths, rollback, busy, scratch and reentry guards passed");
+    honeycomb_consumes=0;chaos_corona_launcher_position(&polls);assert(position_forwards==1);
+    honeycomb_consumes=1;chaos_corona_launcher_position(&polls);assert(position_forwards==1);
+    puts("Chaos C ABI: 16 masks, mixed paths, rollback/reentry and honeycomb position guard passed");
     return 0;
 }

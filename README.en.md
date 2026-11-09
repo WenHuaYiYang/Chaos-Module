@@ -11,7 +11,7 @@ A kernel module plus a Lua installer that registers native pages through the fir
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#compatibility)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#compatibility)
-[![Release](https://img.shields.io/badge/release-v1.1.4-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.1.7-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -26,12 +26,13 @@ The module is offline, needs no phone, and does not touch firmware partitions.
 It started as a research harness for the 10 Pro and grew into a full device-management UI:
 apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 
-> **Scale**: ~14k lines of Rust, 19 page ids, a `chaos_sup.ko` of roughly 190 KB.
+> **Implementation**: native Rust (`no_std`) and C modules, 38 page ids, and a Lua installer.
 
 ## Features
 
 - **App manager**: hide/show, batch actions, exclusions, and normal / deep hiding modes ([details](docs/APP-MANAGER.md)).
 - **Customization**: fonts, home-screen icon packs, system blur, translucent watchface background.
+- **Honeycomb app list (experimental)**: two-axis dragging, inertia, right-edge zoom, boundary navigation and native editing/deletion. Mutually exclusive with RW6 effects; enable manually after boot. Full simulator rendering and frame-time validation remain pending ([implementation and tests](docs/HONEYCOMB.md)).
 - **Watchfaces**: switch built-in/market faces, shake-to-rotate, face management.
 - **Device tools**: brightness, cache cleanup, time/date, vibration test.
 - **Runtime log**: key actions go to `/data/chaos/chaos.log`; Settings → Runtime log shows and clears it.

@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/release-v1.1.4-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.1.7-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -25,12 +25,13 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 它最初是为了在 10 Pro 上补研究工具链而写的，后来逐渐长成一套完整的设备管理界面：
 应用管理、表盘、字体、图标、亮度、缓存、模糊与震动设置。
 
-> **规模**：约 1.4 万行 Rust，19 个页面 id，`chaos_sup.ko` 约 190 KB。
+> **实现**：Rust（`no_std`）与 C 原生模块，38 个页面 id，Lua 安装器。
 
 ## 特性
 
 - **应用管理**：隐藏/显示、一键批量、排除项；普通/深度隐藏两种模式（[说明](docs/APP-MANAGER.md)）。
 - **系统美化**：字体切换、桌面图标包、系统模糊、表盘通透背景。
+- **蜂窝应用列表（实验）**：双向拖动与惯性、右缘整体缩放、边界返回、原生编辑与删除，与 RW6 效果互斥。每次启动后手动开启；完整模拟器显示与帧率待复测（[实现与验证](docs/HONEYCOMB.md)）。
 - **表盘**：内置/市场表盘切换、摇一摇轮换、表盘管理。
 - **设备工具**：亮度、缓存清理、时间/日期设置、震动测试。
 - **运行日志**：关键操作写入 `/data/chaos/chaos.log`，设置 → 运行日志可查看与清空。

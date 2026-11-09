@@ -8,6 +8,7 @@
 |---|---|
 | 把它装到手表上 | [INSTALL.md](INSTALL.md) |
 | 知道每个页面能做什么 | [USAGE.md](USAGE.md) |
+| 使用双向拖动的蜂窝应用列表 | [HONEYCOMB.md](HONEYCOMB.md) |
 | 理解应用隐藏/显示的免重启模式 | [APP-MANAGER.md](APP-MANAGER.md) |
 | 从源码构建、打包、发版 | [BUILD.md](BUILD.md) |
 | 改代码前了解整体结构 | [ARCHITECTURE.md](ARCHITECTURE.md) |

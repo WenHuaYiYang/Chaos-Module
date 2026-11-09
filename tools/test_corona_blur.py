@@ -273,7 +273,7 @@ def c_function(source: str, name: str) -> str:
 def run_abi_harness() -> None:
     source = (ROOT / "supervisor/corona_blur.c").read_text()
     generated = "\n".join(c_function(source, name) for name in
-                          ("chaos_corona_backgrounds_commit", "chaos_corona_backgrounds_poll"))
+                          ("chaos_corona_backgrounds_commit", "chaos_corona_backgrounds_poll", "chaos_corona_launcher_position"))
     with tempfile.TemporaryDirectory(prefix="chaos-corona-abi-") as directory:
         temp = Path(directory)
         included = temp / "production_abi.c"
