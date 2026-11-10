@@ -49,8 +49,8 @@ impl Page for CapturePage {
             w.s("已保存 ".as_bytes()).n(capture::frames()).s(" 帧 · 采集 ".as_bytes()).n(capture::fps()).s(b" fps").end();
             core::ptr::addr_of!(STATUS).cast()
         }
-        else if settings.format == VideoFormat::Gif { "GIF · 15 fps\0".as_bytes().as_ptr() }
-        else { "APNG · 60 fps\0".as_bytes().as_ptr() };
+        else if settings.format == VideoFormat::Gif { "GIF\0".as_bytes().as_ptr() }
+        else { "APNG\0".as_bytes().as_ptr() };
         let shot_sub = if capture::shot_error() != 0 { error_text(capture::shot_error()).as_ptr() }
         else { match capture::shot_state() {
             1 => "等待息屏，点击取消\0".as_bytes().as_ptr(),
@@ -117,7 +117,7 @@ impl Page for SettingsPage {
         let setting = capture_settings::get(); let mut anchor = ctx.title;
         let path_slot = if self.recording { 2 } else { 0 };
         let location = if self.recording { setting.recording } else { setting.screenshot };
-        let texts: [&[u8]; 4] = ["GIF · 15 fps\0".as_bytes(), "APNG · 60 fps\0".as_bytes(), b"/data/chaos/media\0", b"/data/offlinelog\0"];
+        let texts: [&[u8]; 4] = ["GIF\0".as_bytes(), "APNG\0".as_bytes(), b"/data/chaos/media\0", b"/data/offlinelog\0"];
         let count = if self.recording { 4 } else { 2 };
         for i in 0..count {
             let text = texts[if self.recording { i } else { i + 2 }];
