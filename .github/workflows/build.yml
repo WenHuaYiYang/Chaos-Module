@@ -25,6 +25,12 @@ jobs:
       - name: Test honeycomb geometry and controller
         run: python3 tools/test_honeycomb.py
 
+      - name: Test capture worker and decode GIF/APNG/BMP
+        run: |
+          python3 -m venv .capture-test-venv
+          .capture-test-venv/bin/pip install -r tools/requirements-build.txt
+          .capture-test-venv/bin/python tools/test_capture.py
+
       - name: Test Corona background integration
         run: CC=cc python3 tools/test_corona_blur.py
 

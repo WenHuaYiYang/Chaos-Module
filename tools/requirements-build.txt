@@ -1,2 +1,2 @@
-# Only icon generation needs third-party Python packages.
+# Icon generation and capture decoding tests use Pillow.
 Pillow>=10.0,<13

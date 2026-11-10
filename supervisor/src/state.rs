@@ -190,10 +190,15 @@ pub static PAGE_EXP: [u8; 7] = *b"exp\0\0\0\0";
 pub static PAGE_BTDIAG: [u8; 8] = *b"btdiag\0\0";
 /// 页37: 调试模式 -> 调试信息(纯文本)。
 pub static PAGE_DEBUG: [u8; 7] = *b"debug\0\0";
+pub static PAGE_CAPTURE: [u8; 8] = *b"capture\0";
+pub static PAGE_RECORDINGS: [u8; 11] = *b"recordings\0";
+pub static PAGE_SCREENSHOTS: [u8; 12] = *b"screenshots\0";
+pub static PAGE_RECORDSET: [u8; 10] = *b"recordset\0";
+pub static PAGE_SHOTSET: [u8; 8] = *b"shotset\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 38;                   // 注册页数(页0..页37)
+pub const PAGE_COUNT: usize = 43;                   // 注册页数(页0..页42)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

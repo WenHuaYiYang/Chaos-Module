@@ -26,7 +26,7 @@ The module is offline, needs no phone, and does not touch firmware partitions.
 It started as a research harness for the 10 Pro and grew into a full device-management UI:
 apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 
-> **Implementation**: native Rust (`no_std`) and C modules, 38 page ids, and a Lua installer.
+> **Implementation**: native Rust (`no_std`) and C modules, 43 page ids, and a Lua installer.
 
 ## Features
 
@@ -36,6 +36,7 @@ apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 - **Watchfaces**: switch built-in/market faces, shake-to-rotate, face management.
 - **Device tools**: brightness, cache cleanup, time/date, vibration test.
 - **Runtime log**: key actions go to `/data/chaos/chaos.log`; Settings → Runtime log shows and clears it.
+- **Screenshots and recordings**: background GIF 15 fps / APNG target 60 fps recording, BMP capture after screen-off, independent storage choices (`/data/chaos/media` or `/data/offlinelog`), and paginated file deletion ([formats and validation](docs/CAPTURE.md)).
 - **No external runtime**: talks only to verified firmware APIs; no JS injection, no network.
 
 ## Compatibility

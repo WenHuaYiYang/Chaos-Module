@@ -9,6 +9,7 @@
 | 把它装到手表上 | [INSTALL.md](INSTALL.md) |
 | 知道每个页面能做什么 | [USAGE.md](USAGE.md) |
 | 使用双向拖动的蜂窝应用列表 | [HONEYCOMB.md](HONEYCOMB.md) |
+| 录屏、息屏截屏与删除文件 | [CAPTURE.md](CAPTURE.md) |
 | 理解应用隐藏/显示的免重启模式 | [APP-MANAGER.md](APP-MANAGER.md) |
 | 从源码构建、打包、发版 | [BUILD.md](BUILD.md) |
 | 改代码前了解整体结构 | [ARCHITECTURE.md](ARCHITECTURE.md) |
@@ -23,6 +24,7 @@
 |---|---|---|
 | [INSTALL.md](INSTALL.md) | 安装、升级、回退、常见故障 | 使用者 |
 | [USAGE.md](USAGE.md) | 页面地图、每个功能的用法与前置条件 | 使用者 |
+| [CAPTURE.md](CAPTURE.md) | 截屏与录屏的控制、三级文件管理和验证边界 | 使用者 + 维护者 |
 | [APP-MANAGER.md](APP-MANAGER.md) | 免重启隐藏的固件依据、改动文件、验证清单 | 使用者 + 维护者 |
 | [BUILD.md](BUILD.md) | 工具链、构建流程、版本号规则、发布检查单 | 维护者 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 目录结构、启动链、页面模型、IPC、固件耦合 | 维护者 |

@@ -53,6 +53,10 @@ mod ui;
 mod ipc;
 mod bridge_cfg;
 mod screen_rotation;
+mod capture_format;
+mod capture_apng;
+mod capture_settings;
+mod capture;
 mod debug_info;
 
 /// Called by the C bridge only for one-shot state transitions, never per

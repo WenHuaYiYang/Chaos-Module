@@ -59,6 +59,7 @@ impl Page for InfoPage {
                 (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
                 (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
                 (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
+                (10, RowSpec::clickable("截屏与录屏\0".as_bytes())),
                 (8, RowSpec::clickable("NSH终端\0".as_bytes())),
                 (9, RowSpec::clickable("实验性功能\0".as_bytes())),
                 (6, RowSpec::clickable("设置\0".as_bytes())),
@@ -91,6 +92,7 @@ impl Page for InfoPage {
                 3 => nav_goto(1, 0),   // 应用管理
                 4 => nav_goto(10, 0),  // 表盘管理
                 5 => nav_goto(13, 0),  // 系统美化
+                10 => nav_goto(crate::page::CAPTURE_PID, 0),
                 8 => nav_goto(crate::terminal_ui::PAGE_PID, 0), // NSH终端
                 9 => nav_goto(crate::btpan::PAGE_EXP_PID, 0), // 实验性功能(页35)
                 6 => nav_goto(14, 0),  // 设置(时间/日期/亮度/震动/缓存/版本)

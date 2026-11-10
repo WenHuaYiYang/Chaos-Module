@@ -1,13 +1,13 @@
 # 使用说明
 
-Chaos 打开后是主页（信息页），四个一级入口：**应用管理 / 表盘 / 系统美化 / 设置**。
+Chaos 打开后是主页（信息页），可进入应用管理、表盘、系统美化、截屏与录屏和设置等功能。
 所有页面都是原生 LVGL 页面，没有网页或脚本解释器参与。
 
 ## 页面地图
 
 | 页号 | 标题 | 入口 |
 |---|---|---|
-| 0 | Chaos（主页：存储/内存圆环、四个入口） | 桌面图标 |
+| 0 | Chaos（主页：存储/内存圆环、功能入口） | 桌面图标 |
 | 1 | 应用管理 | 主页 → 应用管理 |
 | 2 | 时间设置 | 设置 → 时间设置 |
 | 3 | 日期设置 | 时间设置下一步 |
@@ -28,6 +28,11 @@ Chaos 打开后是主页（信息页），四个一级入口：**应用管理 / 
 | 18 | 关于 / 调试 | 主页末行"关于" |
 | 20 | 开放源代码许可 | 关于 → 开放源代码许可 |
 | 21 | 许可全文 | 开放源代码许可 → Corona / MIBAND10PRO-TUNMODULE |
+| 38 | 截屏与录屏 | 主页 → 截屏与录屏 |
+| 39 | 管理录屏 | 截屏与录屏 → 管理录屏 |
+| 40 | 管理截屏 | 截屏与录屏 → 管理截屏 |
+| 41 | 录屏设置 | 截屏与录屏 → 录屏设置 |
+| 42 | 截图设置 | 截屏与录屏 → 截图设置 |
 
 > 页号上限由 `state.rs` 的 `PAGE_COUNT` 决定，`PAGE_TABLE` 必须与之一致；新增页面要同时改这两处。
 
@@ -80,6 +85,13 @@ Chaos 打开后是主页（信息页），四个一级入口：**应用管理 / 
 - 系统模糊页底部“说明”列出 [Corona 原始源码](https://github.com/AstralSightStudios/Canopus-Module-Corona)
   和 [Chaos 修改后源码](https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor)；
   “关于 → 开放源代码许可”可查看 AGPL-3.0-only 原文。
+
+## 截屏与录屏
+
+主页进入“截屏与录屏”，点击开始/结束后台录制，或点击“遮盖截屏”后等待息屏保存 BMP。
+录屏格式可选 GIF 15 fps / APNG 目标 60 fps；录屏和截图可分别保存到 `/data/chaos/media`
+或 `/data/offlinelog`。管理列表汇总两处目录，点击同一文件两次删除。
+操作说明、录制限制和验证范围见 [CAPTURE.md](CAPTURE.md)。
 
 ## 设置
 
@@ -136,6 +148,8 @@ Q W E R T Y U I O P
 | `/data/chaos/appmgr_excl.bin`、`appmgr_keep.bin`、`appmgr_apply.cfg` | 应用管理名单与配置 |
 | `/data/chaos/font/` | 字体槽位与 `index.txt` 清单 |
 | `/data/chaos/chaos.log` | 运行日志 |
+| `/data/chaos/capture.cfg` | 录屏格式、录屏和截图的独立储存路径 |
+| `/data/chaos/media/`、`/data/offlinelog/` | Chaos 录屏、截图（由用户选择；缓存清理保留 Chaos 媒体文件） |
 | `/data/chaos/shake.cfg`、`shake-wfaces.cfg` | 摇一摇轮换配置 |
 | `/data/rc.d/chaos.sh` | 开机加载脚本 |
 
