@@ -67,7 +67,7 @@ Chaos-Module/
 
 ## 页面模型
 
-- `PAGE_TABLE: [&dyn Page; 36]`（`page.rs`）—— 页号 0..35，`PAGE_COUNT` 与 `MAX_PID` 都从它派生；页0..31 在 `page/` 子模块，32..35 在 `btpan.rs`。
+- `PAGE_TABLE: [&dyn Page; PAGE_COUNT]`（`page.rs`）—— 43 个页面，页号 0..42；38 为截屏与录屏，39/40 分别为录屏/截屏文件管理，41/42 为录屏/截图设置，见 [CAPTURE.md](CAPTURE.md)。
 - 每个页面实现 `Page`：`fill_title` / `render` / `on_click(ctx, idx)` / 可选的 resume、destroy 钩子。
 - 行控件由 `build_rows(ctx, title, specs)` 统一建立，每行一个 LVGL 对象；行事件按**视图下标**派发，
   页面用 `match idx` 或 `idx >= N && idx < view_count()` 自守边界。

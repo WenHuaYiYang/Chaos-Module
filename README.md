@@ -25,7 +25,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 它最初是为了在 10 Pro 上补研究工具链而写的，后来逐渐长成一套完整的设备管理界面：
 应用管理、表盘、字体、图标、亮度、缓存、模糊与震动设置。
 
-> **实现**：Rust（`no_std`）与 C 原生模块，38 个页面 id，Lua 安装器。
+> **实现**：Rust（`no_std`）与 C 原生模块，43 个页面 id，Lua 安装器。
 
 ## 特性
 
@@ -35,6 +35,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 - **表盘**：内置/市场表盘切换、摇一摇轮换、表盘管理。
 - **设备工具**：亮度、缓存清理、时间/日期设置、震动测试。
 - **运行日志**：关键操作写入 `/data/chaos/chaos.log`，设置 → 运行日志可查看与清空。
+- **截屏与录屏**：首页进入控制列表，后台录屏可选 GIF 15 fps / APNG 目标 60 fps，息屏后 BMP 截屏；录屏和截图分别选择 `/data/chaos/media` 或 `/data/offlinelog`，三级列表删除管理（[格式与验证边界](docs/CAPTURE.md)）。
 - **无外部依赖**：只调固件已验证的 API，不注入 JS、不依赖网络。
 - **原生文件桥**：内置 CanopusConnect 兼容端，AstroBox 文件管理器插件可直接连接，不再需要 Canopus 模块/管理器。
 
@@ -78,6 +79,7 @@ python3 tools/build.py --skip-ko  # 只重打容器
 | [架构](docs/ARCHITECTURE.md) | 启动链、页面模型、IPC、固件耦合 |
 | [LVGL 地址](docs/LVGL-MAP.md) | p67 固件的 LVGL 类描述与入口 |
 | [更新日志](docs/CHANGELOG.md) | 版本历史 |
+| [截屏与录屏](docs/CAPTURE.md) | 录屏/截图设置、双目录文件管理、格式与验证边界 |
 
 文档索引：[docs/README.md](docs/README.md)。
 

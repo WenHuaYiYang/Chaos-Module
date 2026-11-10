@@ -97,6 +97,16 @@ unsafe fn walk(plen: usize, depth: u32, clean: bool) {
         }
         write_volatile(CC_WORK.as_mut_ptr().add(o), 0);
         if dt == DT_REG {
+            // Captures are user files, even though their requested location is
+            // offlinelog. Preserve both completed files and worker transactions.
+            if depth == 0 && &CC_WORK[..plen] == b"/data/offlinelog" {
+                let mut len = 0;
+                while len < 64 && read_volatile(nm.add(len)) != 0 { len += 1; }
+                if crate::capture_format::owned(core::slice::from_raw_parts(nm, len)) {
+                    write_volatile(CC_WORK.as_mut_ptr().add(plen), 0);
+                    continue;
+                }
+            }
             add_sat(&mut CC_BYTES, file_size(CC_WORK.as_ptr()));
             CC_FILES += 1;
             if clean && fw_api::fs_remove(CC_WORK.as_ptr()) < 0 { CC_FAIL += 1; }

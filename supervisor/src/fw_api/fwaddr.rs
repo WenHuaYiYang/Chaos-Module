@@ -33,6 +33,17 @@ pub mod proto_drift {}
 
 /// 3.101.043（小米手环 10 Pro / best1503）—— 默认目标
 mod t043 {
+    // NuttX VFS; same entrypoints as the existing native file bridge.
+    pub const CAPTURE_MKDIR: u32 = 0x0C1D_05E9;
+    pub const CAPTURE_RENAME: u32 = 0x0C1D_12E9;
+    // Native poll() at file 0x110ea2/0x110eb0/0x110e4a uses this trio.
+    pub const CAPTURE_GET_FILE: u32 = 0x0C1B_9701;
+    pub const CAPTURE_PUT_FILE: u32 = 0x0C1B_979D;
+    pub const CAPTURE_FILE_POLL: u32 = 0x0C1D_0BA5;
+    pub const CAPTURE_SEM_INIT: u32 = 0x0C1E_A25D;
+    pub const CAPTURE_SEM_DESTROY: u32 = 0x0C20_690D;
+    pub const CAPTURE_POLL_WAKE: u32 = 0x0C1D_0B15;
+    pub const CAPTURE_SEM_WAIT: u32 = 0x0C20_6CA9;
     // p67/.043 honeycomb: exact AP, audited by tools/verify_honeycomb_abi.py.
     // Runtime hooks are per-instance RAM descriptors, never flash patches.
     pub const LAUNCHER_GRID_SLOT: u32 = 0x2011_02EC;

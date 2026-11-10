@@ -23,6 +23,8 @@ mod about;
 mod system;
 mod keyboard;
 mod debug;
+mod capture;
+pub(crate) use capture::CAPTURE_PID;
 
 pub(crate) use beautify::BLUR_LEGACY_PID;
 
@@ -333,4 +335,9 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &crate::btpan::PAGE_EXP_P, // 35 主页 -> 实验性功能
     &crate::btpan::PAGE_DIAG_P, // 36 实验性功能 -> 蓝牙诊断
     &debug::PAGE_DEBUGP,        // 37 调试模式 -> 调试信息(纯文本)
+    &capture::PAGE_CAPTURE,    // 38 主页 -> 截屏与录屏
+    &capture::PAGE_RECORDINGS, // 39 截屏与录屏 -> 管理录屏
+    &capture::PAGE_SCREENSHOTS, // 40 截屏与录屏 -> 管理截屏
+    &capture::PAGE_RECORDSET,   // 41 截屏与录屏 -> 录屏设置
+    &capture::PAGE_SHOTSET,     // 42 截屏与录屏 -> 截图设置
 ];

@@ -171,6 +171,7 @@ mod picker;
 mod sys;
 mod nsh;
 mod network;
+mod capture;
 
 /// 按目标选择的固件地址表。业务代码里的固件入口地址一律从这里取,
 /// 不再各自写死 `transmute(0x0C..)` 的字面量。
@@ -181,6 +182,7 @@ pub use fs::*;
 pub use gfx::*;
 pub use glass::*;
 pub use network::*;
+pub use capture::*;
 pub use home::*;
 pub use page::*;
 pub use picker::*;
