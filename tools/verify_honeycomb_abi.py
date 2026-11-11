@@ -56,6 +56,10 @@ def verify(data):
         0x9E100:"002380b4c1e9003300af40b1037803f0fd03012b03d1036d0b60436d4b60",
         0x9E050:"80b400afa8b1037803f0fd03012b08d0",
     }.items(): signature(data,off,expected)
+    signature(data,0x455B80,"c8234ff000423b64") # native mode transition: 200 ms
+    require(bl_target(data,0x455C1A) == 0x4C7CE0, "native per-icon animation start changed")
+    require(struct.unpack_from('<I',data,0x455CC8)[0] == 0x0C5147DD,
+            "native per-icon mode-transition writer changed")
     # Never call the file copies directly: use the audited runnable thunks.
     for thunk, body, table, alias in (
         (0x4C8A48,0x49640,0xAA8,0x1FE00000),

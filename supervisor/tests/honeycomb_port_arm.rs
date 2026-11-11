@@ -59,6 +59,11 @@ mod fw_api {
     pub const LV_OBJ_FLAG_SCROLL_CHAIN: u32 = 0x300;
     pub const LV_OBJ_FLAG_GESTURE_BUBBLE: u32 = 0x8000;
     pub const LV_OBJ_FLAG_CLICKABLE: u32 = 2;
+    pub mod honeycomb {
+        pub unsafe fn refresh_native(grid: u32) -> bool {
+            crate::production_port::refresh_native(grid)
+        }
+    }
     pub mod oflag {
         pub const RDONLY: u32 = 1;
         pub const WRONLY: u32 = 2;
@@ -151,10 +156,60 @@ pub unsafe extern "C" fn test_frame(grid: u32) -> u32 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn test_zoom(grid: u32, index: u32, zoom: i32) -> u32 {
+pub unsafe extern "C" fn test_current_frame(grid: u32, index: u32, output: *mut i32) -> u32 {
     let icon = fw_api::obj_get_child(grid, index);
-    let f =
-        honeycomb_layout::frame_zoom(index as usize, honeycomb_layout::Point { x: 0, y: 0 }, zoom);
+    let Some(frame) = crate::production_port::current_frame(icon) else {
+        return 0;
+    };
+    core::ptr::write(
+        output.cast::<[i32; 4]>(),
+        [frame.x, frame.y, frame.diameter, frame.visible as i32],
+    );
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_apply_current_frame(grid: u32, index: u32) -> u32 {
+    let icon = fw_api::obj_get_child(grid, index);
+    let Some(frame) = crate::production_port::current_frame(icon) else {
+        return 0;
+    };
+    crate::production_port::begin_frame(grid, &[icon]);
+    if !crate::production_port::place(icon, frame) {
+        return 0;
+    }
+    crate::production_port::present(grid);
+    crate::production_port::geometry_matches(icon, frame) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_stop_return(grid: u32) -> u32 {
+    let n = fw_api::obj_child_count(grid);
+    if n < 0 || n as usize > honeycomb_layout::MAX_ICONS {
+        return 0;
+    }
+    let mut icons = [0; honeycomb_layout::MAX_ICONS];
+    for i in 0..n as usize {
+        icons[i] = fw_api::obj_get_child(grid, i as u32);
+    }
+    crate::production_port::stop_return_animations(grid, &icons[..n as usize]);
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_zoom(grid: u32, index: u32, zoom: i32) -> u32 {
+    test_spacing(grid, index, zoom, 256)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_spacing(grid: u32, index: u32, zoom: i32, spacing: i32) -> u32 {
+    let icon = fw_api::obj_get_child(grid, index);
+    let f = honeycomb_layout::frame_spaced(
+        index as usize,
+        honeycomb_layout::Point { x: 0, y: 0 },
+        zoom,
+        spacing,
+    );
     if !crate::production_port::place(icon, f) {
         return 0;
     }
@@ -170,6 +225,21 @@ pub unsafe extern "C" fn test_navigation(grid: u32, event: u32, chain: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn test_motion_parent(grid: u32) -> u32 {
     crate::production_port::motion_parent(grid)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_entry_source(grid: u32, event: u32) -> u32 {
+    crate::production_port::entry_source(grid, event) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_watch_entry(grid: u32) -> u32 {
+    crate::production_port::watch_entry(grid) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_stop_watch() {
+    crate::production_port::stop_watch();
 }
 
 #[no_mangle]
@@ -217,6 +287,14 @@ pub unsafe extern "C" fn test_rw_tick(honeycomb_on: u32) -> u32 {
     honeycomb::set_enabled(honeycomb_on != 0);
     desktop_scale::tick();
     1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_rw_apply() {
+    honeycomb::set_enabled(false);
+    desktop_scale::disable_for_honeycomb();
+    desktop_scale::set_lens(true);
+    desktop_scale::reapply_now();
 }
 
 #[panic_handler]

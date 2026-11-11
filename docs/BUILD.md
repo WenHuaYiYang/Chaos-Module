@@ -75,12 +75,14 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 ## 版本号规则
 
-一个版本号出现在两个地方，必须同时改：
+源码版本、容器头、锁文件和中英文徽章必须同步：
 
 | 位置 | 形式 | 说明 |
 |---|---|---|
-| `tools/p67_pack.py` 的 `VERSION` | `0x000X0Y0Z` | 容器头版本，`0x00010003` = **v1.0.3**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
+| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010109` = **v1.1.9**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
 | `supervisor/Cargo.toml` 的 `version` | `X.Y.Z` | 关于页通过 `env!("CARGO_PKG_VERSION")` 自动读取，无需手改 |
+| `supervisor/Cargo.lock` 的 `chaos_sup` 版本 | `X.Y.Z` | 与模块清单保持一致 |
+| `README.md` / `README.en.md` 的版本徽章 | `vX.Y.Z` | 中英文项目入口保持一致 |
 
 改完补 `docs/CHANGELOG.md`，再跑一次构建。
 
@@ -89,7 +91,7 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 ## 发布检查单
 
 1. `git pull`，确认在最新 `master` / 特性分支上。
-2. 改三处版本号 + 写 CHANGELOG。
+2. 同步上述版本标识并更新 CHANGELOG。
 3. `python3 tools/build.py`（或 `--skip-ko`，如果只改了安装器）。
 4. 确认 `dist/chaos_sup.ko` 与 `dist/assets/chaos_sup.bin` 哈希一致、`dist/stage` 已更新。
 5. 真机验证：安装 → 重启 → 打开应用 → 看版本号与日志。

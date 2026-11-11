@@ -32,7 +32,10 @@ def build(directory):
     subprocess.run([str(linker),'-flavor','gnu','-Ttext=0x10000000','--gc-sections',
         '--entry=test_render','-u','test_frame','-u','test_layout','-u','test_rw_tick',
         '-u','test_bad_layout','-u','test_layout_cycle','-u','test_zoom','-u','test_navigation','-u','test_motion_parent',
+        '-u','test_spacing','-u','test_current_frame','-u','test_apply_current_frame','-u','test_stop_return',
         '-u','test_entry_dispatch','-u','test_clear_snapshot',
+        '-u','test_entry_source','-u','test_watch_entry','-u','test_stop_watch',
+        '-u','test_rw_apply',
         str(archive),'-o',str(elf)],check=True)
     return elf
 
@@ -71,6 +74,47 @@ def machine(image,elf):
 
 def rect(m,icon):return struct.unpack('<4i',m.u.mem_read(icon+0x1c,16))
 def centre(r):return ((r[0]+r[2]+1)//2,(r[1]+r[3]+1)//2)
+
+def edit_return_probe(image,elf):
+    m,s=machine(image,elf)
+    out=0x20075000
+    assert m.call(s['test_render'],GRID,0,48,83)==1
+    actual=rect(m,ICONS[0])
+    zoom=struct.unpack('<I',m.u.mem_read(ICONS[0]+0x50,4))[0]
+    # The native writer has already filled a different final destination in
+    # metadata. Capture must preserve the CURRENT visible area and transform.
+    ud=struct.unpack('<I',m.u.mem_read(ICONS[0]+0x18,4))[0]
+    m.put(ud,500,600,112,112)
+    before=len(m.calls)
+    assert m.call(s['test_current_frame'],GRID,0,out)==1
+    assert struct.unpack('<4i',m.u.mem_read(out,16))==(*centre(actual),112*zoom//256,1)
+    assert len(m.calls)==before, 'capture must not set geometry or invalidate'
+    m.put(ICONS[0]+0x2c,1)
+    assert m.call(s['test_current_frame'],GRID,0,out)==1
+    assert struct.unpack('<4i',m.u.mem_read(out,16))[-1]==0
+    # Mode animations do not depend on ud+0x13; all live icon vars must be
+    # stopped once, including those without the native position-animation bit.
+    m.put(GRID+0x8b4,7)
+    for icon in ICONS:
+        p=struct.unpack('<I',m.u.mem_read(icon+0x18,4))[0]
+        m.u.mem_write(p+0x13,b'\0')
+    m.calls.clear()
+    assert m.call(s['test_stop_return'],GRID)==1
+    stopped=[obj for a,obj,_ in m.calls if a==VALUES['ANIMATION_DELETE']&~1]
+    assert stopped==ICONS
+    assert bytes(m.u.mem_read(GRID+0x8b4,4))==bytes(4)
+    m.calls.clear()
+    for _ in range(16):assert m.call(s['test_render'],GRID,0,0,0)==1
+    assert not any(a==VALUES['ANIMATION_DELETE']&~1 for a,_,_ in m.calls)
+    for scale in (129,193,254,300):
+        size=112*scale//256
+        m.put(ICONS[0]+0x50,scale,scale)
+        m.put(ICONS[0]+0x1c,0,0,size-1,size-1)
+        before=rect(m,ICONS[0])
+        assert m.call(s['test_apply_current_frame'],GRID,0)==1
+        assert rect(m,ICONS[0])==before, 'takeover must preserve native pixel dimensions'
+    print('PASS ARM edit-return captures live bounds instead of final metadata; stops all native icon writers once and avoids per-frame deletion')
+    print('PASS ARM takeover preserves native integer image dimensions without a one-pixel shrink')
 
 def layout_loop_probe(image,elf):
     # Real lv_obj_update_layout -> real layout tree -> real callback dispatcher
@@ -141,7 +185,112 @@ def motion_parent_probe(image,elf):
     assert m.call(s['test_motion_parent'],GRID)==0
     m.put(descriptor,0x20066001,window,0)
     assert m.call(s['test_motion_parent'],GRID)==container
+    event=0x20018000
+    for depth in (3,9,12,13):
+        m,s=machine(image,elf)
+        chain=[0x20060000+i*0x1000 for i in range(depth)]
+        spec,array,desc=0x20080000,0x20081000,0x20082000
+        m.put(GRID+4,chain[0])
+        for child,ancestor in zip(chain,chain[1:]):m.put(child+4,ancestor)
+        owner=chain[-1]
+        m.put(owner+8,spec);m.put(spec+12,array,1,1,4,0)
+        m.put(array,desc);m.put(desc,VALUES['LAUNCHER_POSITION_EVENT'],chain[1],0)
+        m.put(event,owner,GRID,9,chain[1],0)
+        assert m.call(s['test_motion_parent'],GRID)==(owner if depth<=12 else 0)
+        assert m.call(s['test_entry_source'],GRID,event)==int(depth<=12)
+        m.put(event,0x20090000,GRID,9,chain[1],0)
+        assert m.call(s['test_entry_source'],GRID,event)==0
+    print('PASS ARM entry-source lookup accepts live native bindings before attach through 12 ancestors and rejects unrelated/over-limit containers')
     print('PASS production entry observer finds the stock callback on the actual third ancestor; no fixed-parent assumption')
+
+def early_watch_probe(image,elf):
+    from unicorn.arm_const import UC_ARM_REG_R2,UC_ARM_REG_R3
+    m,s=machine(image,elf)
+    root,page,owner=0x20060000,0x20061000,0x20062000
+    spec,array,desc=0x20080000,0x20081000,0x20082000
+    child_spec,children=0x20083000,0x20084000
+    m.put(GRID,VALUES['LAUNCHER_GRID_CLASS']);m.put(GRID+4,root)
+    m.put(root+4,page);m.put(page+4,owner)
+    m.put(root+8,child_spec);m.put(child_spec,children)
+    m.u.mem_write(child_spec+0x30,struct.pack('<H',1));m.put(children,GRID)
+    m.put(VALUES['LAUNCHER_GRID_SLOT'],GRID);m.put(VALUES['LAUNCHER_ROOT_SLOT'],root)
+    m.put(owner+8,spec);m.put(spec+12,array,1,4,4,0)
+    m.put(array,desc);m.put(desc,VALUES['LAUNCHER_POSITION_EVENT'],page,0)
+    callbacks=[desc];added=[]
+    def sync():
+        m.put(spec+16,len(callbacks))
+        for i,d in enumerate(callbacks):m.put(array+4*i,d)
+    def add(u):
+        assert u.reg_read(UC_ARM_REG_R0)==owner
+        callback=u.reg_read(UC_ARM_REG_R1);code=u.reg_read(UC_ARM_REG_R2)
+        data=u.reg_read(UC_ARM_REG_R3);d=desc+64*len(callbacks)
+        m.put(d,callback,data,code);callbacks.append(d);added.append(callback);sync()
+        return d
+    def remove(u):
+        assert u.reg_read(UC_ARM_REG_R0)==owner
+        callback=u.reg_read(UC_ARM_REG_R1)
+        callbacks[:]=[d for d in callbacks if struct.unpack('<I',m.u.mem_read(d,4))[0]!=callback]
+        sync();return 1
+    m.hooks[0x0c5883f0]=add;m.hooks[0x0c589570]=remove
+    assert m.call(s['test_watch_entry'],GRID)==1
+    assert len(added)==1 and len(callbacks)==2
+    wrapped=struct.unpack('<I',m.u.mem_read(desc,4))[0]
+    assert wrapped!=VALUES['LAUNCHER_POSITION_EVENT']
+    assert bytes(m.u.mem_read(GRID+0x89c,4))==bytes(4)
+    assert struct.unpack('<I',m.u.mem_read(GRID,4))[0]==VALUES['LAUNCHER_GRID_CLASS']
+    # Native rebuild restores its callback and removes the instance observer.
+    m.put(desc,VALUES['LAUNCHER_POSITION_EVENT']);callbacks.pop();sync()
+    assert m.call(s['test_watch_entry'],GRID)==1
+    assert len(added)==2 and len(callbacks)==2
+    assert struct.unpack('<I',m.u.mem_read(desc,4))[0]==wrapped
+    assert m.call(s['test_watch_entry'],GRID)==1
+    assert len(added)==2
+    near_array,near_desc=0x20085000,0x20086000
+    m.put(child_spec+12,near_array,1,1,4,0)
+    m.put(near_array,near_desc);m.put(near_desc,added[0],0,0)
+    assert m.call(s['test_motion_parent'],GRID)==owner, 'stale nearer observer must not hide the native callback'
+    m.call(s['test_stop_watch'])
+    assert callbacks==[desc]
+    assert struct.unpack('<III',m.u.mem_read(desc,12))==(VALUES['LAUNCHER_POSITION_EVENT'],page,0)
+    print('PASS ARM early watcher leaves unready native grid untouched, repairs lost callbacks without duplicates and restores the original binding on disable')
+
+def rw_reapply_probe(image,elf):
+    m,s=machine(image,elf)
+    root,spec,children=0x20060000,0x20061000,0x20062000
+    m.put(GRID,VALUES['LAUNCHER_GRID_CLASS']);m.put(GRID+4,root)
+    m.put(GRID+0x89c,1);m.put(root+8,spec);m.put(spec,children)
+    m.u.mem_write(spec+0x30,struct.pack('<H',1));m.put(children,GRID)
+    m.put(VALUES['LAUNCHER_GRID_SLOT'],GRID);m.put(VALUES['LAUNCHER_ROOT_SLOT'],root)
+    m.put(VALUES['LAUNCHER_SNAPSHOT_SLOT'],0)
+    m.u.mem_write(VALUES['LAUNCHER_TRANSITION_SLOT'],b'\1')
+    trace=[]
+    def layout(u):
+        assert u.reg_read(UC_ARM_REG_R0)==GRID and u.reg_read(UC_ARM_REG_R1)==7
+        trace.append('layout');return 0
+    def refresh(u):
+        assert u.reg_read(UC_ARM_REG_R0)==GRID
+        # Production RW coefficients must be written BEFORE recomputation.
+        assert struct.unpack('<f',m.u.mem_read(GRID+0x1d0,4))[0]!=0
+        trace.append('refresh')
+        # Model native recomputation/display, as for source/zoom in other probes.
+        # The subsequent coordinate commit runs the actual .043 instructions.
+        for i,icon in enumerate(ICONS):
+            ud=struct.unpack('<I',m.u.mem_read(icon+0x18,4))[0]
+            m.put(ud,10+i*20,20,64,64)
+        return 0
+    m.hooks[VALUES['OBJ_GET_STYLE_VALUE']&~1]=lambda u:7
+    m.hooks[VALUES['OBJ_SET_LAYOUT']&~1]=layout
+    m.hooks[VALUES['LAUNCHER_GRID_REFRESH']&~1]=refresh
+    m.call(s['test_rw_apply'])
+    assert trace==[], 'native transition must finish before refreshing'
+    m.u.mem_write(VALUES['LAUNCHER_TRANSITION_SLOT'],b'\0')
+    m.call(s['test_rw_tick'],0)
+    assert trace==['layout','refresh']
+    assert rect(m,ICONS[0])==(10,20,73,83)
+    assert any(a==0x1c02b304 and obj==GRID for a,obj,_ in m.calls)
+    m.call(s['test_rw_tick'],0)
+    assert trace==['layout','refresh'], 'stable RW must not refresh each timer turn'
+    print('PASS ARM RW reapply writes coefficients before rebinding/recomputation, commits coordinates without scrolling, retries transitions once and idles')
 
 def snapshot_probe(image,elf):
     event,root,page=0x20018000,0x20060000,0x20061000
@@ -266,6 +415,25 @@ def probe(image,elf):
         r=rect(m,ICONS[0])
         assert abs(r[2]-r[0]+1-84*zoom//256)<=1
     print('PASS production ARM zoom scales actual hexagonal spacing and central icon size together from 50% to 150%')
+    for zoom in (128,256,384):
+        for spacing in (224,256,320,512):
+            pitch=zoom*spacing//256
+            assert m.call(s['test_spacing'],GRID,5,zoom,spacing)==1
+            hidden=struct.unpack('<I',m.u.mem_read(ICONS[5]+0x2c,4))[0]&1
+            offset=96*pitch//256
+            if offset>=224:
+                assert hidden, (zoom,spacing)
+            else:
+                assert not hidden, (zoom,spacing)
+                assert centre(rect(m,ICONS[5]))==(168+offset,240), (zoom,spacing)
+            assert m.call(s['test_spacing'],GRID,0,zoom,spacing)==1
+            r=rect(m,ICONS[0])
+            assert abs(r[2]-r[0]+1-84*zoom//256)<=1
+            # A later native layout must retain both drawn and hit-test bounds.
+            m.put(ICONS[0]+0x1c,0,0,111,111)
+            assert m.call(s['test_frame'],GRID)==1
+            assert rect(m,ICONS[0])==r
+    print('PASS independent ARM spacing changes actual pitch, preserves central icon size and survives native layout')
     ud=struct.unpack('<I',m.u.mem_read(ICONS[0]+0x18,4))[0]
     m.u.mem_write(ud+0x13,b'\x01');m.put(GRID+0x8b4,5)
     assert m.call(s['test_render'],GRID,0,0,0)==1
@@ -314,8 +482,11 @@ def probe(image,elf):
     layout_loop_probe(image,elf)
     navigation_probe(image,elf)
     motion_parent_probe(image,elf)
+    early_watch_probe(image,elf)
+    rw_reapply_probe(image,elf)
     snapshot_probe(image,elf)
     native_edit_probe(image)
+    edit_return_probe(image,elf)
     print('MACHINE-CODE GEOMETRY EVIDENCE ONLY: zoom/invalidation/display are modelled; device acceptance pending.')
 
 def main():

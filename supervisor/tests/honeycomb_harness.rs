@@ -47,6 +47,7 @@ struct Ui {
     geometry_ok: bool,
     layout_phase: bool,
     layout_rects: Vec<u32>,
+    layout_frames: Vec<Frame>,
     layout_commits: usize,
     point: Point,
     chain: u32,
@@ -61,6 +62,15 @@ struct Ui {
     cleared_snapshots: usize,
     transitions: usize,
     entry_trace: Vec<&'static str>,
+    now_ms: u32,
+    native_frames: Vec<Frame>,
+    return_snapshots: usize,
+    return_stops: usize,
+    watching: bool,
+    watch_calls: usize,
+    fail_snapshot: bool,
+    config_writes: Vec<(bool, u8)>,
+    reapply_in_layout: bool,
 }
 static UI: Mutex<Option<Ui>> = Mutex::new(None);
 fn with<T>(f: impl FnOnce(&mut Ui) -> T) -> T {
@@ -126,6 +136,7 @@ mod fw_api {
                     return -1;
                 }
                 u.rw_written = std::slice::from_raw_parts(b, n as usize).to_vec();
+                u.config_writes.push((false, *b));
                 n as i32
             });
         }
@@ -135,14 +146,21 @@ mod fw_api {
                 return -1;
             }
             u.written = std::slice::from_raw_parts(b, n as usize).to_vec();
+            u.config_writes.push((true, *b.add(4)));
             n as i32
         })
     }
     pub unsafe fn event_get_code(_: u32) -> u32 {
         with(|u| u.code)
     }
+    pub fn capture_now_ms() -> u32 {
+        with(|u| u.now_ms)
+    }
     pub mod honeycomb {
         use super::*;
+        pub unsafe fn refresh_native(_: u32) -> bool {
+            true
+        }
         pub unsafe fn launcher() -> u32 {
             with(|u| u.owner)
         }
@@ -168,6 +186,7 @@ mod fw_api {
             with(|u| {
                 assert!(!u.layout_phase);
                 u.attached += 1;
+                u.watching = true;
             });
             true
         }
@@ -183,13 +202,17 @@ mod fw_api {
         }
         pub unsafe fn detach(_: u32, a: &[u32]) {
             hook_icons(a);
-            with(|u| u.detached += 1);
+            with(|u| {
+                u.detached += 1;
+                u.watching = false;
+            });
         }
         pub unsafe fn detach_for_edit(_: u32, a: &[u32]) {
             hook_icons(a);
             with(|u| {
                 u.detached += 1;
                 u.edit_detached += 1;
+                u.watching = false;
                 u.entry_trace.push("release");
             });
         }
@@ -198,6 +221,21 @@ mod fw_api {
                 assert!(!u.layout_phase, "animation deletion in layout");
                 assert!(!u.frame_open);
                 u.frame_open = true;
+            });
+        }
+        pub unsafe fn current_frame(icon: u32) -> Option<Frame> {
+            with(|u| {
+                assert!(!u.layout_phase);
+                u.return_snapshots += 1;
+                let i = u.icons.iter().position(|&x| x == icon).unwrap();
+                u.native_frames.get(i).copied()
+            })
+        }
+        pub unsafe fn stop_return_animations(_: u32, icons: &[u32]) {
+            with(|u| {
+                assert!(!u.layout_phase);
+                assert_eq!(u.return_snapshots, icons.len());
+                u.return_stops += 1;
             });
         }
         pub unsafe fn present(_: u32) {
@@ -214,11 +252,15 @@ mod fw_api {
                 u.layout_commits += 1;
             });
         }
-        pub unsafe fn layout_rect(icon: u32, _: Frame) -> bool {
+        pub unsafe fn layout_rect(icon: u32, frame: Frame) -> bool {
+            if with(|u| core::mem::take(&mut u.reapply_in_layout)) {
+                crate::honeycomb::reapply_now();
+            }
             with(|u| {
                 assert!(u.layout_phase);
                 assert!(u.icons.contains(&icon));
                 u.layout_rects.push(icon);
+                u.layout_frames.push(frame);
                 u.geometry_ok
             })
         }
@@ -263,7 +305,22 @@ mod fw_api {
         pub unsafe fn point(_: u32) -> Point {
             with(|u| u.point)
         }
-        pub unsafe fn entry_source(_: u32) -> bool {
+        pub unsafe fn watch_entry(grid: u32) -> bool {
+            with(|u| {
+                assert!(!u.layout_phase);
+                assert_eq!(grid, u.owner);
+                u.watch_calls += 1;
+                u.watching = true;
+            });
+            true
+        }
+        pub unsafe fn stop_watch() {
+            with(|u| {
+                assert!(!u.layout_phase);
+                u.watching = false;
+            });
+        }
+        pub unsafe fn entry_source(_: u32, _: u32) -> bool {
             with(|u| u.entry_source)
         }
         pub unsafe fn clear_snapshot(_: u32) -> bool {
@@ -271,8 +328,8 @@ mod fw_api {
                 assert!(!u.layout_phase);
                 u.cleared_snapshots += 1;
                 u.entry_trace.push("clear");
-            });
-            true
+                !u.fail_snapshot
+            })
         }
         pub unsafe fn begin_transition(_: u32, _: u32) -> bool {
             with(|u| {
@@ -327,6 +384,27 @@ unsafe fn start() {
     honeycomb::tick();
     assert_eq!(with(|u| u.attached), 1);
 }
+unsafe fn return_from_edit() {
+    event(1, Point::default());
+    event(5, Point::default());
+    honeycomb::tick();
+    assert_eq!(with(|u| u.attached), 1);
+    with(|u| {
+        u.supported = true;
+        u.native_frames = (0..u.icons.len())
+            .map(|i| Frame {
+                x: 56 + (i % 3) as i32 * 112,
+                y: 80 + (i / 3) as i32 * 112,
+                diameter: 112,
+                visible: i < 12,
+            })
+            .collect();
+    });
+    honeycomb::tick();
+}
+fn last_frames() -> Vec<Frame> {
+    with(|u| u.frames[u.frames.len() - u.icons.len()..].to_vec())
+}
 fn main() {
     unsafe {
         *UI.lock().unwrap() = Some(Ui {
@@ -349,9 +427,120 @@ fn main() {
             "config" => {
                 with(|u| u.config = Some(b"HCB1\x01".to_vec()));
                 honeycomb::tick();
+                assert!(honeycomb::enabled());
+                assert_eq!(with(|u| u.attached), 1);
+                assert_eq!(with(|u| u.write_calls), 0);
+            }
+            "config-off" | "bad-magic" => {
+                with(|u| {
+                    u.config = Some(
+                        if case == "config-off" {
+                            b"HCB1\x00"
+                        } else {
+                            b"HCBX\x01"
+                        }
+                        .to_vec(),
+                    )
+                });
+                honeycomb::tick();
                 assert!(!honeycomb::enabled());
                 assert_eq!(with(|u| u.attached), 0);
+                assert_eq!(with(|u| u.write_calls), 0);
+            }
+            "boot-await-mode" => {
+                with(|u| {
+                    u.config = Some(b"HCB1\x01".to_vec());
+                    u.supported = false;
+                });
+                honeycomb::tick();
+                assert!(honeycomb::enabled());
+                assert!(with(|u| u.watching));
+                assert_eq!(with(|u| u.attached), 0);
+                with(|u| {
+                    u.supported = true;
+                    u.entry_source = true;
+                    u.code = 9;
+                });
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 1);
+                assert_eq!(with(|u| u.attached), 1);
+            }
+            "apply-on" | "apply-rebuild" | "apply-recover" => {
+                honeycomb::toggle();
+                honeycomb::reapply_now();
+                assert_eq!(with(|u| u.attached), 1);
+                assert_eq!(with(|u| u.placed.len()), 40);
+                assert_eq!(with(|u| u.written.clone()), b"HCB1\x01");
+                assert_eq!(
+                    with(|u| u.config_writes.clone()),
+                    vec![(false, 0), (true, 1)]
+                );
+                if case == "apply-rebuild" {
+                    with(|u| {
+                        u.owner = 2;
+                        u.icons = (70..110).collect();
+                    });
+                }
+                if case == "apply-recover" {
+                    with(|u| u.geometry_ok = false);
+                    layout();
+                    with(|u| u.geometry_ok = true);
+                }
+                honeycomb::reapply_now();
+                assert!(honeycomb::enabled());
+                assert_eq!(with(|u| u.attached), 2);
+                assert_eq!(with(|u| u.detached), usize::from(case != "apply-rebuild"));
+                assert!(with(|u| u.watching));
+                let commits = with(|u| u.commits);
+                honeycomb::tick();
+                assert_eq!(with(|u| u.commits), commits);
+            }
+            "apply-rw" => {
+                start();
+                desktop_scale::set_lens(true);
+                honeycomb::reapply_now();
+                assert!(!honeycomb::enabled());
+                assert!(desktop_scale::lens_on());
+                assert!(!desktop_scale::pitch_on() && !desktop_scale::inset_on());
+                assert_eq!(with(|u| u.detached), 1);
+                assert_eq!(with(|u| u.attached), 1);
                 assert_eq!(with(|u| u.written.clone()), b"HCB1\x00");
+                assert_eq!(with(|u| u.rw_written.clone()), vec![1]);
+                let order = with(|u| u.config_writes.clone());
+                assert_eq!(&order[order.len() - 2..], &[(true, 0), (false, 1)]);
+                assert!(!with(|u| u.watching));
+            }
+            "apply-off" => {
+                start();
+                honeycomb::toggle();
+                honeycomb::reapply_now();
+                assert_eq!(with(|u| u.written.clone()), b"HCB1\x00");
+                assert_eq!(with(|u| u.detached), 1);
+                assert!(!with(|u| u.timer_active));
+            }
+            "apply-in-layout" => {
+                start();
+                let writes = with(|u| u.write_calls);
+                with(|u| u.reapply_in_layout = true);
+                layout();
+                assert_eq!(with(|u| u.write_calls), writes);
+                assert_eq!(with(|u| u.attached), 1);
+                honeycomb::tick();
+                assert_eq!(with(|u| u.attached), 2);
+                assert_eq!(with(|u| u.detached), 1);
+            }
+            "apply-await-mode" => {
+                honeycomb::toggle();
+                with(|u| u.supported = false);
+                honeycomb::reapply_now();
+                assert_eq!(with(|u| u.written.clone()), b"HCB1\x01");
+                assert_eq!(with(|u| u.attached), 0);
+                with(|u| {
+                    u.supported = true;
+                    u.entry_source = true;
+                    u.code = 9;
+                });
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 1);
+                assert_eq!(with(|u| u.attached), 1);
             }
             "invalid" => {
                 with(|u| u.config = Some(b"HCB1\x02".to_vec()));
@@ -369,7 +558,7 @@ fn main() {
                 assert_eq!(with(|u| u.write_calls), 1);
                 with(|u| u.fail_write = false);
                 honeycomb::tick();
-                assert_eq!(with(|u| u.written.clone()), b"HCB1\x00");
+                assert_eq!(with(|u| u.written.clone()), b"HCB1\x01");
                 honeycomb::tick();
                 assert_eq!(with(|u| u.write_calls), 2);
             }
@@ -524,11 +713,13 @@ fn main() {
                     u.config = Some(b"HCB1\x01".to_vec());
                     u.rw_config = Some(7);
                 });
-                assert!(desktop_scale::lens_on());
-                assert!(desktop_scale::pitch_on() && desktop_scale::inset_on());
-                assert!(!honeycomb::enabled());
+                assert!(!desktop_scale::lens_on());
+                assert!(!desktop_scale::pitch_on() && !desktop_scale::inset_on());
+                assert!(honeycomb::enabled());
+                desktop_scale::tick();
                 honeycomb::tick();
-                assert_eq!(with(|u| u.attached), 0);
+                assert_eq!(with(|u| u.attached), 1);
+                assert_eq!(with(|u| u.rw_written.clone()), vec![0]);
             }
             "layout-callback" => {
                 start();
@@ -601,8 +792,42 @@ fn main() {
                 assert!(last[0].diameter < before[0].diameter);
                 assert!((last[5].x - 168).abs() < (before[5].x - 168).abs());
             }
+            "spacing-edge" => {
+                start();
+                let before = with(|u| u.frames.clone());
+                with(|u| u.point = Point { x: 4, y: 240 });
+                event(1, Point::default());
+                event(2, Point { x: 2, y: 48 });
+                event(5, Point::default());
+                event(8, Point::default());
+                click();
+                honeycomb::tick();
+                assert_eq!(with(|u| u.launched), 0);
+                assert_eq!(with(|u| u.chain), 0);
+                assert_eq!(with(|u| u.edit_detached), 0);
+                let after = with(|u| u.frames.clone());
+                let last = &after[after.len() - 40..];
+                assert_eq!(last[0].diameter, before[0].diameter);
+                assert_eq!((last[0].x, last[0].y), (before[0].x, before[0].y));
+                assert!(last[5].x > before[5].x);
+                let commits = with(|u| u.commits);
+                honeycomb::tick();
+                assert_eq!(with(|u| u.commits), commits); // No spacing inertia.
+            }
+            "left-edge-tap" => {
+                start();
+                with(|u| u.point = Point { x: 4, y: 240 });
+                event(1, Point::default());
+                event(2, Point { x: 1, y: 2 });
+                event(8, Point::default());
+                click();
+                assert_eq!(with(|u| u.launched), 1);
+            }
             "exit-left" | "exit-top" => {
                 start();
+                if case == "exit-left" {
+                    with(|u| u.point = Point { x: 4, y: 240 });
+                }
                 event(1, Point::default());
                 let d = if case == "exit-left" {
                     Point { x: 100, y: 0 }
@@ -657,8 +882,151 @@ fn main() {
                 }
                 assert!(!with(|u| u.timer_active));
             }
-            "long-press" => {
+            "edit-return" | "edit-return-fallback" => {
+                with(|u| u.fast_timer = case == "edit-return");
                 start();
+                return_from_edit();
+                let source = with(|u| u.native_frames.clone());
+                for (actual, native) in last_frames().iter().zip(source) {
+                    if native.visible {
+                        assert_eq!(*actual, native);
+                    } else {
+                        assert!(!actual.visible);
+                    }
+                }
+                assert!(with(|u| u.timer_active));
+                assert_eq!(with(|u| u.return_stops), 1);
+                let hooks = with(|u| u.hook_calls);
+                let step = if case == "edit-return" { 16 } else { 50 };
+                let mut distinct = std::collections::HashSet::new();
+                for now in (step..=250).step_by(step as usize) {
+                    with(|u| u.now_ms = now);
+                    if case == "edit-return" {
+                        honeycomb::animation_tick(1);
+                    } else {
+                        honeycomb::tick();
+                    }
+                    let f = last_frames();
+                    distinct.insert((f[0].x, f[0].y, f[0].diameter));
+                    with(|u| u.layout_frames.clear());
+                    layout();
+                    assert_eq!(with(|u| u.layout_frames.clone()), f);
+                }
+                assert!(distinct.len() >= if case == "edit-return" { 12 } else { 5 });
+                let target: Vec<_> = (0..40)
+                    .map(|i| honeycomb_layout::frame(i, Point::default()))
+                    .collect();
+                assert_eq!(last_frames(), target);
+                assert!(!with(|u| u.timer_active));
+                assert_eq!(with(|u| u.return_snapshots), 40);
+                assert_eq!(with(|u| u.return_stops), 1);
+                assert_eq!(with(|u| u.hook_calls), hooks);
+                let commits = with(|u| u.commits);
+                honeycomb::animation_tick(1);
+                honeycomb::tick();
+                assert_eq!(with(|u| u.commits), commits);
+            }
+            "edit-return-input" => {
+                with(|u| u.fast_timer = true);
+                start();
+                return_from_edit();
+                event(1, Point::default());
+                event(2, Point { x: 100, y: 100 });
+                event(5, Point::default());
+                click();
+                assert_eq!(with(|u| u.edit_detached), 1);
+                assert_eq!(with(|u| u.launched), 0);
+                with(|u| u.now_ms = 240);
+                honeycomb::animation_tick(1);
+                event(8, Point::default());
+                click();
+                assert_eq!(with(|u| u.launched), 0);
+                event(1, Point::default());
+                event(8, Point::default());
+                click();
+                assert_eq!(with(|u| u.launched), 1);
+            }
+            "edit-return-change" => {
+                with(|u| u.fast_timer = true);
+                start();
+                return_from_edit();
+                with(|u| {
+                    u.icons.remove(2);
+                    u.revision += 1;
+                    u.now_ms = 32;
+                });
+                honeycomb::animation_tick(1);
+                let target: Vec<_> = (0..39)
+                    .map(|i| honeycomb_layout::frame(i, Point::default()))
+                    .collect();
+                assert_eq!(last_frames(), target);
+                assert!(!with(|u| u.timer_active));
+                assert_eq!(with(|u| u.return_stops), 1);
+            }
+            "edit-return-offscreen" | "edit-return-disabled" | "edit-return-rebuilt" => {
+                with(|u| u.fast_timer = true);
+                start();
+                return_from_edit();
+                with(|u| {
+                    u.now_ms = 32;
+                    match case.as_str() {
+                        "edit-return-offscreen" => u.visible = false,
+                        "edit-return-rebuilt" => {
+                            u.owner = 2;
+                            u.icons = (70..110).collect();
+                        }
+                        _ => (),
+                    }
+                });
+                if case == "edit-return-disabled" {
+                    honeycomb::toggle();
+                }
+                honeycomb::tick();
+                assert!(!with(|u| u.timer_active));
+                let commits = with(|u| u.commits);
+                honeycomb::animation_tick(1);
+                assert_eq!(with(|u| u.commits), commits);
+                if case != "edit-return-disabled" {
+                    let target: Vec<_> = (0..40)
+                        .map(|i| honeycomb_layout::frame(i, Point::default()))
+                        .collect();
+                    assert_eq!(last_frames(), target);
+                }
+            }
+            "edit-deleted-before-return"
+            | "edit-rebuilt-before-return"
+            | "edit-disabled-before-return" => {
+                with(|u| u.fast_timer = true);
+                start();
+                event(1, Point::default());
+                event(5, Point::default());
+                honeycomb::tick();
+                with(|u| {
+                    if case == "edit-deleted-before-return" {
+                        u.icons.remove(2);
+                    }
+                    if case == "edit-rebuilt-before-return" {
+                        u.owner = 2;
+                        u.icons = (70..110).collect();
+                    }
+                    u.supported = true;
+                });
+                if case == "edit-disabled-before-return" {
+                    honeycomb::toggle();
+                }
+                honeycomb::tick();
+                let returning = case == "edit-deleted-before-return";
+                assert_eq!(with(|u| u.return_stops), usize::from(returning));
+                assert_eq!(with(|u| u.timer_active), returning);
+                with(|u| u.now_ms = 240);
+                honeycomb::animation_tick(1);
+                assert!(!with(|u| u.timer_active));
+            }
+            "long-press" | "left-edge-long-press" => {
+                start();
+                if case == "left-edge-long-press" {
+                    with(|u| u.point = Point { x: 4, y: 240 });
+                }
                 event(1, Point::default());
                 event(5, Point::default());
                 assert!(with(|u| u.native_codes.contains(&5)));
@@ -700,6 +1068,107 @@ fn main() {
                 let commits = with(|u| u.commits);
                 honeycomb::entry_event(1);
                 assert_eq!(with(|u| u.commits), commits);
+            }
+            "pre-before-tick" | "pre-offscreen" | "pre-await-icons" | "pre-await-mode" => {
+                honeycomb::toggle();
+                with(|u| {
+                    if case == "pre-offscreen" {
+                        u.visible = false;
+                    }
+                    if case == "pre-await-mode" {
+                        u.supported = false;
+                    }
+                    if case == "pre-await-icons" {
+                        u.icons.clear();
+                    }
+                });
+                if case == "pre-await-icons" || case == "pre-await-mode" {
+                    honeycomb::tick();
+                    assert!(with(|u| u.watching));
+                    assert_eq!(with(|u| u.attached), 0);
+                }
+                with(|u| {
+                    u.supported = true;
+                    u.icons = (10..50).collect();
+                    u.entry_source = true;
+                    u.code = 9;
+                });
+                let writes = with(|u| u.write_calls);
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 1);
+                assert_eq!(with(|u| u.attached), 1);
+                assert_eq!(with(|u| u.placed.len()), 40);
+                assert_eq!(with(|u| u.write_calls), writes);
+                assert_eq!(with(|u| u.transitions), 1);
+            }
+            "pre-late-position" | "entry-before-tick" => {
+                honeycomb::toggle();
+                with(|u| {
+                    u.entry_source = true;
+                    u.code = 12;
+                });
+                if case == "pre-late-position" {
+                    assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 0);
+                } else {
+                    honeycomb::entry_event(1);
+                }
+                assert_eq!(with(|u| u.attached), 1);
+                assert_eq!(with(|u| u.placed.len()), 40);
+                assert_eq!(with(|u| u.transitions), 0);
+                assert_eq!(with(|u| u.write_calls), 0);
+            }
+            "pre-rebuild" => {
+                start();
+                with(|u| {
+                    u.owner = 2;
+                    u.icons = (70..110).collect();
+                    u.entry_source = true;
+                    u.code = 9;
+                    u.placed.clear();
+                });
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 1);
+                assert_eq!(with(|u| u.attached), 2);
+                assert_eq!(with(|u| u.detached), 0);
+                assert_eq!(with(|u| u.placed.clone()), (70..110).collect::<Vec<_>>());
+            }
+            "watch-repair" => {
+                start();
+                let calls = with(|u| u.watch_calls);
+                let commits = with(|u| u.commits);
+                with(|u| u.watching = false);
+                honeycomb::tick();
+                assert!(with(|u| u.watching));
+                assert!(with(|u| u.watch_calls) > calls);
+                assert_eq!(with(|u| u.commits), commits);
+            }
+            "snapshot-retry" => {
+                start();
+                with(|u| {
+                    u.fail_snapshot = true;
+                    u.entry_source = true;
+                    u.code = 9;
+                });
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 0);
+                honeycomb::tick();
+                assert!(honeycomb::enabled());
+                assert_eq!(with(|u| u.detached), 0);
+                with(|u| u.fail_snapshot = false);
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 1);
+                assert_eq!(with(|u| u.transitions), 1);
+            }
+            "pre-unrelated-before-tick" => {
+                honeycomb::toggle();
+                with(|u| u.code = 9);
+                assert_eq!(honeycomb::chaos_honeycomb_pre_scroll(1), 0);
+                assert_eq!(with(|u| u.attached), 0);
+            }
+            "watch-unsupported-disable" => {
+                honeycomb::toggle();
+                with(|u| u.supported = false);
+                honeycomb::tick();
+                assert!(with(|u| u.watching));
+                honeycomb::toggle();
+                honeycomb::tick();
+                assert!(!with(|u| u.watching));
             }
             "pre-end" | "pre-unrelated" => {
                 start();

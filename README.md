@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/version-v1.1.7-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.1.9-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -31,7 +31,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 
 - **应用管理**：隐藏/显示、一键批量、排除项；普通/深度隐藏两种模式（[说明](docs/APP-MANAGER.md)）。
 - **系统美化**：字体切换、静态/动态图标包、系统模糊、表盘通透背景。动态图标包兼容原 CIPK 投递格式，当前可见动态图标全部播放（[制作与协议](docs/ICON-PACKS.md)）。
-- **蜂窝应用列表（实验）**：双向拖动与惯性、右缘整体缩放、边界返回、原生编辑与删除，与 RW6 效果互斥。每次启动后手动开启；完整模拟器显示与帧率待复测（[实现与验证](docs/HONEYCOMB.md)）。
+- **蜂窝应用列表（实验）**：双向拖动与惯性、左缘调节间距、右缘整体缩放、边界返回、原生编辑与删除，与 RW6 效果互斥。开关持久保存，切换时重新绑定列表并立即应用；完整模拟器显示与帧率待复测（[实现与验证](docs/HONEYCOMB.md)）。
 - **表盘**：内置/市场表盘切换、摇一摇轮换、表盘管理。
 - **设备工具**：亮度、缓存清理、时间/日期设置、震动测试。
 - **应用图标**：设置 → 应用图标进入三级单选列表，仅保留原版和动态，统一 96×96；首次安装及从旧版升级自动选择动态，之后保存手动选择。动态播放上传的 GIF（193 帧、5.2 秒循环），暂停时复用原版文件，移除其他主题和额外静态缓冲以缩小体积（[说明](docs/DYNAMIC-ICON.md)）。
