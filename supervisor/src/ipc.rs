@@ -161,6 +161,7 @@ let pnames: [u32; PAGE_COUNT] = [
     core::ptr::addr_of!(PAGE_SCREENSHOTS) as u32,
     core::ptr::addr_of!(PAGE_RECORDSET) as u32,
     core::ptr::addr_of!(PAGE_SHOTSET) as u32,
+    core::ptr::addr_of!(PAGE_APP_ICON) as u32,
 ];
 let mut pg = 0usize;
 while pg < PAGE_COUNT {

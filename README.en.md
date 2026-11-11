@@ -26,15 +26,16 @@ The module is offline, needs no phone, and does not touch firmware partitions.
 It started as a research harness for the 10 Pro and grew into a full device-management UI:
 apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 
-> **Implementation**: native Rust (`no_std`) and C modules, 43 page ids, and a Lua installer.
+> **Implementation**: native Rust (`no_std`) and C modules, 44 page ids, and a Lua installer.
 
 ## Features
 
 - **App manager**: hide/show, batch actions, exclusions, and normal / deep hiding modes ([details](docs/APP-MANAGER.md)).
-- **Customization**: fonts, home-screen icon packs, system blur, translucent watchface background.
+- **Customization**: fonts, static/animated home-screen icon packs, system blur, translucent watchface background. Animated packs keep legacy CIPK compatibility and play all visible animated icons ([delivery guide and format](docs/ICON-PACKS.md)).
 - **Honeycomb app list (experimental)**: two-axis dragging, inertia, right-edge zoom, boundary navigation and native editing/deletion. Mutually exclusive with RW6 effects; enable manually after boot. Full simulator rendering and frame-time validation remain pending ([implementation and tests](docs/HONEYCOMB.md)).
 - **Watchfaces**: switch built-in/market faces, shake-to-rotate, face management.
 - **Device tools**: brightness, cache cleanup, time/date, vibration test.
+- **Application icon**: Settings → Application icon offers only Original and Dynamic, both 96×96. Fresh installs and upgrades select Dynamic automatically; later manual choices persist. Dynamic keeps the uploaded GIF's 193 frames and 5.2-second cycle. Pausing restores the original file; unused themes and static buffers are removed to reduce size ([implementation and validation](docs/DYNAMIC-ICON.md)).
 - **Runtime log**: key actions go to `/data/chaos/chaos.log`; Settings → Runtime log shows and clears it.
 - **Screenshots and recordings**: background GIF 15 fps / APNG target 60 fps recording, BMP capture after screen-off, independent storage choices (`/data/chaos/media` or `/data/offlinelog`), and paginated file deletion ([formats and validation](docs/CAPTURE.md)).
 - **No external runtime**: talks only to verified firmware APIs; no JS injection, no network.

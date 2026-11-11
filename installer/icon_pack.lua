@@ -1,4 +1,4 @@
--- 图标投递包: 把本容器里的 pack.bin(一包 38 张桌面图标)解到 /data/chaos/icons/<包号>/,
+-- 图标投递包: 把静态封面、可选 DGF1 动画及索引解到 /data/chaos/icons/<包号>/,
 -- 再把这一包登记进清单 index.txt。装完之后在"系统美化"页的图标包列表里点一下就能切过去,
 -- 不需要重启手表, 也不需要重刷主包。
 --
@@ -6,7 +6,8 @@
 -- 表), 38 张图标塞不进单槽 —— 图标包自己再套一层流式容器:
 --   [4 字节 'CIPK'][u32 count]
 --   count 次: [u32 len][u8 name_len][name][data]
--- 本脚本按拍解包(每拍一张, 约 50KB), 峰值内存只有一块 64KB, 不 read_all 整包。
+-- 旧静态 CIPK 格式不变；动画为 <stem>_anim.bin，索引为 animations.bin。
+-- 每拍搬运或复核最多 64KB，不 read_all 单个动画或整包。
 --
 -- 清单格式(定长记录, 与内核模块 icon_apply.rs 必须逐字节一致):
 --   /data/chaos/icons/index.txt 恒为 128 字节 = 8 行 x 16 字节
@@ -47,7 +48,7 @@ local INDEX_SIZE = 128
 local LINE_SIZE  = 16
 local PACK_MAX   = 8
 
--- 构建期替换: scripts/build_icon_pack.py 把下面这个占位符换成素材短名(恰好出现一次,
+-- 构建期替换: tools/build_icon_pack.py 把下面这个占位符换成素材短名(恰好出现一次,
 -- 打包脚本会断言这一点)。直接写在脚本里而不是从容器头读: 表盘容器里读不到自己的显示名
 -- (0x68 那个字段固件才认), 而短名要写进清单给内核模块显示, 必须两侧拿到同一个值。
 local PACK_NAME = "__PACK_NAME__"
@@ -64,7 +65,7 @@ local CIPK_MAGIC = "CIPK"
 local CHUNK = 0x10000        -- 每拍最多搬 64KB(与字体包同一档)
 
 local job = {
-  stage = 0, pack = 0, src = nil, dst = nil, lines = nil,
+  stage = 0, pack = 0, src = nil, dst = nil, verify = nil, lines = nil, seen = nil,
   count = 0, idx = 0, moved = 0, left = 0, wrote = 0,
 }
 local status_label
@@ -133,11 +134,23 @@ local function render_index(entries)
 end
 
 local function write_index(entries)
-  local f, err = io.open(INDEX_PATH, "wb")
+  local raw = render_index(entries)
+  local temporary = INDEX_PATH .. ".tmp"
+  local f, err = io.open(temporary, "wb")
   if not f then return false, tostring(err) end
-  local ok = pcall(f.write, f, render_index(entries))
-  pcall(f.close, f)
-  return ok
+  local ok, result = pcall(f.write, f, raw)
+  local cok, closed = pcall(f.close, f)
+  if not ok or not result or not cok or not closed then
+    pcall(os.remove, temporary)
+    return false, "清单未写全"
+  end
+  local rf = io.open(temporary, "rb")
+  local checked = rf and rf:read(INDEX_SIZE + 1)
+  if rf then pcall(rf.close, rf) end
+  if checked ~= raw then pcall(os.remove, temporary) return false, "清单回读失败" end
+  local renamed, result = pcall(os.rename, temporary, INDEX_PATH)
+  if not renamed or not result then pcall(os.remove, temporary) return false, "清单提交失败" end
+  return true
 end
 
 -- 定包号: 同名复用, 否则取最小空号; 满了返回 nil
@@ -159,6 +172,7 @@ end
 local function close_files()
   if job.src then pcall(function() job.src:close() end) job.src = nil end
   if job.dst then pcall(function() job.dst:close() end) job.dst = nil end
+  if job.verify then pcall(function() job.verify:close() end) job.verify = nil end
 end
 
 local function finish(ok, text)
@@ -206,6 +220,7 @@ local function step()
       return
     end
     job.src = src
+    job.seen = {}
     job.count, job.idx, job.wrote, job.moved, job.left = count, 0, 0, 0, 0
     set_status(PACK_NAME .. " 解包 0/" .. count)
     job.stage = 2
@@ -214,6 +229,28 @@ local function step()
 
   -- 2) 每拍解一张(一张内部按 64KB 分块)
   if job.stage == 2 then
+    if job.verify then
+      local want = math.min(CHUNK, job.verify_left)
+      local data = job.verify:read(want)
+      if type(data) ~= "string" or #data == 0 then
+        pcall(os.remove, job.target)
+        finish(false, "第 " .. (job.idx + 1) .. " 个文件落盘不完整")
+        return
+      end
+      job.verify_left = job.verify_left - #data
+      if job.verify_left == 0 then
+        local extra = job.verify:read(1)
+        local ok, closed = pcall(job.verify.close, job.verify)
+        job.verify = nil
+        if (extra and #extra > 0) or not ok or not closed then
+          finish(false, "文件大小复核失败")
+          return
+        end
+        job.idx, job.wrote = job.idx + 1, job.wrote + 1
+        set_status(PACK_NAME .. " 解包 " .. job.idx .. "/" .. job.count)
+      end
+      return
+    end
     if not job.dst then
       if job.idx >= job.count then
         job.stage = 3
@@ -221,8 +258,7 @@ local function step()
       end
       local lh = job.src:read(4)
       local len = lh and read_u32(lh, 1)
-      -- 单张上限 512KB: 实测素材单张 50188 字节, 给足余量又把明显坏的长度挡在写盘之前
-      if not len or len < 1 or len > 0x80000 then
+      if not len or len < 1 or len > 0x100000 then
         finish(false, "第 " .. (job.idx + 1) .. " 张长度头非法")
         return
       end
@@ -234,12 +270,19 @@ local function step()
         finish(false, "第 " .. (job.idx + 1) .. " 张名字非法")
         return
       end
+      if job.seen[nm] or (not nm:match("_anim%.bin$") and len > 0x80000)
+        or (nm == "animations.bin" and len ~= 20) then
+        finish(false, "重复文件或长度非法: " .. nm)
+        return
+      end
+      job.seen[nm] = true
       local dst, derr = io.open(ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. nm, "wb")
       if not dst then
         finish(false, "打不开目标文件: " .. tostring(derr))
         return
       end
       job.nm = nm
+      job.target = ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. nm
       job.dst, job.left, job.moved, job.flen = dst, len, 0, len
       return
     end
@@ -263,34 +306,23 @@ local function step()
     job.left = job.left - #blk
     job.moved = job.moved + #blk
     if job.left == 0 then
-      local cok = pcall(job.dst.close, job.dst)
+      local cok, closed = pcall(job.dst.close, job.dst)
       job.dst = nil
-      -- 复核落盘大小: 防个别文件系统"write 返回成功但数据没落"的静默丢失
-      local szok, sz = pcall(function()
-        local rf = io.open(ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. job.nm, "rb")
-        if not rf then return -1 end
-        local n = #rf:read("*a")
-        rf:close()
-        return n
-      end)
-      if not szok or sz ~= job.flen then
-        pcall(function() os.remove(ICON_DIR .. "/" .. string.format("%02d", job.pack) .. "/" .. job.nm) end)
-        finish(false, "第 " .. (job.idx + 1) .. " 张落盘不完整, 空间可能不足, 请先删几个图标包")
-        return
-      end
-      if not cok or job.moved <= 0 then
+      if not cok or not closed or job.moved ~= job.flen then
         finish(false, "第 " .. (job.idx + 1) .. " 张没写全")
         return
       end
-      job.idx = job.idx + 1
-      job.wrote = job.wrote + 1
-      set_status(PACK_NAME .. " 解包 " .. job.idx .. "/" .. job.count)
+      job.verify = io.open(job.target, "rb")
+      if not job.verify then finish(false, "打不开回读文件") return end
+      job.verify_left = job.flen
     end
     return
   end
 
   -- 3) 登记清单: 128 字节定长整块写(不删文件, 不需要 O_TRUNC)
   if job.stage == 3 then
+    local extra = job.src:read(1)
+    if extra and #extra > 0 then finish(false, "容器尾部有多余数据") return end
     local ok, err = write_index(job.lines)
     if not ok then
       finish(false, "清单写失败: " .. tostring(err))

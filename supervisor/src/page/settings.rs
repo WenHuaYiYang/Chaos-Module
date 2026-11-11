@@ -271,6 +271,9 @@ impl Page for SettingsPage {
                 (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
                 (8, RowSpec::switch("文件桥\0".as_bytes())),
                 (9, RowSpec::switch("屏幕翻转\0".as_bytes())),
+                (10, RowSpec { text: "应用图标\0".as_bytes(),
+                    sub: crate::dynamic_icon::name(crate::dynamic_icon::selected()).as_ptr(),
+                    trailing: fw_api::trailing::FORWARD, clickable: true }),
             ];
             build_rows(ctx, ctx.title, rows)?;
             fw_api::row_update(
@@ -299,6 +302,7 @@ impl Page for SettingsPage {
                 5 => nav_goto(17, 0),   // 运行日志
                 6 => nav_goto(19, 0),   // 恢复 fetch 支持
                 7 => nav_goto(24, 0),   // 系统关于页面修改
+                10 => nav_goto(crate::page::APP_ICON_PID, 0),
                 _ => {}
             }
         }

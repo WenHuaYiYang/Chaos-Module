@@ -62,11 +62,12 @@ def verify(data):
     state = (ROOT / "supervisor/src/state.rs").read_text()
     page = (ROOT / "supervisor/src/page.rs").read_text()
     ipc = (ROOT / "supervisor/src/ipc.rs").read_text()
-    require("PAGE_COUNT: usize = 43" in state, "registered page count")
+    require("PAGE_COUNT: usize = 44" in state, "registered page count")
     for name in ("PAGE_CAPTURE", "PAGE_RECORDINGS", "PAGE_SCREENSHOTS", "PAGE_RECORDSET", "PAGE_SHOTSET"):
         require("pub static " + name in state and "addr_of!(" + name + ")" in ipc, name + " IPC name registration")
         require("&capture::" + name in page, name + " Page table registration")
-    print("PASS exact AP: framebuffer layout, VFS/POLLPRI, semaphore wake ABI and 43-page registry")
+    require("addr_of!(PAGE_APP_ICON)" in ipc and "&app_icon::PAGE_APP_ICON" in page, "icon-picker page registration")
+    print("PASS exact AP: framebuffer layout, VFS/POLLPRI, semaphore wake ABI and 44-page registry")
     print("STATIC ONLY: actual pixels, active-buffer behavior, deep sleep and capture frame rate require hardware validation")
 
 if __name__ == "__main__":

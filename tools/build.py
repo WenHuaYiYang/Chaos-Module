@@ -8,8 +8,8 @@
   dist/chaos-installer-p67.bin     可直接安装的 p67 容器
   dist/assets/chaos_sup.bin        容器内使用的 Chaos ko 副本
   dist/assets/fetch-module.bin     容器内使用的 fetch ko 副本
-  dist/assets/chaos_icon.bin       112px 应用图标
-  dist/assets/chaos_icon_settings.bin  64px 设置图标
+  dist/assets/chaos_icon.bin       96px 应用图标
+  dist/assets/chaos_icon_settings.bin  96px 设置图标
   dist/assets/lxgw.ttf             字体槽占位文件
   dist/stage/                      打包临时目录（spec.json 等）
   dist/THIRD-PARTY-NETWORK.txt      网络组件来源、版权与许可（也随容器分发）
@@ -17,7 +17,7 @@
 依赖：
   * nightly Rust + rust-src + thumbv8m.main-none-eabi（build_ko.sh 使用）
   * clang + ld.lld（chaos-fetch/build.py 自动发现，可用环境变量覆盖）
-  * Python 3 + Pillow（生成图标）
+  * Python 3 + Pillow（生成图标与 GIF 帧）
   * p67_pack.py（本仓库，纯 Python，无额外依赖）
 
 常用参数：
@@ -108,8 +108,9 @@ def build_icon(repo: Path, out: Path, size: int, python: str) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["CHAOS_ICON_SIZE"] = str(size)
-    run([python, str(repo / "tools" / "gen_chaos_icon.py"),
-         str(repo / "tools" / "chaos.png"), str(out)], repo, env)
+    # Bootstrap the original icon; the module applies the saved selection.
+    source = repo / "tools" / "chaos.png"
+    run([python, str(repo / "tools" / "gen_chaos_icon.py"), str(source), str(out)], repo, env)
     data = out.read_bytes()
     if len(data) != 12 + size * size * 4 or data[:4] != bytes((0x19, 0x10, 0, 0)):
         raise RuntimeError(f"图标格式错误: {out}")
@@ -198,6 +199,8 @@ def main() -> int:
 
     ko = dist / "chaos_sup.ko"
     if not args.skip_ko:
+        if icon_python is not None and (repo / "tools/chaos.gif").is_file():
+            run([icon_python, str(repo / "tools/build_gif_icon.py")], repo)
         build_ko(repo, ko, build_time)
     elif not ko.is_file():
         raise RuntimeError("--skip-ko 但 dist/chaos_sup.ko 不存在")
@@ -219,8 +222,8 @@ def main() -> int:
     print(f"capatch: {capatch} ({capatch.stat().st_size} bytes)")
 
     if icon_python is not None:
-        build_icon(repo, assets / "chaos_icon.bin", 112, icon_python)
-        build_icon(repo, assets / "chaos_icon_settings.bin", 64, icon_python)
+        build_icon(repo, assets / "chaos_icon.bin", 96, icon_python)
+        build_icon(repo, assets / "chaos_icon_settings.bin", 96, icon_python)
     else:
         # 兼容旧目录：首次迁移时把 installer/ 里的图标搬进 dist/assets。
         for icon in ("chaos_icon.bin", "chaos_icon_settings.bin"):

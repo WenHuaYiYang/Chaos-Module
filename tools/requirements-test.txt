@@ -1,0 +1,3 @@
+-r requirements-build.txt
+# Execute the production Lua delivery state machine against a host VFS.
+lupa>=2.6,<3

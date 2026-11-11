@@ -48,7 +48,7 @@ use crate::*;
 /// 检查认不出它, 所以本表按 stem 找节点的方法对它失效, 必须按 app_id=69 找
 /// (见 plan_apply 的 IC_CAL_SLOT 特例)。换成我们的路径后, 桌面画的就是整张素材,
 /// 固件光栅化进去的日期文字不再显示(那两枚文字本来是烤在缓冲里的)。
-const ICON_STEMS: [&[u8]; IC_STEM_N] = [
+pub(crate) const ICON_STEMS: [&[u8]; IC_STEM_N] = [
     b"activities", b"aivs", b"alarm", b"alipay",
     b"breath", b"calendar", b"camera", b"card",
     b"chronograph", b"compass", b"dealt", b"findphone",
@@ -62,7 +62,7 @@ const ICON_STEMS: [&[u8]; IC_STEM_N] = [
 ];
 
 /// 素材条数(= 固件桌面 launcher 应用图标全集)
-const IC_STEM_N: usize = 38;
+pub(crate) const IC_STEM_N: usize = 38;
 
 /// 日历(perpetual_calendar)在 ICON_STEMS 里的槽位。编译期钉死: 表错位就直接构不过,
 /// 不许悄悄换错应用。
@@ -118,6 +118,21 @@ static mut IC_PLAN_RESTORE: [bool; IC_STEM_N] = [false; IC_STEM_N]; // 缺件时
 static mut IC_N: u32 = 0;
 static mut IC_CURSOR: u32 = 0;
 static mut IC_SAVED: [u32; IC_STEM_N] = [0; IC_STEM_N];     // 原路径指针(本次开机内可恢复)
+static mut IC_ANIM_IDS: [u32; IC_STEM_N] = [0; IC_STEM_N];
+static mut IC_ANIM_EPOCH: u32 = 0;
+
+/// Animation readers only run after all static registry/rebuild work settles.
+pub(crate) unsafe fn animation_state() -> (u32,u32,bool) {
+    (st_rd!(IC_PACK),st_rd!(IC_ANIM_EPOCH),st_rd!(IC_STATE)==1 && !restore_busy())
+}
+pub(crate) unsafe fn animation_target(slot: usize) -> u32 {
+    if slot < IC_STEM_N { st_rd!(IC_ANIM_IDS[slot]) } else { 0 }
+}
+/// Re-read the registry by app-id; never expose cached node/string owners.
+pub(crate) unsafe fn registered_icon_source(id: u32) -> u32 {
+    let node=cal_find_by_id(id);
+    if node==0 { 0 } else { rd32((node+fw_api::APPN_ICON) as *const u32) }
+}
 
 // ===== 日历看门 =====
 // 日历节点的 +0x0C 是"谁最后写谁算数"的单字段: 固件 signal=6 回调写缓冲指针,
@@ -422,16 +437,26 @@ unsafe fn icon_file_ok(slot: usize) -> bool {
     true
 }
 
-/// 第 pack 包在不在位(只查第一张 activities.bin)。界面用它把整包没投递的项在副标签上
-/// 标出来, 每页只多做 3 次 open/close —— 38 张 x 8 包全查一遍在 UI 线程是不合适的。
+/// 旧包用 activities.bin 判断；新包可仅投递个别图标，以 CIA1 索引识别，避免误标未投递。
 unsafe fn pack_present(pack: u32) -> bool {
     if pack < 1 || pack > IC_PACK_MAX as u32 { return false; }
     let mut p = [0u8; ICON_SLOT];
     path_build(p.as_mut_ptr(), pack, 0);
     let fd = fw_api::open(p.as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd < 0 { return false; }
+    if fd >= 0 { fw_api::close(fd);return true; }
+    path_build_named(p.as_mut_ptr(),pack,b"animations");
+    let fd=fw_api::open(p.as_ptr(),fw_api::oflag::RDONLY,0);
+    if fd<0 { return false; }
+    let mut bytes=[0;20];let mut used=0;
+    if fw_api::lseek(fd,0,fw_api::seek::END)==20 && fw_api::lseek(fd,0,fw_api::seek::SET)==0 {
+        for _ in 0..20 {
+            if used==20 { break; }
+            let n=fw_api::read(fd,bytes.as_mut_ptr().add(used),(20-used) as u32);
+            if n<=0 || n as usize>20-used { break; } used+=n as usize;
+        }
+    }
     fw_api::close(fd);
-    true
+    used==20 && crate::icon_pack_animation::manifest(&bytes).is_some()
 }
 
 /// 路径里可当 stem 的两段: 文件名(去 ".bin") 与它的上一级目录名。
@@ -535,6 +560,8 @@ unsafe fn cal_find_by_id(id: u32) -> u32 {
 // ---------------------------------------------------------------------------
 
 unsafe fn plan_apply() {
+    st_wr!(IC_ANIM_EPOCH,st_rd!(IC_ANIM_EPOCH).wrapping_add(1));
+    st_wr!(IC_ANIM_IDS,[0;IC_STEM_N]);
     res_hook::refresh_cache();
     st_wr!(IC_CAL_PACK, 0);
     if st_rd!(IC_PACK) == 0 {
@@ -550,6 +577,7 @@ unsafe fn plan_apply() {
         let present = icon_file_ok(k);
         if k == IC_CAL_SLOT && present { st_wr!(IC_CAL_PACK, st_rd!(IC_PACK)); }
         let (node, id, _) = icon_find(k);
+        if present && node != 0 { st_wr!(IC_ANIM_IDS[k],id); }
         let saved = st_rd!(IC_SAVED[k]);
         // 有素材才应用，缺件且以前替换过则逐拍恢复系统原值。
         if node != 0 && (present || saved != 0) {
@@ -680,6 +708,8 @@ unsafe fn point_to_ours_node(slot: usize, node: u32, id: u32) -> bool {
 }
 
 unsafe fn plan_restore() {
+    st_wr!(IC_ANIM_EPOCH,st_rd!(IC_ANIM_EPOCH).wrapping_add(1));
+    st_wr!(IC_ANIM_IDS,[0;IC_STEM_N]);
     res_hook::refresh_cache();
     st_wr!(IC_CAL_PACK, 0);
     st_wr!(IC_N, 0);
@@ -802,13 +832,25 @@ unsafe fn delete_tick() {
             }
             // 系统 UI 图标那一半(控制中心/设置/日历底图): 与桌面素材同一个包目录,
             // 不清的话最后那步"删空目录"会因目录非空而失败, 留下几十张死文件。
-            if k < IC_STEM_N + sys_n {
-                path_build_named(p.as_mut_ptr(), pack, res_hook::rule_stem(k - IC_STEM_N));
+            if k < IC_STEM_N * 2 {
+                crate::icon_pack_animation::file_path(p.as_mut_ptr(),pack,k-IC_STEM_N,true);
+                fw_api::fs_remove(p.as_ptr());
+                st_wr!(IC_DEL_K,(k+1) as u32);
+                return;
+            }
+            if k < IC_STEM_N * 2 + sys_n {
+                path_build_named(p.as_mut_ptr(), pack, res_hook::rule_stem(k - IC_STEM_N * 2));
                 fw_api::fs_remove(p.as_ptr());
                 st_wr!(IC_DEL_K, (k + 1) as u32);
                 return;
             }
-            if k == IC_STEM_N + sys_n {
+            if k == IC_STEM_N * 2 + sys_n {
+                path_build_named(p.as_mut_ptr(),pack,b"animations");
+                fw_api::fs_remove(p.as_ptr());
+                st_wr!(IC_DEL_K,(k+1) as u32);
+                return;
+            }
+            if k == IC_STEM_N * 2 + sys_n + 1 {
                 let n = icon_dir_of(p.as_mut_ptr(), pack, false);
                 write_volatile(p.as_mut_ptr().add(n), 0);
                 fw_api::fs_remove(p.as_ptr());     // 目录: remove() 对空目录退到 rmdir

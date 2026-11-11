@@ -6,7 +6,7 @@
 |---|---|---|
 | Rust **nightly** + `rust-src` | 编译 `no_std` 模块（`-Z build-std=core,compiler_builtins`） | 版本不钉死，产物因此不可复现 |
 | target `thumbv8m.main-none-eabi` | 交叉编译目标 | `rustup target add` |
-| Python 3 | `build.py` / `p67_pack.py` / 两个布局脚本 | 纯标准库，图标生成另需 Pillow |
+| Python 3 | `build.py` / `p67_pack.py` / 两个布局脚本 | 图标与 GIF 帧生成使用 Pillow |
 | 系统 C 链接器 `cc` | Rust build script 的宿主链接 | 见[无 cc 的环境](#无-cc-的环境) |
 | `arm-none-eabi-*`（可选） | 只用于反汇编核对 | 构建本身用 `rust-lld` |
 
@@ -68,6 +68,11 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 `tools/build_ko.sh` 负责前两步，`tools/build.py` 串起全流程。
 
+完整构建在编译模块前生成动态 GIF 的帧资源，统一为 **96×96**；安装包的
+`chaos_icon.bin` 和 `chaos_icon_settings.bin` 同为 96×96，默认图案来自原版 `tools/chaos.png`。
+只保留原版与动态，暂停和切回原版均复用已安装文件，模块不再内嵌静态像素。
+源文件、单独生成/校验方法与播放实现见 [应用图标](DYNAMIC-ICON.md)。
+
 ## 版本号规则
 
 一个版本号出现在两个地方，必须同时改：
@@ -96,11 +101,13 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 1. 安装 nightly 工具链（`dtolnay/rust-toolchain@nightly`，未钉版本）；
 2. 执行 `python3 tools/test_honeycomb.py`，运行蜂窝布局/控制器主机回归；
-3. 执行 `CC=cc python3 tools/test_corona_blur.py`，运行背景与蜂窝转场协作回归；
-4. 执行 `sh tools/build_ko.sh`（只编译模块，不打包容器）；
-5. 上传 `supervisor/chaos_sup.ko` 作为 artifact。
+3. 执行两项图标单选、默认动态/配置升级、193 帧 GIF 及 96×96 原版图标回归；
+   图标投递回归执行 `tools/test_icon_pack.py`，需要 `tools/requirements-test.txt` 中的 Lupa，验证真实 Lua 脚本与流式播放器；
+4. 执行截图/录屏回归与 `CC=cc python3 tools/test_corona_blur.py` 背景协作回归；
+5. 执行 `sh tools/build_ko.sh`（只编译模块，不打包容器）；
+6. 上传 `supervisor/chaos_sup.ko` 作为 artifact。
 
-CI 运行蜂窝视图主机测试，不打容器、不校验 `dist/` 可复现性——发布前请在本地跑一次完整构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md)。
+CI 运行上述主机测试，不打容器、不校验 `dist/` 可复现性——发布前请在本地跑一次完整构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
 
 ## 无 cc 的环境
 

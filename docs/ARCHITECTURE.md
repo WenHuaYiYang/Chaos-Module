@@ -49,6 +49,7 @@ Chaos-Module/
 │   │   ├── fw_api/              已验证固件 API 封装 + 地址表
 │   │   ├── font_*.rs            字体清单、切换、热替换
 │   │   ├── icon_apply.rs        图标包应用/回退
+│   │   ├── icon_pack_animation.rs  图标包动画流式播放/暂停/切包
 │   │   ├── background_*.rs      通透背景、模糊、桌面滑动
 │   │   ├── watchface*.rs        表盘切换、摇一摇轮换
 │   │   ├── log.rs               运行日志（48 KB 滚动）
@@ -67,7 +68,7 @@ Chaos-Module/
 
 ## 页面模型
 
-- `PAGE_TABLE: [&dyn Page; PAGE_COUNT]`（`page.rs`）—— 43 个页面，页号 0..42；38 为截屏与录屏，39/40 分别为录屏/截屏文件管理，41/42 为录屏/截图设置，见 [CAPTURE.md](CAPTURE.md)。
+- `PAGE_TABLE: [&dyn Page; PAGE_COUNT]`（`page.rs`）—— 44 个页面，页号 0..43；38 为截屏与录屏，39/40 分别为录屏/截屏文件管理，41/42 为录屏/截图设置，43 为应用图标单选列表，见 [CAPTURE.md](CAPTURE.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
 - 每个页面实现 `Page`：`fill_title` / `render` / `on_click(ctx, idx)` / 可选的 resume、destroy 钩子。
 - 行控件由 `build_rows(ctx, title, specs)` 统一建立，每行一个 LVGL 对象；行事件按**视图下标**派发，
   页面用 `match idx` 或 `idx >= N && idx < view_count()` 自守边界。
