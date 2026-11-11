@@ -125,7 +125,7 @@ static mut PITCH_SW: u32 = 1;
 static mut INSET_SW: u32 = 1;
 /// 开关选择的持久化: /data/chaos/applist.cfg, 1 字节位图
 /// (bit0 缩放 / bit1 排距 / bit2 内缩)。文件缺失或越界 = 0b111(全开)。
-/// 回调里只改内存并置脏, 真正落盘与写表都由 tick 做 —— 与"点击只登记"同一条例。
+/// 维护定时器负责重试保存；设置页也可在 UI 事件中立即应用并保存。
 const CFG: &[u8] = b"/data/chaos/applist.cfg\0";
 static mut CFG_LOADED: u32 = 0;
 static mut CFG_DIRTY: u32 = 0;
@@ -138,6 +138,7 @@ static mut SCROLL_PREV: i32 = 0;
 // Reset the old RW tables once on entering honeycomb, then leave them alone.
 static mut HONEYCOMB_STOCK_CONT: u32 = 0;
 static mut HONEYCOMB_STOCK_MODE: u32 = 0;
+static mut APPLY_PENDING: bool = true;
 
 /// 开机第一次用到开关时读一次配置; 之后只读内存。
 unsafe fn ensure_loaded() {
@@ -245,6 +246,16 @@ pub(crate) unsafe fn disable_for_honeycomb() {
         st_wr!(CFG_DIRTY, 1);
         st_wr!(HONEYCOMB_STOCK_CONT, 0);
     }
+}
+
+/// Force table application and refresh the existing native launcher instance.
+/// If construction/transition is still in progress, tick retries the refresh.
+pub(crate) unsafe fn reapply_now() {
+    st_wr!(LAW_SIG, 0);
+    st_wr!(LAW_CONT, 0);
+    st_wr!(HONEYCOMB_STOCK_CONT, 0);
+    APPLY_PENDING = true;
+    tick();
 }
 
 /// 桌面这一轮有没有在动：读容器里的滚动量与上一拍比。
@@ -460,6 +471,7 @@ pub(crate) unsafe fn tick() {
             st_wr!(HONEYCOMB_STOCK_MODE, mode);
             st_wr!(LAW_SIG, 0);
         }
+        APPLY_PENDING = false;
         return;
     }
     st_wr!(HONEYCOMB_STOCK_CONT, 0);
@@ -476,5 +488,8 @@ pub(crate) unsafe fn tick() {
             crate::log::kv("law c", cont);
             crate::log::kv("law m", mode);
         }
+    }
+    if APPLY_PENDING && fw_api::honeycomb::refresh_native(cont) {
+        APPLY_PENDING = false;
     }
 }

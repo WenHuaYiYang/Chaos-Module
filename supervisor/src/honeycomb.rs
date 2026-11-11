@@ -1,7 +1,7 @@
 //! Optional two-dimensional native launcher. One LVGL owner; callbacks record
-//! input, the resident maintenance timer persists settings and advances inertia.
+//! input, maintenance persists settings, and the frame timer advances motion.
 use crate::fw_api::honeycomb as fw;
-use crate::honeycomb_layout::{Camera, Route, MAX_ICONS};
+use crate::honeycomb_layout::{Camera, Frame, ReturnAnimation, Route, MAX_ICONS};
 use crate::{fw_api, log};
 
 const CONFIG: &[u8] = b"/data/chaos/honeycomb.cfg\0";
@@ -18,6 +18,33 @@ static mut IN_LAYOUT: bool = false;
 static mut RENDER_PENDING: bool = false;
 static mut FAULT_PENDING: bool = false;
 static mut HOOK_REVISION: u32 = 0;
+static mut EDIT_GRID: u32 = 0;
+static mut RETURN: ReturnAnimation = ReturnAnimation::new();
+static mut REAPPLY_PENDING: bool = false;
+
+unsafe fn view_frame(index: usize) -> Frame {
+    RETURN.frame(index, CAMERA.frame(index))
+}
+
+unsafe fn moving() -> bool {
+    CAMERA.moving() || RETURN.active()
+}
+
+unsafe fn finish_return() {
+    if RETURN.active() {
+        RETURN.cancel();
+        RENDER_PENDING = true;
+    }
+}
+
+unsafe fn forget_owner() {
+    OWNER = 0;
+    COUNT = 0;
+    CAMERA = Camera::new();
+    RETURN.cancel();
+    REVISION = 0;
+    HOOK_REVISION = 0;
+}
 
 unsafe fn load() {
     if LOADED {
@@ -31,11 +58,12 @@ unsafe fn load() {
     let mut b = [0u8; 5];
     let n = fw_api::read(fd, b.as_mut_ptr(), b.len() as u32);
     fw_api::close(fd);
-    // A failed experimental run can leave this bit set. Never auto-enter the
-    // view at boot; clear the old request before touching launcher objects.
-    if n == 5 && &b[..4] == b"HCB1" && b[4] == 1 {
-        DIRTY = true;
-        log::line("蜂窝视图: 已清除旧自动开启设置，请手动启用");
+    if n == 5 && &b[..4] == b"HCB1" && b[4] <= 1 {
+        ENABLED = b[4] != 0;
+        if ENABLED {
+            crate::desktop_scale::disable_for_honeycomb();
+            log::line("蜂窝视图: 已恢复开启状态");
+        }
     }
 }
 
@@ -63,9 +91,7 @@ unsafe fn save() {
     if !DIRTY {
         return;
     }
-    // Keep the choice session-only while simulator interaction is being tested.
-    // A reset returns to stock instead of repeating a failing view.
-    let b = [b'H', b'C', b'B', b'1', 0];
+    let b = [b'H', b'C', b'B', b'1', ENABLED as u8];
     let fd = fw_api::open(
         CONFIG.as_ptr(),
         fw_api::oflag::WRONLY | fw_api::oflag::CREAT,
@@ -104,6 +130,7 @@ unsafe fn draw() {
         return;
     }
     if COUNT != n {
+        RETURN.cancel();
         CAMERA = Camera::new();
         CAMERA.cancel();
         COUNT = n;
@@ -114,6 +141,9 @@ unsafe fn draw() {
         hooks = hooks.wrapping_mul(16777619) ^ icon;
     }
     if hooks != HOOK_REVISION {
+        if HOOK_REVISION != 0 {
+            RETURN.cancel();
+        }
         if !fw::hook_icons(&icons[..n]) {
             DRAWING = false;
             FAULT_PENDING = true;
@@ -123,7 +153,7 @@ unsafe fn draw() {
     }
     fw::begin_frame(owner, &icons[..n]);
     for (i, &icon) in icons[..n].iter().enumerate() {
-        if !fw::place(icon, CAMERA.frame(i)) {
+        if !fw::place(icon, view_frame(i)) {
             DRAWING = false;
             FAULT_PENDING = true;
             return;
@@ -131,7 +161,7 @@ unsafe fn draw() {
     }
     fw::present(owner);
     for (i, &icon) in icons[..n].iter().enumerate() {
-        if !fw::geometry_matches(icon, CAMERA.frame(i)) {
+        if !fw::geometry_matches(icon, view_frame(i)) {
             log::kv("hc geometry icon", i as u32);
             DRAWING = false;
             FAULT_PENDING = true;
@@ -139,6 +169,7 @@ unsafe fn draw() {
         }
     }
     REVISION = fw::revision(owner);
+    RENDER_PENDING = false;
     DRAWING = false;
 }
 
@@ -159,7 +190,7 @@ pub(crate) unsafe extern "C" fn layout_event(object: u32, _data: u32) {
             RENDER_PENDING = true;
         }
         for (i, &icon) in icons[..n].iter().enumerate() {
-            if !fw::layout_rect(icon, CAMERA.frame(i)) {
+            if !fw::layout_rect(icon, view_frame(i)) {
                 FAULT_PENDING = true;
                 break;
             }
@@ -182,6 +213,7 @@ unsafe fn consume_fault() {
 }
 
 unsafe fn restore() {
+    RETURN.cancel();
     if OWNER == 0 {
         return;
     }
@@ -197,68 +229,139 @@ unsafe fn restore() {
     log::line("蜂窝视图: 已恢复系统布局");
 }
 
-pub(crate) unsafe fn tick() {
+/// Explicit switch application on the UI owner: release old per-object hooks,
+/// apply native parameters, then bind the selected layout before returning.
+pub(crate) unsafe fn reapply_now() {
+    if DRAWING || IN_LAYOUT {
+        REAPPLY_PENDING = true;
+        return;
+    }
     load();
-    consume_fault();
-    save();
+    REAPPLY_PENDING = false;
     let grid = fw::launcher();
+    if OWNER != 0 && OWNER != grid {
+        forget_owner();
+    }
+    restore();
+    fw::stop_watch();
+    FAULT_PENDING = false; // A fresh binding validates geometry again.
+    RENDER_PENDING = false;
+    if !ENABLED {
+        save(); // Persist release before enabling RW in the other config file.
+    }
+    crate::desktop_scale::reapply_now();
+    tick();
+    if !ENABLED {
+        save();
+    }
+}
+
+/// Can run from an entry notification before the maintenance queue. No file
+/// I/O here: native construction may make the grid ready during the gesture.
+unsafe fn prepare(grid: u32) -> bool {
+    if grid == 0 || DRAWING || IN_LAYOUT || FAULT_PENDING || !fw::supported(grid) {
+        return false;
+    }
     if OWNER != 0 && OWNER != grid {
         // The native destructor normally clears this first. Never dereference
         // an old global/owner if the parent membership no longer matches.
+        forget_owner();
+    }
+    if OWNER == grid {
+        return true;
+    }
+    let mut icons = [0u32; MAX_ICONS];
+    let n = fw::icons(grid, &mut icons);
+    if n == 0 {
+        return false;
+    }
+    OWNER = grid;
+    COUNT = n;
+    CAMERA = Camera::new();
+    RETURN.cancel();
+    let returning = EDIT_GRID == grid && fw::visible(grid);
+    if returning {
+        for (i, &icon) in icons[..n].iter().enumerate() {
+            RETURN.set_start(i, fw::current_frame(icon).unwrap_or(CAMERA.frame(i)));
+        }
+        fw::stop_return_animations(grid, &icons[..n]);
+    }
+    if !fw::attach(grid, &icons[..n]) {
         OWNER = 0;
         COUNT = 0;
         CAMERA = Camera::new();
-        HOOK_REVISION = 0;
+        return false;
+    }
+    if returning {
+        CAMERA.cancel(); // A press caught during reflow cannot launch later.
+        RETURN.begin(fw_api::capture_now_ms(), n);
+    }
+    EDIT_GRID = 0;
+    RENDER_PENDING = true;
+    fw::frame_timer_start();
+    fw::frame_timer_active(fw::visible(grid) && moving());
+    log::line("蜂窝视图: 双向拖动已启用");
+    true
+}
+
+pub(crate) unsafe fn tick() {
+    load();
+    if REAPPLY_PENDING && !DRAWING && !IN_LAYOUT {
+        reapply_now();
+        return;
+    }
+    consume_fault();
+    save();
+    let grid = fw::launcher();
+    if EDIT_GRID != 0 && (!ENABLED || EDIT_GRID != grid) {
+        EDIT_GRID = 0;
+    }
+    if OWNER != 0 && OWNER != grid {
+        forget_owner();
     }
     if !ENABLED {
         fw::frame_timer_active(false);
         restore();
+        fw::stop_watch();
         return;
     }
     let fast = fw::frame_timer_start();
     if grid == 0 {
+        fw::stop_watch();
         fw::frame_timer_active(false);
         return;
     }
     if !fw::supported(grid) {
         restore();
+        fw::watch_entry(grid);
         fw::frame_timer_active(false);
         return;
     }
-    let mut changed = false;
-    if OWNER == 0 {
-        let mut icons = [0u32; MAX_ICONS];
-        let n = fw::icons(grid, &mut icons);
-        if n == 0 {
-            return;
-        }
-        OWNER = grid;
-        COUNT = n;
-        CAMERA = Camera::new();
-        if !fw::attach(grid, &icons[..n]) {
-            OWNER = 0;
-            COUNT = 0;
-            CAMERA = Camera::new();
-            return;
-        }
-        changed = true;
-        log::line("蜂窝视图: 双向拖动已启用");
+    fw::watch_entry(grid);
+    if !prepare(grid) {
+        fw::watch_entry(grid);
+        return;
     }
+    let mut changed = false;
     // Attach and prepare while off-screen, before the native entry animation
     // exposes its first frame. The motion observer synchronizes native resets.
     if !fw::visible(grid) {
         CAMERA.cancel();
+        finish_return();
     } else if !fast {
         changed |= CAMERA.tick(COUNT);
+        if RETURN.active() {
+            changed |= RETURN.tick(fw_api::capture_now_ms());
+        }
     }
     // Also repairs native entry transitions or an app-list refresh. All writes
     // target this verified launcher's own native images, never other apps.
     changed |= RENDER_PENDING;
     RENDER_PENDING = false;
-    if changed || (!CAMERA.moving() && fw::revision(grid) != REVISION) {
+    if changed || (!moving() && fw::revision(grid) != REVISION) {
         draw();
     }
-    fw::frame_timer_active(fw::visible(grid) && CAMERA.moving());
+    fw::frame_timer_active(fw::visible(grid) && moving());
     consume_fault();
 }
 
@@ -266,6 +369,7 @@ pub(crate) unsafe fn tick() {
 /// its original cadence. An idle/off-screen cloud returns to a 1000 ms timer.
 pub(crate) unsafe extern "C" fn animation_tick(_timer: u32) {
     if !ENABLED || OWNER == 0 || fw::launcher() != OWNER || !fw::visible(OWNER) {
+        finish_return();
         fw::frame_timer_active(false);
         return;
     }
@@ -273,24 +377,27 @@ pub(crate) unsafe extern "C" fn animation_tick(_timer: u32) {
         fw::frame_timer_active(false);
         return;
     }
-    let changed = CAMERA.tick(COUNT) || RENDER_PENDING;
+    let mut changed = CAMERA.tick(COUNT);
+    if RETURN.active() {
+        changed |= RETURN.tick(fw_api::capture_now_ms());
+    }
+    changed |= RENDER_PENDING;
     RENDER_PENDING = false;
     if changed {
         draw();
     }
     consume_fault();
-    fw::frame_timer_active(CAMERA.moving() || RENDER_PENDING);
+    fw::frame_timer_active(moving() || RENDER_PENDING);
 }
 
 pub(crate) unsafe extern "C" fn entry_event(event: u32) {
-    if OWNER == 0 || !ENABLED || !fw::entry_source(event) {
+    if !ENABLED || DRAWING || IN_LAYOUT || !matches!(fw_api::event_get_code(event), 9 | 11 | 12) {
         return;
     }
-    if matches!(fw_api::event_get_code(event), 9 | 11 | 12)
-        && fw::launcher() == OWNER
-        && fw::supported(OWNER)
-    {
+    let grid = fw::launcher();
+    if grid != 0 && fw::entry_source(grid, event) && prepare(grid) {
         CAMERA.cancel();
+        finish_return();
         // This observer runs after the native position callback and before
         // drawing. No timer-sized interval showing the stock geometry.
         if RENDER_PENDING || fw::revision(OWNER) != REVISION {
@@ -303,20 +410,24 @@ pub(crate) unsafe extern "C" fn entry_event(event: u32) {
 /// stock screenshot. The post observer alone runs too late for that image.
 #[no_mangle]
 pub unsafe extern "C" fn chaos_honeycomb_pre_scroll(event: u32) -> u32 {
-    if OWNER == 0
-        || !ENABLED
-        || DRAWING
-        || IN_LAYOUT
-        || fw_api::event_get_code(event) != 9
-        || !fw::entry_source(event)
-        || fw::launcher() != OWNER
-        || !fw::supported(OWNER)
-    {
+    let code = fw_api::event_get_code(event);
+    if !ENABLED || DRAWING || IN_LAYOUT || !matches!(code, 9 | 11 | 12) {
+        return 0;
+    }
+    let grid = fw::launcher();
+    if grid == 0 || !fw::entry_source(grid, event) || !prepare(grid) {
         return 0;
     }
     CAMERA.cancel();
+    finish_return();
+    if code != 9 {
+        if RENDER_PENDING || fw::revision(grid) != REVISION {
+            draw();
+        }
+        return 0; // Native end/position bookkeeping must still run.
+    }
     if !fw::clear_snapshot(OWNER) {
-        FAULT_PENDING = true;
+        RENDER_PENDING = true; // A transient/foreign snapshot is retried later.
         return 0;
     }
     draw();
@@ -327,10 +438,14 @@ pub unsafe extern "C" fn chaos_honeycomb_pre_scroll(event: u32) -> u32 {
 }
 
 pub(crate) unsafe fn destroyed(object: u32) {
+    if EDIT_GRID == object {
+        EDIT_GRID = 0;
+    }
     if OWNER == object {
         OWNER = 0;
         COUNT = 0;
         CAMERA = Camera::new();
+        RETURN.cancel();
         HOOK_REVISION = 0;
     }
 }
@@ -341,6 +456,10 @@ pub(crate) unsafe extern "C" fn class_event(_class: u32, event: u32) {
         return;
     }
     let code = fw_api::event_get_code(event);
+    if RETURN.active() {
+        fw::base_event(event);
+        return;
+    }
     if code == 5 && CAMERA.can_click() && fw::pressed_icon(event, OWNER) {
         // Atomically release our layout/callbacks before entering the native
         // editor. No intermediate stock refresh and no second 50 ms handoff.
@@ -352,10 +471,12 @@ pub(crate) unsafe extern "C" fn class_event(_class: u32, event: u32) {
             return;
         }
         OWNER = 0;
+        EDIT_GRID = owner;
         COUNT = 0;
         REVISION = 0;
         HOOK_REVISION = 0;
         CAMERA = Camera::new();
+        RETURN.cancel();
         RENDER_PENDING = false;
         fw::frame_timer_active(false);
         fw::detach_for_edit(owner, &icons[..n]);
@@ -392,13 +513,16 @@ pub(crate) unsafe extern "C" fn class_event(_class: u32, event: u32) {
         3 | 20 => CAMERA.cancel(), // PRESS_LOST / INDEV_RESET
         8 => {
             CAMERA.release();
-            fw::frame_timer_active(CAMERA.moving() || RENDER_PENDING);
+            fw::frame_timer_active(moving() || RENDER_PENDING);
         }
         _ => {}
     }
 }
 
 pub(crate) unsafe extern "C" fn click_event(event: u32) -> u32 {
+    if RETURN.active() {
+        return 0;
+    }
     let icon = fw::current_target(event);
     if OWNER == 0 || fw::parent(icon) != OWNER || CAMERA.can_click() {
         // The native callback receives its unmodified target and app_id.

@@ -19,6 +19,7 @@ static mut BUTTON_FLAGS: u32 = 0;
 static mut LAYOUT_ID: u32 = 0;
 static mut ORIGINAL_LAYOUT: u32 = 0;
 static mut MOTION_PARENT: u32 = 0;
+static mut WATCH_GRID: u32 = 0;
 static mut FRAME_TIMER: u32 = 0;
 static mut FRAME_PERIOD: u32 = 0;
 
@@ -118,7 +119,8 @@ pub(crate) unsafe fn motion_parent(grid: u32) -> u32 {
     // contexts can reparent the tree. Find the existing callback identity.
     let mut object = parent(grid);
     let background_cb = rh_platform_launcher_scroll_callback();
-    for _ in 0..6 {
+    let mut observer = 0;
+    for _ in 0..12 {
         if !safe_ptr(object) {
             break;
         }
@@ -128,14 +130,21 @@ pub(crate) unsafe fn motion_parent(grid: u32) -> u32 {
         {
             return object;
         }
+        if observer == 0
+            && descriptor(object, crate::honeycomb::entry_event as *const () as u32) != 0
+        {
+            observer = object;
+        }
         object = parent(object);
     }
-    0
+    // A surviving observer on an old ancestor must not hide a native callback
+    // newly registered farther up the chain during a rebuild.
+    observer
 }
 
 unsafe fn ancestor_of_grid(grid: u32, ancestor: u32) -> bool {
     let mut object = parent(grid);
-    for _ in 0..6 {
+    for _ in 0..12 {
         if !safe_ptr(object) {
             return false;
         }
@@ -145,6 +154,68 @@ unsafe fn ancestor_of_grid(grid: u32, ancestor: u32) -> bool {
         object = parent(object);
     }
     false
+}
+
+/// Watch before the native grid has populated or selected a supported mode.
+/// Recheck the live chain so native rebuilds/rebindings cannot remove the hook
+/// permanently while our layout remains attached.
+pub(crate) unsafe fn watch_entry(grid: u32) -> bool {
+    let next = motion_parent(grid);
+    if WATCH_GRID != grid || MOTION_PARENT != next {
+        stop_watch();
+        WATCH_GRID = grid;
+        MOTION_PARENT = next;
+    }
+    if next == 0 {
+        return true; // Native construction may register its callback later.
+    }
+    let original = descriptor(next, a::LAUNCHER_POSITION_EVENT);
+    if original != 0 {
+        write(original, 0, entry_dispatch as *const () as u32);
+    }
+    let cb = crate::honeycomb::entry_event as *const () as u32;
+    descriptor(next, cb) != 0 || obj_add_event(next, cb, 0, 0) != 0
+}
+
+pub(crate) unsafe fn stop_watch() {
+    let grid = WATCH_GRID;
+    if grid != 0 && launcher() == grid {
+        unhook_position(grid);
+        if MOTION_PARENT != 0 && ancestor_of_grid(grid, MOTION_PARENT) {
+            let remove: unsafe extern "C" fn(u32, u32) -> u32 =
+                transmute(a::OBJ_REMOVE_EVENT_CALLBACK as usize);
+            remove(
+                MOTION_PARENT,
+                crate::honeycomb::entry_event as *const () as u32,
+            );
+        }
+    }
+    MOTION_PARENT = 0;
+    WATCH_GRID = 0;
+}
+
+/// Rebind the native layout and recompute current icon geometry after RW table
+/// changes, even if no scroll arrives. Never refresh the honeycomb subclass.
+pub(crate) unsafe fn refresh_native(grid: u32) -> bool {
+    if launcher() != grid || !supported(grid) || word(grid, 0) != a::LAUNCHER_GRID_CLASS {
+        return false;
+    }
+    if core::ptr::read_volatile(a::LAUNCHER_TRANSITION_SLOT as *const u8) != 0
+        || word(grid, 0x8b4) != 0
+        || !clear_snapshot(grid)
+    {
+        return false;
+    }
+    let get: unsafe extern "C" fn(u32, u32, u32) -> u32 =
+        transmute(a::OBJ_GET_STYLE_VALUE as usize);
+    let set: unsafe extern "C" fn(u32, u32) = transmute(a::OBJ_SET_LAYOUT as usize);
+    let layout = get(grid, 0, 0x16);
+    set(grid, layout);
+    let refresh: unsafe extern "C" fn(u32) = transmute(a::LAUNCHER_GRID_REFRESH as usize);
+    refresh(grid);
+    commit_rects(grid);
+    obj_invalidate(grid);
+    true
 }
 
 /// No registry pointers or icon source buffers are retained or duplicated.
@@ -223,20 +294,7 @@ pub(crate) unsafe fn attach(grid: u32, icons: &[u32]) -> bool {
     // This per-object layout callback owns geometry before every LVGL draw.
     let set_layout: unsafe extern "C" fn(u32, u32) = transmute(a::OBJ_SET_LAYOUT as usize);
     set_layout(grid, LAYOUT_ID);
-    // Observe scroll notifications on the stock root-position callback's
-    // actual event container AFTER it prepares/reveals the launcher, before
-    // the next draw; do not wait for the 50 ms maintenance poll.
-    MOTION_PARENT = motion_parent(grid);
-    if MOTION_PARENT != 0 {
-        let original = descriptor(MOTION_PARENT, a::LAUNCHER_POSITION_EVENT);
-        if original != 0 {
-            write(original, 0, entry_dispatch as *const () as u32);
-        }
-    }
-    let cb = crate::honeycomb::entry_event as *const () as u32;
-    if MOTION_PARENT != 0
-        && (descriptor(MOTION_PARENT, cb) == 0 && obj_add_event(MOTION_PARENT, cb, 0, 0) == 0)
-    {
+    if !watch_entry(grid) {
         detach(grid, icons);
         return false;
     }
@@ -345,14 +403,7 @@ unsafe fn release(grid: u32, icons: &[u32], refresh: bool) {
     }
     let remove: unsafe extern "C" fn(u32, u32) -> u32 =
         transmute(a::OBJ_REMOVE_EVENT_CALLBACK as usize);
-    unhook_position(grid);
-    if MOTION_PARENT != 0 && ancestor_of_grid(grid, MOTION_PARENT) {
-        remove(
-            MOTION_PARENT,
-            crate::honeycomb::entry_event as *const () as u32,
-        );
-    }
-    MOTION_PARENT = 0;
+    stop_watch();
     let restore_icon = |icon: u32| {
         let d = descriptor(icon, a::LAUNCHER_ICON_CLICK);
         if d != 0 && word(d, 8) == 0x7fff {
@@ -404,6 +455,7 @@ unsafe extern "C" fn destroyed(_class: u32, object: u32) {
     if OWNER == object {
         unhook_position(object);
         MOTION_PARENT = 0;
+        WATCH_GRID = 0;
         OWNER = 0;
         BUTTON = 0;
         crate::honeycomb::destroyed(object);
@@ -447,8 +499,16 @@ pub(crate) unsafe fn point(event: u32) -> Point {
     p
 }
 
-pub(crate) unsafe fn entry_source(event: u32) -> bool {
-    MOTION_PARENT != 0 && current_target(event) == MOTION_PARENT
+pub(crate) unsafe fn entry_source(grid: u32, event: u32) -> bool {
+    let target = current_target(event);
+    if !safe_ptr(target) || !ancestor_of_grid(grid, target) {
+        return false;
+    }
+    let background = rh_platform_launcher_scroll_callback();
+    target == MOTION_PARENT
+        || descriptor(target, a::LAUNCHER_POSITION_EVENT) != 0
+        || descriptor(target, entry_dispatch as *const () as u32) != 0
+        || (background != 0 && descriptor(target, background) != 0)
 }
 
 pub(crate) unsafe fn pressed_icon(event: u32, grid: u32) -> bool {
@@ -515,6 +575,47 @@ pub(crate) unsafe fn launch(event: u32) {
     f(event); // original target, original app_id, original app-manager dispatch
 }
 
+/// Capture what is currently drawn, not user_data's already-final destination.
+/// The native edit-return writer can still be halfway through its 200 ms move.
+pub(crate) unsafe fn current_frame(icon: u32) -> Option<Frame> {
+    let grid = parent(icon);
+    if !safe_ptr(grid) {
+        return None;
+    }
+    let width = word(icon, 0x44);
+    let zoom = word(icon, 0x50);
+    if !(1..=512).contains(&width) || !(1..=1024).contains(&zoom) {
+        return None;
+    }
+    let x = (word(icon, 0x1c) as i32 as i64 + word(icon, 0x24) as i32 as i64 + 1) / 2
+        - word(grid, 0x1c) as i32 as i64;
+    let y = (word(icon, 0x20) as i32 as i64 + word(icon, 0x28) as i32 as i64 + 1) / 2
+        - word(grid, 0x20) as i32 as i64;
+    if x.abs() > 8192 || y.abs() > 8192 {
+        return None;
+    }
+    Some(Frame {
+        x: x as i32,
+        y: y as i32,
+        diameter: ((width * zoom) >> 8).max(1) as i32,
+        visible: word(icon, 0x2c) & 1 == 0,
+    })
+}
+
+pub(crate) unsafe fn stop_return_animations(grid: u32, icons: &[u32]) {
+    let del: unsafe extern "C" fn(u32, u32) -> u32 = transmute(a::ANIMATION_DELETE as usize);
+    // Mode-transition animations have icon vars but need not set ud+0x13.
+    // Stop these once after capturing their current geometry, before reflow.
+    for &icon in icons {
+        del(icon, 0);
+        let ud = word(icon, 0x18);
+        if safe_ptr(ud) {
+            core::ptr::write_volatile((ud + 0x13) as *mut u8, 0);
+        }
+    }
+    write(grid, 0x8b4, 0);
+}
+
 pub(crate) unsafe fn begin_frame(grid: u32, icons: &[u32]) {
     hide_button();
     let del: unsafe extern "C" fn(u32, u32) -> u32 = transmute(a::ANIMATION_DELETE as usize);
@@ -559,7 +660,9 @@ pub(crate) unsafe fn place(icon: u32, f: Frame) -> bool {
         return true;
     }
     let w = word(icon, 0x44).max(1);
-    let zoom = (f.diameter as u32 * 256 / w).clamp(1, 512);
+    // Preserve the captured integer diameter across a zoom -> pixels -> zoom
+    // round trip; truncating twice can shrink the takeover frame by one pixel.
+    let zoom = (f.diameter as u32 * 256).div_ceil(w).clamp(1, 512);
     let set: unsafe extern "C" fn(u32, u32) = transmute(a::IMAGE_SET_ZOOM as usize);
     if word(icon, 0x50) != zoom || word(icon, 0x54) != zoom {
         set(icon, zoom);

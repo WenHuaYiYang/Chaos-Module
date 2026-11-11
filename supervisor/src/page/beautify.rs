@@ -93,7 +93,7 @@ impl Page for BeautifyPage {
 //
 // 桌面图标的三条排版参数都在 desktop_scale 那张写表层: 行0 = 缩放折线(同 RW6),
 // 行1 = 排距锚点(同 RW6), 行2 = 外列内缩(同 RW6)。三个开关都默认开, 关掉就把
-// 对应的表写回固件原值 —— 实现路径只有一条, 开关只改参数。
+// 对应的表写回固件原值；开关改参数后在 UI 线程重新应用。
 // 蜂窝与这些开关互斥：蜂窝开时清空 RW6 三项；点开任一 RW6 项则关闭蜂窝。
 pub(crate) struct AppListPage;
 
@@ -104,7 +104,7 @@ impl Page for AppListPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            build_rows(ctx, ctx.title, &[
+            let last = build_rows(ctx, ctx.title, &[
                 (0, RowSpec::switch("缩放同 RW6\0".as_bytes())),
                 (1, RowSpec::switch("排距同 RW6\0".as_bytes())),
                 (2, RowSpec::switch("内缩同 RW6\0".as_bytes())),
@@ -122,6 +122,13 @@ impl Page for AppListPage {
             fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)),
                 fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
                 crate::honeycomb::enabled() as u8);
+            let label = fw_api::label_create(ctx.content);
+            if label == 0 { return Err(PageError::RowFailed(4)); }
+            fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
+            fw_api::obj_set_width(label, 320);
+            fw_api::label_set_text(label,
+                "中间区域上下左右拖动图标。\n左侧上滑缩小间距，下滑放大；右侧上滑放大整体，下滑缩小。\n到顶部继续下拉，或到左端继续右滑返回。轻点打开应用，长按进入编辑并按提示删除。\0".as_bytes().as_ptr());
+            fw_api::obj_align_to(label, last, fw_api::align::OUT_BOTTOM_MID, 0, 8);
             Ok(())
         }
     }
@@ -145,6 +152,7 @@ impl Page for AppListPage {
             } else {
                 return;
             }
+            crate::honeycomb::reapply_now();
             crate::render_req(APP_LIST_PID as usize);
         }
     }
