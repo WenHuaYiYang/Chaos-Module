@@ -24,6 +24,8 @@ mod system;
 mod keyboard;
 mod debug;
 mod capture;
+mod app_icon;
+pub(crate) use app_icon::APP_ICON_PID;
 pub(crate) use capture::CAPTURE_PID;
 
 pub(crate) use beautify::BLUR_LEGACY_PID;
@@ -340,4 +342,5 @@ pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
     &capture::PAGE_SCREENSHOTS, // 40 截屏与录屏 -> 管理截屏
     &capture::PAGE_RECORDSET,   // 41 截屏与录屏 -> 录屏设置
     &capture::PAGE_SHOTSET,     // 42 截屏与录屏 -> 截图设置
+    &app_icon::PAGE_APP_ICON,   // 43 设置 -> 应用图标
 ];

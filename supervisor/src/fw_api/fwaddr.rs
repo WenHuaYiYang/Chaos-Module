@@ -72,6 +72,9 @@ mod t043 {
     pub const INPUT_DEVICE_VECTOR: u32 = 0x0C58_8681;
     pub const INPUT_DEVICE_POINT: u32 = 0x0C58_7B51;
     pub const IMAGE_SET_ZOOM: u32 = 0x0C58_81B9;
+    pub const IMAGE_CLASS: u32 = 0x2CCE_61EC;
+    // Native launcher_page_get_icon_appid; preserves honeycomb's disarmed filter.
+    pub const LAUNCHER_ICON_APP_ID: u32 = 0x0C51_805D;
     pub const ANIMATION_DELETE: u32 = 0x0C58_88C9;
     /// `app_launcher_add(app_id)`：把**注册表在册**的应用立即加回桌面。
     /// 043 官方符号包里这一段叫 `init_buffer`，1 参。

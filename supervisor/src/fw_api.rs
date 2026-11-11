@@ -57,6 +57,7 @@ pub const MAX_ROWS_PER_PAGE: usize = crate::state::MAX_ROWS_PER_PAGE;
 /// 原生对象对齐参数；单独成模块，使主机回归测试使用同一份实际常量。
 pub mod align;
 pub(crate) mod honeycomb;
+pub(crate) mod dynamic_icon;
 
 /// 事件码（与固件自带界面的 `EVENT_*` 常量同值）
 pub mod ev {

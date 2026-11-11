@@ -457,6 +457,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     crate::settings_entry::tick();
     crate::system_update_entry::tick();
     crate::launcher_entry::tick();
+    crate::dynamic_icon::tick();
     crate::system_version::tick();
     crate::beautify_restore::tick();
     font_apply::tick();
@@ -465,6 +466,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
     // (v3.6) 原 font_tree::tick 逐对象补写退役 —— 热替换全面接管, 不再需要。
     font_hot::tick();
     icon_apply::tick();
+    crate::icon_pack_animation::tick();
     // 系统资源缓存逐拍退役，与文件回调安装共用现有节拍。
     res_hook::tick();
     // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面几项跑批同一个位置:

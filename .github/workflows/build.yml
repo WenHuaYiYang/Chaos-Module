@@ -25,11 +25,23 @@ jobs:
       - name: Test honeycomb geometry and controller
         run: python3 tools/test_honeycomb.py
 
+      - name: Test application icon picker, saved selection and animation
+        run: python3 tools/test_dynamic_icon.py
+
       - name: Test capture worker and decode GIF/APNG/BMP
         run: |
           python3 -m venv .capture-test-venv
-          .capture-test-venv/bin/pip install -r tools/requirements-build.txt
+          .capture-test-venv/bin/pip install -r tools/requirements-test.txt
           .capture-test-venv/bin/python tools/test_capture.py
+
+      - name: Check supplied GIF and original playback timing
+        run: .capture-test-venv/bin/python tools/test_gif_icon.py
+
+      - name: Check original 96px installer icons
+        run: .capture-test-venv/bin/python tools/test_static_icon.py
+
+      - name: Test legacy and animated CIPK deliveries and streamed player
+        run: .capture-test-venv/bin/python tools/test_icon_pack.py
 
       - name: Test Corona background integration
         run: CC=cc python3 tools/test_corona_blur.py
