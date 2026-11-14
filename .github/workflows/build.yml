@@ -34,6 +34,9 @@ jobs:
           .capture-test-venv/bin/pip install -r tools/requirements-test.txt
           .capture-test-venv/bin/python tools/test_capture.py
 
+      - name: Test ChaosConnect protocol and native file operations
+        run: python3 tools/test_chaos_connect.py
+
       - name: Check supplied GIF and original playback timing
         run: .capture-test-venv/bin/python tools/test_gif_icon.py
 

@@ -141,16 +141,17 @@ Chaos 直接调用固件里已静态核对的函数地址（`supervisor/src/fw_a
 - 无固件指纹校验：装错固件时模块可能加载失败或崩溃。
 - 单核、无 MMU 保护：越界写就是 HardFault，没有恢复机会。
 
-## 原生文件桥
+## ChaosConnect 文件桥
 
-`supervisor/bridge/` 内置一个最小 CanopusConnect 兼容端，让 AstroBox 插件直接连接 Chaos：
+`supervisor/bridge/` 直接实现私有 CCN1 协议与 NuttX 文件操作：
 
-- `bridge.c`：CPC2 ConnectListen/Send/Message、L2 0x43 加密队列、owner timer
-- `band_files_embed.c`：原 `band_files` 文件协议，跑在 fake `canopus_context_v1` 上
-- `canopus_protocol.c` / `canopus_abi.h` / `canopus_services.h`：冻结的协议/ABI 头
+- `chaos_connect.c`：CRC帧编解码、私有类型与宿主protobuf承载。
+- `chaos_files.c` / `chaos_io.c`：文件事务、目录、直接固件VFS调用，没有模块ABI或fake context。
+- `bridge.c`：私有消息过滤、有界RX/TX、协商块大小、连接epoch、owner/BT loop分工与停止恢复。
+- `bridge_cfg.rs`：默认关闭的持久开关，由UI维护启动与停止。
 
-它不包含 Canopus 的 registry、descriptor、安装器或 Manager RPC。启动入口是维护定时器 `chaos_shake_timer` 里的
-`chaos_bridge_start()`（UI owner 就绪后）。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。
+插件通过官方v4 `transport` / `register` 访问已认证的设备会话，未新增裸L2CAP PSM。
+详见 [ChaosConnect文件桥](24-FILE-BRIDGE.md) 的固件证据、测速与验证边界。
 
 ## 相关文档
 

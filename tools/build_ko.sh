@@ -85,21 +85,19 @@ corona_obj="$obj_dir/chaos_corona_blur.o"
 # Network features are part of the Rust UI; their C implementation is required.
 python3 "$here/build_network.py" --source "$src/network"
 
-# Native CanopusConnect file bridge. It is deliberately a C provider: the
-# CPC2/L2 paths came from the audited Canopus target pack, while the file
-# protocol is the embedded band_files source.
+# ChaosConnect private file protocol and audited p67 encrypted L2 carrier.
 # rust-lld 是 Windows 原生程序: 不认 MSYS 的 /c/ 形式路径, 也拆不动带空格的
-# 命令行参数 —— 全部输入统一经 cygpath 转 C:/ 形式, bridge 三个 .o 与 network
+# 命令行参数 —— 全部输入统一经 cygpath 转 C:/ 形式, bridge 四个 .o 与 network
 # 的 37 个 .o 一样走响应文件(每行一个带引号路径)。
 win() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 bridge_rsp="$obj_dir/bridge_objs.rsp"
 : > "$bridge_rsp"
-for f in canopus_protocol band_files_embed bridge; do
+for f in chaos_connect chaos_files chaos_io bridge; do
   o="$obj_dir/chaos_bridge_$f.o"
   "$cc" $cflags_target \
          -ffreestanding -fno-builtin -fno-stack-protector \
          -fno-unwind-tables -fno-asynchronous-unwind-tables \
-         -ffunction-sections -fdata-sections -O1 -DBF_BRIDGE \
+         -ffunction-sections -fdata-sections -O2 \
          -I"$src/bridge" -c "$src/bridge/$f.c" -o "$o"
   printf '"%s"\n' "$(win "$o")" >> "$bridge_rsp"
 done

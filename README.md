@@ -38,7 +38,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 - **运行日志**：关键操作写入 `/data/chaos/chaos.log`，设置 → 运行日志可查看与清空。
 - **截屏与录屏**：首页进入控制列表，后台录屏可选 GIF 15 fps / APNG 目标 60 fps，息屏后 BMP 截屏；录屏和截图分别选择 `/data/chaos/media` 或 `/data/offlinelog`，三级列表删除管理（[格式与验证边界](docs/CAPTURE.md)）。
 - **无外部依赖**：只调固件已验证的 API，不注入 JS、不依赖网络。
-- **原生文件桥**：内置 CanopusConnect 兼容端，AstroBox 文件管理器插件可直接连接，不再需要 Canopus 模块/管理器。
+- **ChaosConnect 文件桥**：独立私有协议，AstroBox v4 插件通过设备传输接口连接；支持窗口传输、CRC校验和链路测速。需同时更新插件，详见 [文件桥](docs/24-FILE-BRIDGE.md)。
 
 ## 兼容性
 

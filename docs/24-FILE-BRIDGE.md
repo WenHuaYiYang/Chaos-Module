@@ -1,189 +1,78 @@
-# 24 · Chaos 原生文件桥（替代 Canopus 模块）
+# ChaosConnect 文件桥（p67 / 3.101.043）
 
-## 目标
+当前文件桥使用独立的 **ChaosConnect v1**。旧 CPC2、ConnectListen/Send/Message、fake Canopus context、模块 ABI 和兼容实现已从 `supervisor/bridge/` 移除，旧文件管理插件不再兼容。两端需要一起更新；原 `bridge.cfg` 开关继续使用，默认关闭。
 
-让现有的 AstroBox 插件 `手环文件管理器`（模块 id 仍为 `band_files`）直接连接 Chaos，
-不再需要：
-
-- Canopus 模块管理器
-- Canopus Supervisor
-- `band_files` Canopus 模块
-
-插件端协议、UI 和交互保持不变。手环侧由 `chaos_sup.ko` 内置一个最小的
-CanopusConnect 兼容端，文件操作直接走 Chaos 已验证的 NuttX VFS 封装。
+## 实际承载与 AstroBox 接口
 
 ```text
-AstroBox 插件
-  └─ canopusconnect（CPC2 / L2 0x43，原有加密会话）
-       └─ chaos_sup.ko
-            ├─ bridge.c                CPC2 + Connect + L2
-            ├─ band_files_embed.c      原 band_files 协议与文件操作
-            └─ fw_api / NuttX VFS
+AstroBox v4 插件
+  transport.send + register_transport_recv + transport-packet
+    → 已认证的小米 SARv2 / L2 PB 通道
+      → 私有 WearPacket.type = 0x4343
+        → ChaosConnect CCN1 二进制帧
+          → Chaos 原生 NuttX VFS
 ```
 
-## 为什么不是直接搬模块
+这是新的私有应用协议，复用宿主已经建立的蓝牙会话。**没有新增独立的 Bluetooth L2CAP PSM，也不直接从 WASM 打开 L2CAP socket**；实际蓝牙承载由 AstroBox 选择。现有 v4 WIT 未开放裸 L2CAP API，不能把虚构的接口写进插件并宣称可用。
 
-`band_files` 原本依赖 Canopus 的：
+插件仅导入官方 `device`、`transport`、`register`、`dialog`、`timer`、`ui` 六组接口，权限为 `device`、`request`、`register_transport_recv`。官方文档的 transport 页仍描述早期占位状态；本次以最新官方宿主源码为准核实 send 的 protobuf 解码、SAR 入队和接收事件分发。宿主版本必须已实现这些接口；较旧的占位实现仍可能不能连接。
 
-- CMR1 descriptor 注册与 `/dev/canopus`
-- `ctx->fs` / `ctx->connect` 服务对象
-- Canopus Supervisor 的 L2 0x43 加密通道
+核对依据：
 
-Chaos 没有这些运行时。本实现保留 `band_files` 的**文件协议**，替换掉
-注册、服务对象和传输层：
+- [v4 概览](https://abox.run/docs/plugin-development/v4)、[WIT](https://abox.run/docs/plugin-development/v2/general/wit-files)、[订阅与权限](https://abox.run/docs/plugin-development/v2/host-api/register)。
+- [宿主 v4 transport 实现](https://github.com/AstralSightStudios/AstroBox-NG-Module-PluginSystem/blob/main/src/v4/host/transport.rs)、[共享发送实现](https://github.com/AstralSightStudios/AstroBox-NG-Module-PluginSystem/blob/main/src/api/host/transport.rs)。
+- [接收事件分发](https://github.com/AstralSightStudios/AstroBox-NG-Module-PluginSystem/blob/main/src/manager.rs)：`transport-packet` 的载荷是 **直接的标准 Base64 字符串**，不是 JSON 对象。
+- [WearPacket schema](https://github.com/AstralSightStudios/AstroBox-NG-Module-Pb/blob/main/protos/xiaomi/wear.proto)、[MessageContent schema](https://github.com/AstralSightStudios/AstroBox-NG-Module-Pb/blob/main/protos/xiaomi/wear_thirdparty_app.proto)。
 
-- `band_files_embed.c`：原模块文件协议，跑在一个进程内 fake `canopus_context_v1` 上
-- `bridge.c`：实现 ConnectListen / ConnectSend / ConnectMessage，直接接管 L2 0x43
-- 文件服务：`fw_api` 等价 NuttX 入口，不经过 Canopus
+私有消息用已定义的 `thirdparty_app.message_content` bytes 字段承载，BasicInfo 名称为 `ChaosConnect`、fingerprint 为空，外层 type 保持私有值。不能使用未知 protobuf 字段藏数据，因为宿主会 decode/re-encode 并丢弃未知字段。插件测试通过真实 prost 往返验证私有 type、请求 ID 和所有二进制内容完整保留。系统应用的普通消息不占用该私有 type。
 
-## 工作方式
+## 固件核对与生命周期
 
-1. Chaos 维护定时器 `chaos_shake_timer` 在 UI owner 就绪后调用 `chaos_bridge_start()`；不在 `chaos_ctor` 里启动，避免 LVGL timer 源尚未就绪。
-2. 桥用 LVGL/owner timer 引导出常驻的 10 ms poll（与 Canopus L2 相同的 owner-loop 方案）。
-3. 手机建立加密 L2 会话后：
-   - `ConnectListen("band_files")`：登记监听
-   - `ConnectSend("band_files", 二进制帧)`：进入原 `band_files` 协议
-   - 每个响应通过 `ConnectMessage` 事件推回手机
-4. L2 0x43 只接受加密写（opcode 2），其他 channel 原样交还固件 handler。
-
-桥不包含 Canopus 的模块 registry、descriptor、安装器、Manager RPC 或 native app。
-
-## 文件策略
-
-与 `band_files` 0.1.6 一致：
-
-| 项 | 规则 |
+| 项 | p67 / 3.101.043 证据 |
 |---|---|
-| 默认写 | `/data`，但 `/data/canopus` 除外 |
-| 开发者模式 | 其它绝对路径，排除 `/dev`、`/proc`、`/sys`、`/data/canopus`、`/canopus` |
-| 分块 | 448 B |
-| 单帧 payload | 最大 476 B（480 B 帧减 4 B 头） |
-| 上传 | 临时文件 + CRC + rename |
-| 开发者模式持久化 | **不持久化**，每次启动默认关闭；插件里重新开启 |
+| 连接链表 | `0x200E16B8`；16B 节点 `+12` 才是 SAR connection |
+| RX 处理入口 | connection `+12`，原值 `0x0C7D6E6D`；只替换原入口，不覆盖第三方 hook |
+| handle / SAR 容量 | connection `+6` / `+0x52`，后者是 SAR 协商容量，不是原始 L2CAP MTU |
+| 查会话 / 解密 | `0x0C7D7E95` / `0x0C7D46A5` |
+| CTR 的 IV | `0x0C70262E..0x0C70263A` 把 IV 复制到栈上，不推进会话 IV；探测后原包可原样转交系统 |
+| 发送 | `0x0C7D719D` 就地加密调用方缓冲；`0x0C7D6484` 将帧复制到 SAR 自有队列后返回 |
+| SAR 帧限额 | `0x0C7D63F0..0x0C7D6404` 拒绝 `len+1 >= capacity` 或 `len > 0x7FFE` |
+| owner / BT loop | `0x20125700` / `0x201259E4`；timer init/start `0x0C2E3995` / `0x0C2E3B85`，对象136B |
 
-## 生命周期
+RX 只消费私有类型、正确 namespace/CRC、加密写 opcode 2 的消息。普通 PB、其他通道（包括旧 `0x43`）原样交回系统。VFS 和协议分发在 owner loop；发送在 BT loop。TX 保留明文并在每次尝试前复制，避免发送失败后把密文再次加密。
 
-| 事件 | 行为 |
-|---|---|
-| Chaos 维护定时器 | 按开关状态在 UI owner 就绪后启动/停止 bridge；失败只写 `BRIDGE_STATE=0xffff_ffff`，不影响 Chaos 页面 |
-| 设置页开关 | 写 `/data/chaos/bridge.cfg`（`BRG1` + enabled），清 `BRIDGE_STATE`，下一次维护 tick 落地 start/stop |
-| 关闭桥 | `chaos_bridge_stop()` 恢复原 L2 0x43 handler、清空队列，timer 降到 1 Hz 空转 |
-| 重新打开 | 若 handler 仍是固件原入口则重新挂接；若 Canopus 已占用则不强行抢回 |
-| 手机连接 | L2 会话建立后首个加密请求触发 `g_connected` |
-| 手机断开 | 下一次会话句柄变化时清空 listener |
-| Chaos 卸载 | 当前安装器从不卸载；bridge 不提供反向注册 |
+队列有12个 RX 槽、16个 TX 槽；协商窗口8。处理请求前预留应答空间，进度事件不会挤掉应答。连接变化只接受新 HELLO；设备会清理打开的文件与未提交临时文件。停止时恢复 RX、递增 epoch，旧队列不能在重开后继续执行。文件清理交给 owner，不在设置页回调中执行。活跃维护为2–10ms，关闭后退到1s。
 
-`BRIDGE_STATE` 位于 `state.rs`，0 = 关闭/待应用，1 = 已启动，0xffff_ffff = 启动失败。
+## 文件操作与传输
 
-## 安装与使用
+- 保留目录分页、STAT、创建目录、删除文件/空目录、重命名、设备内复制、上传、下载、文本预览/编辑、取消和开发者模式。
+- 默认只写 `/data`；开发者模式开放其他实际路径，`/dev`、`/proc`、`/sys` 始终拒绝。开发者模式在新会话 HELLO 时清零。
+- 数据块上限2048B，按 `min(2048, SAR_capacity-128)` 协商；8块在途，发送不逐块等待蓝牙 RPC。目录响应也遵守协商大小，分页保留连续顺序。
+- 上传不超过32MiB，使用同目录独有临时文件、短写循环、偏移与 CRC32 校验，全部 WRITE 应答确认后才 COMMIT。rename 失败保留原文件，不用先删除原文件来伪造成功。
+- 中断、CRC 失败、ABORT、新 HELLO 会清理未提交临时文件。临时后缀需要额外路径空间；过长目标明确报错。
+- 插件串行消费接收事件，按偏移重排下载块，防止并发异步写本地文件时颠倒顺序。上传/下载等待应答15s超时会取消；传输中禁止切换到其他设备。
 
-1. 安装 `dist/chaos-installer-p67.bin` 并重启；文件桥已并入标准包，设置页可随时开关。
-2. 文件桥默认关闭。需要用时进 Chaos 设置页打开「文件桥」；要和 Canopus 同时使用时，保持关闭，在 Canopus 管理器里启用 Supervisor/`band_files`。同一个 L2 0x43 只能有一个处理端。
-3. 打开 AstroBox 的 `手环文件管理器` 插件（0.1.5），连接手环。
-4. 状态应显示 `已连接 band_files（协议 v1）`，无需 Canopus 管理器。
-5. 需要访问 `/data` 以外路径时，在插件里打开开发者模式；重启后默认关闭。
+## 速度目标与验收
 
-> 如果 Canopus Supervisor 仍在运行，它会和 bridge 抢 L2 0x43，表现为随机超时；
-> 这不是 bridge 的稳定性问题，先完全停用 Canopus。
+目标按标准小写单位解释：**200 kb/s = 25,000 B/s**；与 **200 KB/s** 不同。界面同时显示 KB/s 和 kb/s。
 
-## 构建
+插件提供“链路测速（1 MiB）”：通过真实宿主设备链路发送8块窗口、逐字节核对设备回显，用单调时钟统计每方向的有效数据量/时间，不写手环文件；完成后显示是否达到200 kb/s。上传/下载另有真实文件操作的速度统计。回显测试只代表链路能力，不能代替闪存文件传输结果。
 
-```bash
-sh tools/build_ko.sh
+**本次没有真机无线测速，不能声称已达到200 kb/s。** 主机执行速度、队列容量或理论窗口带宽都不是蓝牙实测值。需安装两端产物，在实际手机/Windows/蓝牙适配器上各运行测速和大文件上传下载；链路协商、信号和宿主调度可能使速度低于目标。
+
+## 构建与验证
+
+```sh
+python3 tools/test_chaos_connect.py
+# 需要 Unicorn / pyelftools 与可用的 ARM clang、rust-lld：
+RUSTUP_TOOLCHAIN=nightly python3 tools/probe_chaos_connect.py research/firmware-3.101.043/043_ABI/executables/raw_arm_thumb/vela_ap.bin
+python3 tools/build.py
 ```
 
-构建脚本会：
+- 文件引擎测试调用生产 `chaos_files.c` 与 `chaos_connect.c`，VFS 替换为真实临时目录，覆盖大文件、短写、CRC、重命名失败、目录与协议边界。
+- ARM 探针执行生产 transport/codec 与固件真实 CTR wrapper，AES primitive、radio、timer、文件引擎为明确替身；覆盖普通包转交、8帧窗口、发送重试、epoch 取消和第三方 hook 保护。
+- 插件 `cargo test --lib` 验证实际 prost 往返、协议边界、全部 ACK 后提交；`sh scripts/build_plugin.sh` 生成 WASI 组件和 `dist/chaos-connect.abp`。
 
-1. 用与 Rust 相同的软浮点 ABI 编译 `supervisor/bridge/{canopus_protocol,band_files_embed,bridge}.c`；
-2. 以 `-DBF_BRIDGE` 编入文件协议；
-3. 与 `libchaos_sup.a`、`corona_blur.o` 一起 `rust-lld -r`；
-4. 走原有的 `fix_ko_layout`、`ko_slim`、`verify_chaos_ko`。
+安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。开启 Chaos 设置中的“文件桥”，在插件中连接 ChaosConnect。无需安装旧模块或启用旧兼容插件。
 
-本地没有 clang 时会回退到 workspace 的 xpack `arm-none-eabi-gcc`；CI 仍用 clang。
-
-## 体积
-
-以当前源码实测：
-
-| 产物 | 大小 |
-|---|---:|
-| 不含 bridge 的基线 | 288,786 B |
-| 含 bridge | 306,132 B |
-| 增量 | **+17,346 B（约 17.4 KB）** |
-
-分段增量：`.text +9,712 B`、`.rodata +499 B`、`.bss +7,768 B`；其余是符号表/重定位。
-
-bridge 三个目标文件的 `.text` 合计约 10.4 KB，链接 GC 后实际 `.text` 增加 9.7 KB；
-`.bss` 增加 7.6 KB（L2 接收/发送环）。不复制 Canopus 的 registry/UI，因此远小于整套 Supervisor。
-
-## 兼容性
-
-- 仅 3.101.043。L2 地址来自 `targets/xiaomi-band-10-pro-3.101.043`。
-- 插件端无需改动；模块 id 仍为 `band_files`。
-- 不再需要 `/data/canopus`、Canopus 管理器或 `band_files.canopus`。
-- AstroBox 的 `learn_window()` 查询不受支持，插件会按默认 4 个 RPC 槽工作；
-  不影响文件管理器的一次一请求协议。
-
-## 已知限制
-
-- L2 回调替换是 SRAM 层，和 Canopus Supervisor 使用同一条固件路径；真机需要实测。
-- 不实现 Manager 的 QueryDevice/QueryModule；只有 CanopusConnect 子集。
-- 桥常驻一个 10 ms owner timer；空闲时只做 attach/队列检查，功耗影响需要实测。
-- 文件操作在 UI owner 任务同步执行；大目录/大文件分块会占用该任务，和原模块行为一致。
-- 没有 Canopus 的 descriptor/CMR1 注册，因此不能再用 Canopus 管理器启用/禁用本桥；
-  它随 Chaos 模块加载。
-
-## 验证清单
-
-本地：
-
-- `tools/build_ko.sh` 成功，`verify_chaos_ko` 未定义符号 0；
-- `readelf -r` 只出现已支持的 ARM 重定位；
-- `nm` 能看到 `chaos_bridge_start` 且 `chaos_ctor` 有调用。
-
-真机：
-
-1. 卸载/停用 Canopus 管理器与 `band_files` 模块；
-2. 安装新的 Chaos 安装器并重启；
-3. 打开 AstroBox 文件管理器插件，确认版本 0.1.1；
-4. 连接手环，应显示“已连接 band_files（协议 v1）”；
-5. 浏览 `/data`、上传、下载、重命名、删除；
-6. 开开发者模式访问 `/data` 外路径；
-7. 重启后确认开发者模式回到关闭（按设计）。
-
-## 对 AstroBox 其它功能的影响
-
-- bridge 只接管 L2 channel `0x43`；PB/文件传输等其它 channel 会原样交还固件 handler。
-- 正常工作时，AstroBox 安装普通 `.bin`（表盘/第三方应用容器）走的是它自己的传输/安装通道，
-  不经过 `band_files` 协议，因此不会被文件桥“当成文件操作”拦截。
-- 但 SAR/加密 L2 是**整条蓝牙链路共享**的。如果 bridge 破坏了 SAR 状态，
-  AstroBox 的 `.bin` 安装、设备连接、文件传输都会一起受影响；这不是 `.bin` 安装被协议拦截，
-  而是底层蓝牙通道被 bridge 弄坏了。
-- 判断方法：重启手环后不打开文件管理器插件，直接试 AstroBox 安装普通 `.bin`。
-  能装 → bridge 没有全局破坏；仍超时 → 进 Chaos 设置页关闭「文件桥」后重试。
-
-## SAR 风险与回退
-
-bridge 会替换 SAR 的 0x43 RX 回调，并由 BT owner loop 发送响应。若手机日志出现：
-
-```text
-SAR retransmission limit exceeded: device stopped acknowledging (timed out)
-```
-
-说明设备端的 L2/SAR 已被打断，先按以下顺序恢复：
-
-1. 重启手环，手机蓝牙关闭再打开，重新连接；
-2. 确认 Canopus Supervisor / `band_files` 已完全停用（不能和 bridge 同时占用 0x43）；
-3. 仍不能连接时，安装 `dist/chaos-installer-p67.bin` 或 `dist/chaos-installer-p67-safe.bin`（均不含 bridge）并重启。
-
-调试 build 不应在 SAR 已不稳定时反复安装。
-
-## 故障排查
-
-| 现象 | 检查 |
-|---|---|
-| 插件一直“等待模块” | Chaos 是否加载；`BRIDGE_STATE` 是否为 1 |
-| 连接后无响应 | L2 0x43 是否被其他 Canopus Supervisor 占用；先完全停用 Canopus |
-| 目录为空/解析失败 | 确认插件为 0.1.1（u8 名称长度 + 476 B 分块） |
-| 上传失败 | 目标目录是否在默认 `/data` 策略内；开发者模式是否开启 |
-| 启动即异常 | 回退到不含 bridge 的 Chaos 安装器；bridge 启动失败不会注册页面之外的资源 |
+固定互通向量保存在`CHAOSCONNECT-V1.hex`（插件位于`plugin/tests/`）：第一行为HELLO请求CCN1帧（request_id=0x1234），第二行为同一帧的宿主protobuf承载（packet_id=0x12341234）。两仓库的向量逐字节相同，C与Rust测试分别核对。
