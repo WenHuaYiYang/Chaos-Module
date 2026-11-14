@@ -380,6 +380,7 @@ unsafe fn tick_busy() -> bool {
     || font_list::pending()
     || confirm_pop::pending()
     || background_home::pending()
+    || crate::s541_launcher::pending()
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()
     || crate::honeycomb::busy()

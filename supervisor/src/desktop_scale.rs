@@ -191,7 +191,7 @@ pub(crate) unsafe fn lens_on() -> bool {
 }
 
 pub(crate) unsafe fn set_lens(on: bool) {
-    if on { crate::s541_launcher::disable(); crate::honeycomb::set_enabled(false); }
+    if on { crate::honeycomb::set_enabled(false); }
     ensure_loaded();
     let v = if on { 1 } else { 0 };
     if st_rd!(LENS_SW) == v {
@@ -208,7 +208,7 @@ pub(crate) unsafe fn pitch_on() -> bool {
 }
 
 pub(crate) unsafe fn set_pitch(on: bool) {
-    if on { crate::s541_launcher::disable(); crate::honeycomb::set_enabled(false); }
+    if on { crate::honeycomb::set_enabled(false); }
     ensure_loaded();
     let v = if on { 1 } else { 0 };
     if st_rd!(PITCH_SW) == v {
@@ -225,7 +225,7 @@ pub(crate) unsafe fn inset_on() -> bool {
 }
 
 pub(crate) unsafe fn set_inset(on: bool) {
-    if on { crate::s541_launcher::disable(); crate::honeycomb::set_enabled(false); }
+    if on { crate::honeycomb::set_enabled(false); }
     ensure_loaded();
     let v = if on { 1 } else { 0 };
     if st_rd!(INSET_SW) == v {
@@ -443,7 +443,7 @@ unsafe fn law_matches(me: u32, k0: usize) -> bool {
 
 pub(crate) unsafe fn tick() {
     ensure_loaded();
-    let honeycomb = crate::honeycomb::enabled() || crate::s541_launcher::enabled();
+    let honeycomb = crate::honeycomb::enabled();
     if honeycomb { disable_for_honeycomb(); }
     save_deferred();
     // 息屏时桌面不可见, 缩放探测与写值都是白费; 亮屏后 on_resume/页面重建会重算,

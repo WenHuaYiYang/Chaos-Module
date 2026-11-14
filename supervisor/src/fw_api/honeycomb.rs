@@ -264,6 +264,25 @@ pub(crate) unsafe fn s541_button(grid: u32) -> u32 {
     if safe_ptr(button) && obj_is_child_of(parent(grid), button) { button } else { 0 }
 }
 
+/// 官方三布局偏好getter/setter，setter自行写入KV并发出0x10000刷新事件。
+pub(crate) unsafe fn s541_preference() -> u32 {
+    let get: unsafe extern "C" fn() -> u32 = transmute(0x0C514361usize);
+    get()
+}
+pub(crate) unsafe fn s541_select(preference: u32) -> bool {
+    if preference > 2 { return false; }
+    let set: unsafe extern "C" fn(u32, u32) -> u32 = transmute(0x0C514301usize);
+    set(preference, 1) != 0
+}
+pub(crate) unsafe fn s541_anchor(grid: u32) -> Option<(u32, i32, i32)> {
+    let button = s541_button(grid);
+    if button == 0 || word(grid, 0) != a::LAUNCHER_GRID_CLASS || word(grid, 0x89c) & 0x10000 != 0 { return None; }
+    let root = parent(grid);
+    let x = (word(button, 0x1c) as i32 + word(button, 0x24) as i32 + 1 - 288) / 2 - word(root, 0x1c) as i32;
+    let y = (word(button, 0x20) as i32 + word(button, 0x28) as i32 + 1 - 96) / 2 - word(root, 0x20) as i32;
+    Some((button, x, y))
+}
+
 pub(crate) unsafe fn attach(grid: u32, icons: &[u32]) -> bool {
     if LAYOUT_ID == 0 {
         let register: unsafe extern "C" fn(u32, u32) -> u32 =

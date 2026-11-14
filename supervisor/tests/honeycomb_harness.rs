@@ -433,11 +433,9 @@ fn main() {
                 s541_launcher::ACTIVE=true;
                 honeycomb::tick();
                 assert!(!honeycomb::enabled());
-                with(|u|{assert_eq!(u.attached,1);assert_eq!(u.placed,u.icons);assert_eq!(u.frames[0].x,60);});
-                honeycomb::s541_changed(true); honeycomb::tick();
-                with(|u|assert_eq!(u.frames[u.frames.len()-u.icons.len()].y,48-s541_launcher::range(u.icons.len())));
-                s541_launcher::disable(); honeycomb::tick();
-                with(|u|assert_eq!(u.detached,1));
+                with(|u|{assert_eq!(u.attached,0);assert!(u.placed.is_empty());assert!(u.frames.is_empty());});
+                honeycomb::toggle(); honeycomb::tick();
+                with(|u|assert_eq!(u.attached,1));
             }
             "defaults" => {
                 honeycomb::tick();

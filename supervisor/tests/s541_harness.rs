@@ -3,7 +3,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[derive(Default)]
 struct State { next: u32, objects: HashMap<u32, u32>, flags: HashMap<u32, u32>,
-    events: Vec<(u32,u32,u32)>, labels: Vec<Vec<u8>>, file: Vec<u8>, fail: bool, launches: u32, event_code: u32 }
+    events: Vec<(u32,u32,u32)>, labels: Vec<Vec<u8>>, file: Vec<u8>, fail: bool, launches: u32, event_code: u32,
+    preference: u32, selections: Vec<u32>, honeycomb_writes: u32, desktop_writes: u32 }
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
 fn state<T>(f: impl FnOnce(&mut State)->T)->T { STATE.with(|s| f(&mut s.borrow_mut())) }
 const FW_STYLE_HR_NAME: u32 = 1;
@@ -11,10 +12,10 @@ const FW_STYLE_HR_NAME: u32 = 1;
 #[path = "../src/s541_launcher.rs"] mod s541_launcher;
 #[path = "../src/s541_pixels.rs"] mod s541_pixels;
 mod honeycomb {
-    pub unsafe fn set_enabled(_: bool) {} pub unsafe fn enabled()->bool { false }
+    pub unsafe fn set_enabled(_: bool) {crate::state(|s|s.honeycomb_writes+=1);} pub unsafe fn enabled()->bool { false }
     pub unsafe fn s541_changed(_:bool) {} pub unsafe fn s541_ui_tick() {}
 }
-mod desktop_scale { pub unsafe fn disable_for_honeycomb() {} }
+mod desktop_scale { pub unsafe fn disable_for_honeycomb() {crate::state(|s|s.desktop_writes+=1);} }
 mod corona_blur { pub unsafe fn backgrounds_idle()->bool{true} }
 mod log { pub fn line(_: &str) {} }
 mod mem {
@@ -63,6 +64,8 @@ mod fw_api {
     pub unsafe fn image_set_scale(_:u32,_:i32,_:i32){}
     pub unsafe fn label_create(p:u32)->u32{obj_create(p,0)}
     pub unsafe fn style_apply(_:u32,_:u32,_:u32,_:u32){}
+    pub unsafe fn fw_style_get_prop(_:u32,_:u32,_:u32)->u32{255}
+    pub unsafe fn obj_set_local_style_prop(_:u32,_:u32,_:u32,_:u32){}
     pub unsafe fn label_set_text(_:u32,p:*const u8){crate::state(|s|s.labels.push(std::ffi::CStr::from_ptr(p.cast()).to_bytes().to_vec()));}
     pub unsafe fn screen_is_on()->bool{true}
     pub unsafe fn top_app_id()->u32{HOME_APP_ID}
@@ -71,6 +74,9 @@ mod fw_api {
     pub unsafe fn s541_frame_idle()->bool{true}
     pub unsafe fn fw_img_free_by_path(_:u32){}
     pub mod honeycomb {
+        pub unsafe fn s541_preference()->u32{crate::state(|s|s.preference)}
+        pub unsafe fn s541_select(p:u32)->bool{crate::state(|s|{s.preference=p;s.selections.push(p);});true}
+        pub unsafe fn s541_anchor(_:u32)->Option<(u32,i32,i32)>{Some((30,24,360))}
         pub unsafe fn current_target(e:u32)->u32{e}
         pub unsafe fn launcher()->u32{20}
         pub unsafe fn parent(_:u32)->u32{10}

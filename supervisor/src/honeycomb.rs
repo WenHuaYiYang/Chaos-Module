@@ -23,30 +23,10 @@ static mut RETURN: ReturnAnimation = ReturnAnimation::new();
 static mut REAPPLY_PENDING: bool = false;
 
 unsafe fn view_frame(index: usize) -> Frame {
-    if crate::s541_launcher::enabled() {
-        crate::s541_launcher::frame(index, CAMERA.pan())
-    } else { RETURN.frame(index, CAMERA.frame(index)) }
+    RETURN.frame(index, CAMERA.frame(index))
 }
 
-unsafe fn active() -> bool { ENABLED || crate::s541_launcher::enabled() }
-
-pub(crate) unsafe fn s541_changed(at_end: bool) {
-    CAMERA = Camera::new(); RETURN.cancel();
-    if crate::s541_launcher::enabled() {
-        let range = crate::s541_launcher::range(COUNT);
-        CAMERA.linear_bounds(COUNT, range);
-        if at_end { CAMERA.linear_end(COUNT, range); }
-    }
-    RENDER_PENDING = true;
-    if OWNER != 0 && fw::launcher() == OWNER && fw::visible(OWNER) { fw::frame_timer_active(true); }
-}
-
-pub(crate) unsafe fn s541_ui_tick() {
-    if DRAWING || IN_LAYOUT || OWNER == 0 || fw::launcher() != OWNER || !fw::visible(OWNER) { return; }
-    let mut icons = [0u32; MAX_ICONS];
-    let n = fw::icons(OWNER, &mut icons);
-    if n != 0 { crate::s541_launcher::render(OWNER, &icons[..n], CAMERA.pan(), moving()); }
-}
+unsafe fn active() -> bool { ENABLED }
 
 unsafe fn moving() -> bool {
     CAMERA.moving() || RETURN.active()
@@ -92,7 +72,7 @@ unsafe fn load() {
 /// 蜂窝视图是否处在需要快拍的活跃态(编辑中/重排挂起/镜头或回位动画在动)。
 /// 维护定时器的节拍自适应用: 不活跃时亮屏也可以降频到中档。
 pub(crate) unsafe fn busy() -> bool {
-    EDIT_GRID != 0 || DRAWING || REAPPLY_PENDING || RENDER_PENDING || crate::s541_launcher::pending() || (active() && moving())
+    EDIT_GRID != 0 || DRAWING || REAPPLY_PENDING || RENDER_PENDING || (active() && moving())
 }
 
 pub(crate) unsafe fn enabled() -> bool {
@@ -107,7 +87,6 @@ pub(crate) unsafe fn toggle() {
 pub(crate) unsafe fn set_enabled(on: bool) {
     load();
     if on {
-        crate::s541_launcher::disable();
         crate::desktop_scale::disable_for_honeycomb();
     }
     if ENABLED != on {
@@ -165,7 +144,6 @@ unsafe fn draw() {
         COUNT = n;
     }
     DRAWING = true;
-    if crate::s541_launcher::enabled() { CAMERA.linear_bounds(COUNT, crate::s541_launcher::range(COUNT)); }
     let mut hooks = 2166136261u32;
     for &icon in &icons[..n] {
         hooks = hooks.wrapping_mul(16777619) ^ icon;
@@ -190,9 +168,6 @@ unsafe fn draw() {
         }
     }
     fw::present(owner);
-    if crate::s541_launcher::enabled() {
-        crate::s541_launcher::render(owner, &icons[..n], CAMERA.pan(), CAMERA.moving());
-    }
     for (i, &icon) in icons[..n].iter().enumerate() {
         if !fw::geometry_matches(icon, view_frame(i)) {
             log::kv("hc geometry icon", i as u32);
@@ -241,7 +216,6 @@ unsafe fn consume_fault() {
     }
     FAULT_PENDING = false;
     log::line("蜂窝视图: 布局检查失败，已关闭并恢复系统布局");
-    crate::s541_launcher::disable();
     set_enabled(false);
     restore();
 }
@@ -527,8 +501,7 @@ pub(crate) unsafe extern "C" fn class_event(_class: u32, event: u32) {
     }
     match code {
         1 => {
-            if crate::s541_launcher::enabled() { CAMERA.press_linear(fw::point(event)); }
-            else { CAMERA.press_at(fw::point(event)); }
+            CAMERA.press_at(fw::point(event));
             fw::navigation(OWNER, event, 0);
             fw::frame_timer_active(true);
         }
