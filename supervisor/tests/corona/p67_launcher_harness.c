@@ -383,6 +383,17 @@ int main(void) {
         assert(p67_descriptor(OWNER, (uint32_t)(uintptr_t)p67_scroll));
         assert(p67_descriptor(LIST, (uint32_t)(uintptr_t)p67_event));
     }
+    /* On-device failure: successful old capture, root retired its source,
+     * pending=1 but arm=0 with no accepted entry to replenish the budget. */
+    p67_blur_demand = 1; p67_blur_source = 0; p67_blur_pending = 1;
+    p67_blur_armed = 0; p67_blur_entry_scoped = 1;
+    p67_blur_allowed_entries = 0; p67_blur_core_gate = 10;
+    chaos_corona_rearm_missing_source();
+    assert(p67_blur_pending && p67_blur_armed && !p67_blur_entry_scoped);
+    p67_blur_source = 123; p67_blur_armed = 0; p67_blur_entry_scoped = 1;
+    chaos_corona_rearm_missing_source();
+    assert(!p67_blur_armed && p67_blur_entry_scoped);
+    p67_blur_source = 0;
     check_blur_draw();
     check_blur_sessions();
     puts("p67 live launcher mocked native lifecycle/GPU blur drawing/sessions passed");

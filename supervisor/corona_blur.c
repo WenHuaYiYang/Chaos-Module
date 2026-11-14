@@ -222,6 +222,7 @@ void chaos_corona_backgrounds_poll(void) {
     chaos_corona_in_call = 1;
     chaos_corona_launcher_rebind();
     rh_platform_backgrounds_poll();
+    chaos_corona_rearm_missing_source();
     chaos_corona_in_call = 0;
 }
 
@@ -287,6 +288,9 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     chaos_text_kv(&w, "src", p67_blur_source ? 1u : 0u);
     chaos_text_kv(&w, "pend", p67_blur_pending);
     chaos_text_kv(&w, "arm", p67_blur_armed);
+    chaos_text_kv(&w, "entry_scoped", p67_blur_entry_scoped);
+    chaos_text_kv(&w, "entry_allowed", p67_blur_allowed_entries);
+    chaos_text_kv(&w, "source_rearms", chaos_corona_source_rearms);
     chaos_text_kv(&w, "gate", p67_blur_core_gate);
     chaos_text_kv(&w, "try", p67_blur_attempts);
     chaos_text_kv(&w, "copy", p67_blur_copies);

@@ -1,5 +1,18 @@
 /* Chaos lifecycle repair; upstream Corona implementation remains unchanged.
  * AGPL-3.0-only, same license as the Corona implementation this integrates. */
+static uint32_t chaos_corona_source_rearms;
+static void chaos_corona_rearm_missing_source(void) {
+    /* Root retirement can remove the last published image after a successful
+     * capture, while entry scoping still forbids all further attempts. Restore
+     * the initialization prewarm only in this missing-source state. Keep normal
+     * gesture budgets unchanged whenever an immutable source still exists. */
+    if (!p67_blur_demand || p67_blur_source || !p67_blur_pending ||
+        p67_blur_armed || !p67_blur_entry_scoped || p67_blur_allowed_entries ||
+        p67_blur_core_gate != 10u || p67_blur_busy || p67_blur_polling) return;
+    p67_blur_reset();
+    ++chaos_corona_source_rearms;
+}
+
 static void chaos_corona_launcher_rebind(void) {
     uint32_t *scroll, *owner_event, *draw_event;
     if (p67_busy || load32(P67_IMAGE_SLOT) || P67_U8(0x201102d9u)) return;
