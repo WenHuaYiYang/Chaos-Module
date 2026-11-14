@@ -65,6 +65,7 @@ static unsigned redraw_requests;
 static int redraw_result;
 static int rh_platform_request_full_redraw(void) { ++redraw_requests; return redraw_result; }
 #include "../src/p67_launcher.inc"
+#include "../src/corona_launcher_rebind.inc"
 static void tree(uint32_t root, int (*cb)(uint32_t, void *), void *cookie) {
     assert(root == 0);++tree_calls;
     for (unsigned i = 0; i < 5; ++i) if (objects[i].live && cb(objects[i].id, cookie) == 2) break;
@@ -364,6 +365,24 @@ int main(void) {
     redraw_result = -1;
     assert(!rh_platform_backgrounds_commit(&bg) && p67_wake_pending);
     redraw_result = 0; rh_platform_backgrounds_poll(); assert(!p67_wake_pending);
+    /* Reopening native apps can reuse every address but recreate callbacks.
+     * Verify two consecutive cycles recover both subscriptions and drawing. */
+    reset();
+    rh_platform_backgrounds_poll();
+    for (unsigned cycle = 0; cycle < 2; ++cycle) {
+        uint32_t previous = p67_generation;
+        object(OWNER)->count = 1;
+        object(OWNER)->d[0][0] = P67_SCROLL_CB;
+        object(OWNER)->d[0][1] = PAGE;
+        object(OWNER)->d[0][2] = 0;
+        object(LIST)->count = 0;
+        chaos_corona_launcher_rebind();
+        rh_platform_backgrounds_poll();
+        assert(p67_owner == OWNER && p67_draw_owner == LIST);
+        assert(p67_generation != previous);
+        assert(p67_descriptor(OWNER, (uint32_t)(uintptr_t)p67_scroll));
+        assert(p67_descriptor(LIST, (uint32_t)(uintptr_t)p67_event));
+    }
     check_blur_draw();
     check_blur_sessions();
     puts("p67 live launcher mocked native lifecycle/GPU blur drawing/sessions passed");

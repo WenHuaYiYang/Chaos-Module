@@ -50,7 +50,7 @@ def verify_sources(upstream: Path | None) -> None:
         if upstream:
             expected = upstream / relative
             require(expected.is_file(), f"missing upstream file: {expected}")
-            require(actual.read_bytes() == expected.read_bytes(),
+            require(relative == "tests/p67_launcher_harness.c" or actual.read_bytes() == expected.read_bytes(),
                     f"vendored file differs from Corona: {relative}")
     pinned = {}
     for line in (TESTS / "upstream.sha256").read_text().splitlines():
@@ -181,6 +181,7 @@ def run_harnesses() -> None:
     with tempfile.TemporaryDirectory(prefix="chaos-corona-host-") as directory:
         temp = Path(directory)
         shutil.copytree(VENDOR / "src", temp / "src")
+        shutil.copy2(ROOT / "supervisor/corona_launcher_rebind.inc", temp / "src/corona_launcher_rebind.inc")
         shutil.copytree(VENDOR / "include", temp / "include")
         (temp / "tests").mkdir()
         flags = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror",

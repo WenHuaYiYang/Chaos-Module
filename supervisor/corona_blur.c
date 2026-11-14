@@ -116,6 +116,7 @@ static void chaos_corona_launcher_position(void *event) {
 /* Sole implementation entry: includes launcher -> native provider/state
  * machine, then all three panels and the control-center battery hooks. */
 #include "corona_vendor/src/p67_backgrounds.inc"
+#include "corona_launcher_rebind.inc"
 
 uint32_t rh_platform_launcher_scroll_callback(void) {
     return (uint32_t)(uintptr_t)p67_scroll;
@@ -219,6 +220,7 @@ void chaos_corona_backgrounds_poll(void) {
      * 而 commit 又要求 idle —— 只有 poll 是每拍都跑的那条路。 */
     chaos_corona_latch_rescue();
     chaos_corona_in_call = 1;
+    chaos_corona_launcher_rebind();
     rh_platform_backgrounds_poll();
     chaos_corona_in_call = 0;
 }

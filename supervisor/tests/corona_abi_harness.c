@@ -22,6 +22,8 @@ static int p67_blur_native_idle(void) { return idle; }
 static uint32_t chaos_corona_commits, chaos_corona_commit_fails;
 static unsigned latch_rescues;
 static void chaos_corona_latch_rescue(void) { ++latch_rescues; }
+/* Callback integrity is exercised against real p67 objects in launcher harness. */
+static void chaos_corona_launcher_rebind(void) {}
 
 static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
     const char *paths[] = {bg->launcher, bg->control_center, bg->notifications, bg->widgets};
