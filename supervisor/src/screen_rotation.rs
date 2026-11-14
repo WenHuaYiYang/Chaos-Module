@@ -81,21 +81,27 @@ pub(crate) unsafe fn toggle() -> bool {
     next == VALUE_FLIPPED
 }
 
-// ===== 撕裂修复（2026-11-14 模拟器+真机逆向定案） =====
+// ===== 撕裂: 逆向结论与回退记录（2026-11-14） =====
 //
-// 机理（逆向实证，见 docs/Chaos_UI重构_20261113.md §9.5）:
-//   翻转后 LVGL 的旋转拷贝把区域原地写进绘制缓冲，而面板驱动的流式任务正在
-//   **顺序读同一块缓冲**送面板 —— 旋转拷贝与流式读是两个线程的无同步竞争，
-//   流出去的就是"半新半旧"的一帧 = 用户看到的横向割裂。
-//   固件的 flush_cb(0x0C4B778C) 把失效区域收进队列后立即返回（异步），它自己
-//   在 busy(驱动 ctx+0x2B6) 非零时会用 ctx+0x2B8 的信号量**阻塞等待**上一批
-//   完成 —— 说明信号量的语义就是"驱动持有 = 正在流式，释放 = 本批完成"。
-// 修法(第一版 disp+0x2C 钩子被证伪): 逆向发现 flush_wait_cb 的唯一调用点是
-//   孤儿代码(小米移植用 flash 版替换了 LVGL 默认的等待实现, 连调用点一起没了)——
-//   装在 disp+0x2C 的钩子根本不会被调。改为**替换 flush_cb(disp+0x28) 本体**:
-//   our_flush_cb 先调原始 flush(收队列+提交), 然后有界自旋等 busy(驱动ctx+0x2B6)
-//   清零 —— busy 由驱动完成函数在拷贝/送面板结束时清零, 清零 = 本批已离开绘制
-//   缓冲, 下一帧的旋转拷贝落在安静窗口, 竞争消除。
+// 机理（模拟器逆向实证, 详见 docs/Chaos_UI重构_20261113.md §9.5）: 翻转后
+//   LVGL 的旋转拷贝把区域原地写进绘制缓冲，而面板驱动的流式任务正在顺序读
+//   同一块缓冲送面板 —— 两个线程无同步竞争，流出去的就是半新半旧的一帧
+//   = 用户看到的横向割裂。固件的 flush_cb(0x0C4B778C) 把失效区域收进队列后
+//   立即返回（异步），busy(驱动 ctx+0x2B6) 非零时用它自己的信号量
+//   (0xC1EA358 = nxsem_wait 阻塞 take, 已反汇编确认) 等上一批完成。
+//
+// 尝试过的修法（都被真机/逆向否决）:
+//   a) render_mode=2(FULL): 真机实测半屏冻结，固件 flush 不完整支持 —— 否决;
+//   b) 替换 flush_cb 为 busy 自旋包装: 真机点开应用直接崩溃 —— busy 标志的
+//      极性未实证(0x0C4B7324 的完成函数只清零+getvalue, 没有可见的 post 调用), 
+//      自旋可能在每拍 flush 上空转秒级 → 回退;
+//   c) disp+0x2C(flush_wait_cb) 钩子: 逆向发现它的唯一调用点是孤儿代码
+//      (0x1C04EE80 的等待循环从未被调用), 钩子装上去不会被调 —— 无效;
+//
+// 结论: 撕裂是固件 LVGL「DIRECT+旋转」组合的固有限制, 模块层无法同步
+//   旋转拷贝与面板流式读。根治需继续逆向下层任务的传输与 TE 同步
+//   （PSRAM 侧 set_rotation 0x1C03046C 与 flush 链, 见地址表）——未启动。
+//   翻转态用于阅读静态内容不受影响。
 
 /// 原始 flush_cb（翻转前的值，恢复用）。已含 Thumb 位。
 static mut FLUSH_ORIG: u32 = 0x0C4B_778D;
@@ -108,51 +114,6 @@ const DRIVER_CTX_HOLDER: u32 = 0x200C_EB7C;
 /// 已反汇编核对）；完成路径由驱动在流式结束后释放同一信号量。
 const SEM_WAIT: u32 = 0x0C1E_A359;
 
-/// 我们的 flush_cb：先调原始 flush(收失效区域进队列+提交)，然后有界自旋
-/// 等 busy(驱动完成标志)清零 —— 本批已离开绘制缓冲，下一帧的旋转拷贝落点安全。
-unsafe extern "C" fn our_flush_cb(disp: u32) {
-    let orig: unsafe extern "C" fn(u32) = core::mem::transmute((read_volatile(core::ptr::addr_of!(FLUSH_ORIG)) as usize) | 1);
-    orig(disp);
-    let ctx = read_volatile(DRIVER_CTX_HOLDER as *const u32);
-    if ctx == 0 {
-        return;
-    }
-    // 有界自旋: 驱动完成函数(0x0C4B7324)在流式结束后清 busy; 超时放行(宁撕不挂)。
-    let mut spins = 0usize;
-    while read_volatile((ctx + 0x2B6) as *const u8) != 0 {
-        spins += 1;
-        if spins > 200_000 {
-            break;
-        }
-    }
-}
-
-/// 安装/恢复 flush_cb 钩子。翻转态安装我们的包装，正常态恢复原始 flush_cb。
-unsafe fn flush_hook_install(install: bool) {
-    let disp = fw_api::display_default();
-    if disp == 0 {
-        return;
-    }
-    if install {
-        if WAIT_INSTALLED.swap(1, Ordering::AcqRel) == 1 {
-            return;
-        }
-        // 原始 flush_cb(disp+0x28, 已含 Thumb 位) 存起来恢复用
-        let orig = read_volatile((disp + 0x28) as *const u32);
-        write_volatile(core::ptr::addr_of_mut!(FLUSH_ORIG), orig);
-        let ours = our_flush_cb as *const () as u32 | 1;
-        write_volatile((disp + 0x28) as *mut u32, ours);
-    } else {
-        if WAIT_INSTALLED.swap(0, Ordering::AcqRel) == 0 {
-            return;
-        }
-        let orig = read_volatile(core::ptr::addr_of!(FLUSH_ORIG));
-        if orig != 0 {
-            write_volatile((disp + 0x28) as *mut u32, orig);
-        }
-    }
-}
-
 unsafe fn apply_now(value: u8) {
     let disp = fw_api::display_default();
     if disp == 0 {
@@ -162,7 +123,6 @@ unsafe fn apply_now(value: u8) {
     APPLIED.store(value, Ordering::Release);
     // 撕裂修复: 翻转态安装 flush_wait 钩子（每轮刷新绘制前等上一批流完，
     // 旋转拷贝不再与流式读竞争）；恢复态卸载。
-    flush_hook_install(value == VALUE_FLIPPED);
     // 旋转只重排已提交的像素；已建页面的内容树还带着旧方向的缓存，整树重画一次，
     // 免得切页时新旧方向的内容叠在一起（表现为一条横向接缝）。
     invalidate_pages();
