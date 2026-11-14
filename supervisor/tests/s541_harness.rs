@@ -5,7 +5,7 @@ use std::collections::HashMap;
 struct State { next: u32, objects: HashMap<u32, u32>, flags: HashMap<u32, u32>,
     events: Vec<(u32,u32,u32)>, labels: Vec<Vec<u8>>, file: Vec<u8>, fail: bool, launches: u32, event_code: u32,
     preference: u32, selections: Vec<u32>, honeycomb_writes: u32, desktop_writes: u32,
-    positions: Vec<(u32,i32,i32)>, anchor_y: Option<i32>, samples: u32, cleans: u32, gpu_busy: bool }
+    positions: Vec<(u32,i32,i32)>, anchor_y: Option<i32>, samples: u32, cleans: u32, gpu_busy: bool, unstable: bool }
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
 fn state<T>(f: impl FnOnce(&mut State)->T)->T { STATE.with(|s| f(&mut s.borrow_mut())) }
 const FW_STYLE_HR_NAME: u32 = 1;
@@ -71,7 +71,8 @@ mod fw_api {
     pub unsafe fn label_set_text(_:u32,p:*const u8){crate::state(|s|s.labels.push(std::ffi::CStr::from_ptr(p.cast()).to_bytes().to_vec()));}
     pub unsafe fn screen_is_on()->bool{true}
     pub unsafe fn top_app_id()->u32{HOME_APP_ID}
-    pub unsafe fn s541_capture_region(out:&mut[u8;5184],_:u32,_:u32)->Result<(),i32>{crate::state(|s|s.samples+=1);out.fill(120);Ok(())}
+    pub unsafe fn s541_capture_region(out:&mut[u8;5184],_:u32,_:u32)->Result<(),i32>{
+        out.fill(crate::state(|s|{s.samples+=1;120+if s.unstable{(s.samples%2)as u8}else{0}}));Ok(())}
     pub unsafe fn s541_clean_pixels(_: *const u8,_:u32){crate::state(|s|s.cleans+=1);}
     pub unsafe fn s541_frame_idle()->bool{crate::state(|s|!s.gpu_busy)}
     pub unsafe fn fw_img_free_by_path(_:u32){}

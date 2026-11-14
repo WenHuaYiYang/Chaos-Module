@@ -26,8 +26,11 @@ static PIXELS: [Pixels; 3] = [
     Pixels(*include_bytes!("../assets/s541/selector-2.bgra")),
     Pixels(*include_bytes!("../assets/s541/selector-1.bgra")),
 ];
-static mut IMAGES: [[u32; 7]; 3] = [[0; 7]; 3];
-static mut GLASS_IMAGES: [[u32; 7]; 2] = [[0; 7]; 2];
+// 描述符独占缓存行，避免同步一个图像时影响另一个仍被GPU使用的描述符。
+#[repr(align(64))]
+struct ImageDescriptor([u32; 7]);
+static mut IMAGES: [ImageDescriptor; 3] = [ImageDescriptor([0; 7]), ImageDescriptor([0; 7]), ImageDescriptor([0; 7])];
+static mut GLASS_IMAGES: [ImageDescriptor; 2] = [ImageDescriptor([0; 7]), ImageDescriptor([0; 7])];
 static mut GLASS_PIXELS: [Pixels; 2] = [Pixels([0; 110592]), Pixels([0; 110592])];
 static mut SAMPLE: [u8; 5184] = [0; 5184];
 static mut WORK: [u8; 5184] = [0; 5184];
@@ -116,10 +119,11 @@ unsafe fn create(grid: u32, button: u32) -> bool {
     GLASS = fw::background_image_create(VIEW);
     let mask = fw::background_image_create(VIEW);
     if GLASS == 0 || mask == 0 { return false; }
-    IMAGES[MODE] = [0x11019, 288 | (96 << 16), 1152, 110592, PIXELS[MODE].0.as_ptr() as u32, 0, 0];
+    IMAGES[MODE].0 = [0x11019, 288 | (96 << 16), 1152, 110592, PIXELS[MODE].0.as_ptr() as u32, 0, 0];
     // 模块中的只读素材同样经过CPU装载；交给GPU前必须同步缓存。
     fw::s541_clean_pixels(PIXELS[MODE].0.as_ptr(), 110592);
-    fw::background_image_set_source(mask, IMAGES[MODE].as_ptr() as u32);
+    fw::s541_clean_pixels(IMAGES[MODE].0.as_ptr().cast(), 64);
+    fw::background_image_set_source(mask, IMAGES[MODE].0.as_ptr() as u32);
     fw::obj_clear_flag(mask, fw::LV_OBJ_FLAG_CLICKABLE);
     fw::obj_clear_flag(GLASS, fw::LV_OBJ_FLAG_CLICKABLE);
     for i in 0..3 {
@@ -164,15 +168,19 @@ pub(crate) unsafe fn render(grid: u32) {
             crate::log::line("s541控制条：背景采样失败，使用透明底图");
             return;
         }
-        // 捕获期间若GPU开始下一帧，舍弃跨帧样本，不能发布撕裂背景。
+        // GPU空闲不代表面板DMA或另一帧没有更新fb0。连续读取两次，
+        // 只发布完全一致的局部图，避免把跨帧条纹永久冻结在玻璃底图上。
+        if fw::s541_capture_region(&mut WORK, x as u32, y.clamp(0, 384) as u32).is_err()
+            || SAMPLE != WORK { return; }
         if !fw::s541_frame_idle() { return; }
         crate::s541_pixels::blur(&mut SAMPLE, &mut WORK);
         let next = GLASS_INDEX ^ 1;
-        if GLASS_IMAGES[next][0] != 0 { fw::fw_img_free_by_path(GLASS_IMAGES[next].as_ptr() as u32); }
+        if GLASS_IMAGES[next].0[0] != 0 { fw::fw_img_free_by_path(GLASS_IMAGES[next].0.as_ptr() as u32); }
         crate::s541_pixels::glass(&SAMPLE, MASK, &mut GLASS_PIXELS[next].0);
         fw::s541_clean_pixels(GLASS_PIXELS[next].0.as_ptr(), 110592);
-        GLASS_IMAGES[next] = [0x11019, 288 | (96 << 16), 1152, 110592, GLASS_PIXELS[next].0.as_ptr() as u32, 0, 0];
-        fw::background_image_set_source(GLASS, GLASS_IMAGES[next].as_ptr() as u32);
+        GLASS_IMAGES[next].0 = [0x11019, 288 | (96 << 16), 1152, 110592, GLASS_PIXELS[next].0.as_ptr() as u32, 0, 0];
+        fw::s541_clean_pixels(GLASS_IMAGES[next].0.as_ptr().cast(), 64);
+        fw::background_image_set_source(GLASS, GLASS_IMAGES[next].0.as_ptr() as u32);
         GLASS_INDEX = next; GLASS_VALID = true;
     }
     hide(VIEW, false);

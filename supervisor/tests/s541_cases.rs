@@ -45,6 +45,11 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
         crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
         assert!(GLASS_ATTEMPTED); // GPU忙碌也立即显示，不进入无限等待。
         toggle(); tick();
+        crate::state(|s|{s.gpu_busy=false;s.unstable=true;});
+        toggle(); tick();
+        assert!(!GLASS_VALID); // 两次取样不一致不能发布到玻璃层。
+        crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
+        toggle(); tick();
         LOADED=false; assert!(!enabled());
     }
 }
