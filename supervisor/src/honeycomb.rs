@@ -49,6 +49,10 @@ unsafe fn forget_owner() {
 }
 
 unsafe fn load() {
+    load_choice(true);
+}
+
+unsafe fn load_choice(sync_rw: bool) {
     if LOADED {
         return;
     }
@@ -62,7 +66,7 @@ unsafe fn load() {
     fw_api::close(fd);
     if n == 5 && &b[..4] == b"HCB1" && b[4] <= 1 {
         ENABLED = b[4] != 0;
-        if ENABLED {
+        if ENABLED && sync_rw {
             crate::desktop_scale::disable_for_honeycomb();
             log::line("蜂窝视图: 已恢复开启状态");
         }
@@ -85,7 +89,8 @@ pub(crate) unsafe fn toggle() {
 }
 
 pub(crate) unsafe fn set_enabled(on: bool) {
-    load();
+    // 关闭蜂窝只恢复原生布局，不能在读取旧配置时先清空RW开关。
+    load_choice(on);
     if on {
         crate::desktop_scale::disable_for_honeycomb();
     }

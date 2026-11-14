@@ -519,9 +519,9 @@ fn outward_left_and_top_drags_handoff_but_inertia_and_other_edges_do_not() {
 }
 #[test]
 fn selector_compacts_only_excess_footer_space() {
-    assert_eq!(selector_anchor(430, Some(300)) - 16, 316);
+    assert_eq!(selector_anchor(430, Some(300)) - 16, 365);
     assert_eq!(selector_anchor(430, Some(410)), 430);
     assert_eq!(selector_anchor(430, None), 430);
     // 滚动只改变整体位置，内容与控制条之间的间距保持不变。
-    assert_eq!(selector_anchor(330, Some(200)) - 16, 216);
+    assert_eq!(selector_anchor(330, Some(200)) - 16, 265);
 }

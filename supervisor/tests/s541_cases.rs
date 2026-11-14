@@ -18,7 +18,7 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
                 assert!(!s.events.iter().any(|&(_,_,id)|id>=0x10000));
                 assert!(s.labels.is_empty());
                 assert!(s.positions.contains(&(VIEW,24,344)));
-                assert_eq!(s.honeycomb_writes,0);assert_eq!(s.desktop_writes,0);
+                assert_eq!(s.honeycomb_writes,1);assert_eq!(s.desktop_writes,0);
             });
         }
         let p = &GLASS_PIXELS[GLASS_INDEX].0;

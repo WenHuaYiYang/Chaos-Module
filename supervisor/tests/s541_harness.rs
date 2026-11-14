@@ -13,7 +13,7 @@ const FW_STYLE_HR_NAME: u32 = 1;
 #[path = "../src/s541_launcher.rs"] mod s541_launcher;
 #[path = "../src/s541_pixels.rs"] mod s541_pixels;
 mod honeycomb {
-    pub unsafe fn set_enabled(_: bool) {crate::state(|s|s.honeycomb_writes+=1);} pub unsafe fn enabled()->bool { false }
+    pub unsafe fn set_enabled(on: bool) {assert!(!on);crate::state(|s|s.honeycomb_writes+=1);} pub unsafe fn enabled()->bool { false }
     pub unsafe fn s541_changed(_:bool) {} pub unsafe fn s541_ui_tick() {}
 }
 mod desktop_scale { pub unsafe fn disable_for_honeycomb() {crate::state(|s|s.desktop_writes+=1);} }

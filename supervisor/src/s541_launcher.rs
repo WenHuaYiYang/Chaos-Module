@@ -55,6 +55,8 @@ unsafe fn save() {
 }
 pub(crate) unsafe fn toggle() {
     ENABLED = !enabled();
+    // S541仅需官方布局；退出蜂窝，但不触碰RW三项配置。
+    if ENABLED { crate::honeycomb::set_enabled(false); }
     save(); clear();
 }
 pub(crate) unsafe fn disable() {

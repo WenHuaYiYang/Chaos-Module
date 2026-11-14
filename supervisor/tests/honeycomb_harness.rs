@@ -429,6 +429,18 @@ fn main() {
         });
         let case = std::env::args().nth(1).unwrap();
         match case.as_str() {
+            "s541-preserve-rw" => {
+                with(|u| {u.config=Some(b"HCB1\x01".to_vec());u.rw_config=Some(7);});
+                // S541启用时先退出旧蜂窝配置，不能触发初始化清空RW。
+                honeycomb::set_enabled(false);
+                assert!(!honeycomb::enabled());
+                assert!(desktop_scale::lens_on());
+                assert!(desktop_scale::pitch_on());
+                assert!(desktop_scale::inset_on());
+                honeycomb::tick(); desktop_scale::tick();
+                assert!(desktop_scale::lens_on() && desktop_scale::pitch_on() && desktop_scale::inset_on());
+                with(|u|assert!(!u.rw_written.contains(&0)));
+            }
             "s541-native" => {
                 s541_launcher::ACTIVE=true;
                 honeycomb::tick();
