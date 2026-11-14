@@ -5,6 +5,7 @@ void bt_probe_scan(void);
 void bt_probe_action(uint32_t id);
 void bt_probe_next(void);
 void bt_probe_connect(void);
+int bt_probe_connect_address(const uint8_t address[6],const char *name);
 void bt_probe_disconnect(void);
 void bt_probe_bnep(void);
 void bt_probe_poll(void);

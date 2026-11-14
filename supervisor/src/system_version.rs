@@ -5,7 +5,6 @@
 
 use crate::*;
 
-pub(crate) const PAGE_PID: u32 = 22;
 
 const DESCRIPTOR: u32 = 0x200D_2030;
 const PAGE_KEY: u32 = 0x0016_0018;
@@ -33,7 +32,9 @@ static mut INSTALLED: bool = false;
 
 #[inline]
 fn valid_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'.'
+    // 中文键盘上屏的汉字是 3 字节 UTF-8；完整性由键盘按「整字写入 / 整字退格」
+    // 保证，这里只需放行多字节字节流。显示侧 set_device_name 已按 UTF-8 折行。
+    c.is_ascii_alphanumeric() || c == b'.' || c >= 0x80
 }
 
 pub(crate) unsafe fn ensure_loaded() {
@@ -139,7 +140,7 @@ pub(crate) unsafe fn edit_custom() {
     crate::keyboard::open(initial, crate::keyboard::Completion::SystemVersion);
 }
 
-/// 键盘完成动作调用。只有非空且全部为英文、数字或小数点的值才会保存。
+/// 键盘完成动作调用。非空、UTF-8 完整，且 ASCII 只含字母数字小数点的值才会保存。
 pub(crate) unsafe fn save_custom(text: *const u8) -> bool {
     ensure_loaded();
     if text.is_null() {

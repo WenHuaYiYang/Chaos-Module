@@ -24,8 +24,13 @@ pub(crate) unsafe fn refresh() -> *const u8 {
     // ---- 显示 ----
     w.s(b"-- display --").c(b'\n');
     let (disp, bytes) = crate::screen_rotation::probe();
+    if disp != 0 {
+    }
     w.s(b"disp=").n(disp).c(b'\n');
     w.s(b"flip=").n(if crate::screen_rotation::enabled() { 1 } else { 0 }).c(b'\n');
+    w.s(b"scrn=").n(crate::fw_api::screen_state()).c(b' ');
+    // screen_state = SCREEN_MGR+0x86A 原始字节: 亮屏/AOD/息屏各看一次,
+    // 把 AOD 归到哪一档定下来(若 AOD 也是 2, 息屏空闲档在 AOD 里不生效)。
     // disp 结构 0x20..0x5F：render_mode(疑 +0x39：0=partial 1=direct 2=full)
     // 与 rotation 都在这段里。翻转前后各看一次即可把两者分开。
     for (i, byte) in bytes.iter().enumerate() {

@@ -2,6 +2,7 @@
 
 use crate::page::*;
 use crate::page::Page;
+use crate::page::kit::{MenuSpec, RowKind, RowModel, RowSub, ToggleDef};
 
 // ===== 页13: 系统美化(菜单) / 页5: 更换字体 / 页6: 桌面图标 =====
 //
@@ -31,10 +32,42 @@ unsafe fn cbuf(p: *const u8) -> &'static [u8] {
 
 // ===== 页13: 系统美化(菜单, 四条进二级页) =====
 
-/// 页28: 系统美化 -> 应用列表设置(二级)。桌面图标三条排版律的开关都放在那里。
-pub(crate) const APP_LIST_PID: u32 = 28;
 
 pub(crate) struct BeautifyPage;
+
+// ===== 页13 的开关定义 =====
+unsafe fn restore_font_get() -> bool { crate::beautify_restore::enabled() }
+unsafe fn restore_font_toggle() { crate::beautify_restore::request_toggle(); }
+unsafe fn restore_font_status() -> *const u8 { crate::beautify_restore::status() }
+unsafe fn restore_blur_get() -> bool { crate::res_hook::held() }
+unsafe fn restore_blur_toggle() { crate::res_hook::request_toggle(); }
+unsafe fn restore_blur_status() -> *const u8 { crate::res_hook::status() }
+
+static RESTORE_FONT_DEF: ToggleDef = ToggleDef {
+    get: restore_font_get, toggle: restore_font_toggle, status: Some(restore_font_status) };
+static RESTORE_BLUR_DEF: ToggleDef = ToggleDef {
+    get: restore_blur_get, toggle: restore_blur_toggle, status: Some(restore_blur_status) };
+
+/// 页13 行模型(分组标题与说明不占行槽)。信息架构(只重排, 不删入口):
+///   字体与图标  更换字体 / 桌面图标 / 应用列表设置
+///   模糊与背景  系统模糊 / 模糊区域 + 重启恢复两个开关 + corona 说明
+/// 返回主路径 = 标题栏返回键, 不再自建"返回"行。
+static BEAUTIFY_ROWS: &[RowModel] = &[
+    RowModel::section("字体与图标\0".as_bytes()),
+    RowModel::nav("更换字体\0".as_bytes(), Pid::FontList as u32),
+    RowModel::nav("桌面图标\0".as_bytes(), Pid::IconSub as u32),
+    RowModel::nav("应用列表设置\0".as_bytes(), Pid::AppList as u32),
+    RowModel::section("模糊与背景\0".as_bytes()),
+    RowModel::nav("系统模糊\0".as_bytes(), Pid::Blur as u32),
+    RowModel::nav("模糊区域\0".as_bytes(), Pid::BlurZone as u32),
+    RowModel::toggle("重启恢复字体和图标\0".as_bytes(), &RESTORE_FONT_DEF),
+    RowModel::toggle("重启恢复模糊\0".as_bytes(), &RESTORE_BLUR_DEF),
+    RowModel::note("说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor\0".as_bytes()),
+];
+
+impl MenuSpec for BeautifyPage {
+    fn rows(&self) -> &'static [RowModel] { BEAUTIFY_ROWS }
+}
 
 impl Page for BeautifyPage {
     fn fill_title(&self, buf: *mut u8) {
@@ -42,51 +75,12 @@ impl Page for BeautifyPage {
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::clickable("更换字体\0".as_bytes())),
-                (1, RowSpec::clickable("桌面图标\0".as_bytes())),
-                (2, RowSpec::clickable("系统模糊\0".as_bytes())),
-                (3, RowSpec::switch("重启恢复字体和图标\0".as_bytes())),
-                (4, RowSpec::switch("重启恢复模糊\0".as_bytes())),
-                (5, RowSpec::clickable("应用列表设置\0".as_bytes())),
-                (6, RowSpec::clickable("返回\0".as_bytes()))])?;
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, crate::beautify_restore::status(), 0,
-                crate::beautify_restore::enabled() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(4)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, crate::res_hook::status(), 0,
-                crate::res_hook::held() as u8);
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            // 二级页一律 nav_goto(真页面跳转 => 固件带压栈动画, 返回键也是动画 pop);
-            // 页内切层级(只 render_req)没有动画, 不许再用这种做法。
-            match idx {
-                0 => nav_goto(5, 0),
-                1 => nav_goto(6, 0),
-                2 => nav_goto(crate::background_home::BLUR_PID, 0),
-                5 => nav_goto(APP_LIST_PID, 0),
-                6 => nav_back(),
-                _ => {}
-            }
-        }
-    }
-
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 3 || idx == 4 }
-
-    fn on_switch(&self, idx: usize) {
-        match idx {
-            3 => unsafe { crate::beautify_restore::request_toggle(); },
-            // 关掉 = 让出 LVGL 资源钩子。Corona 那类模块要求槽里仍是出厂回调才肯装,
-            // 先让位、让它装好、再打开这一格, 两条重定向就能串在一起。
-            4 => unsafe { crate::res_hook::request_toggle(); },
-            _ => {}
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
 
 // ===== 页28: 系统美化 -> 应用列表设置(二级) =====
@@ -97,65 +91,45 @@ impl Page for BeautifyPage {
 // 蜂窝与这些开关互斥：蜂窝开时清空 RW6 三项；点开任一 RW6 项则关闭蜂窝。
 pub(crate) struct AppListPage;
 
+// 页28 开关定义
+unsafe fn ds_lens_get() -> bool { crate::desktop_scale::lens_on() }
+unsafe fn ds_lens_toggle() { crate::desktop_scale::set_lens(!crate::desktop_scale::lens_on()); }
+unsafe fn ds_pitch_get() -> bool { crate::desktop_scale::pitch_on() }
+unsafe fn ds_pitch_toggle() { crate::desktop_scale::set_pitch(!crate::desktop_scale::pitch_on()); }
+unsafe fn ds_inset_get() -> bool { crate::desktop_scale::inset_on() }
+unsafe fn ds_inset_toggle() { crate::desktop_scale::set_inset(!crate::desktop_scale::inset_on()); }
+unsafe fn honey_get() -> bool { crate::honeycomb::enabled() }
+unsafe fn honey_toggle() { crate::honeycomb::toggle(); }
+
+static DS_LENS_DEF: ToggleDef = ToggleDef { get: ds_lens_get, toggle: ds_lens_toggle, status: None };
+static DS_PITCH_DEF: ToggleDef = ToggleDef { get: ds_pitch_get, toggle: ds_pitch_toggle, status: None };
+static DS_INSET_DEF: ToggleDef = ToggleDef { get: ds_inset_get, toggle: ds_inset_toggle, status: None };
+static HONEY_DEF: ToggleDef = ToggleDef { get: honey_get, toggle: honey_toggle, status: None };
+
+static APPLIST_ROWS: &[RowModel] = &[
+    RowModel::toggle("缩放同 RW6\0".as_bytes(), &DS_LENS_DEF),
+    RowModel::toggle("排距同 RW6\0".as_bytes(), &DS_PITCH_DEF),
+    RowModel::toggle("内缩同 RW6\0".as_bytes(), &DS_INSET_DEF),
+    RowModel::toggle("蜂窝视图\0".as_bytes(), &HONEY_DEF),
+    RowModel::note("中间区域上下左右拖动图标。\n左侧上滑缩小间距，下滑放大；右侧上滑放大整体，下滑缩小。\n到顶部继续下拉，或到左端继续右滑返回。轻点打开应用，长按进入编辑并按提示删除。\0".as_bytes()),
+];
+
+impl MenuSpec for AppListPage {
+    fn rows(&self) -> &'static [RowModel] { APPLIST_ROWS }
+}
+
 impl Page for AppListPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用列表设置\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            let last = build_rows(ctx, ctx.title, &[
-                (0, RowSpec::switch("缩放同 RW6\0".as_bytes())),
-                (1, RowSpec::switch("排距同 RW6\0".as_bytes())),
-                (2, RowSpec::switch("内缩同 RW6\0".as_bytes())),
-                (3, RowSpec::switch("蜂窝视图\0".as_bytes())),
-                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::desktop_scale::lens_on() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::desktop_scale::pitch_on() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::desktop_scale::inset_on() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::honeycomb::enabled() as u8);
-            let label = fw_api::label_create(ctx.content);
-            if label == 0 { return Err(PageError::RowFailed(4)); }
-            fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
-            fw_api::obj_set_width(label, 320);
-            fw_api::label_set_text(label,
-                "中间区域上下左右拖动图标。\n左侧上滑缩小间距，下滑放大；右侧上滑放大整体，下滑缩小。\n到顶部继续下拉，或到左端继续右滑返回。轻点打开应用，长按进入编辑并按提示删除。\0".as_bytes().as_ptr());
-            fw_api::obj_align_to(label, last, fw_api::align::OUT_BOTTOM_MID, 0, 8);
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
-    fn on_click(&self, idx: usize) {
-        unsafe { if idx == 11 { nav_back(); } }
-    }
-
-    fn is_switch_row(&self, idx: usize) -> bool { idx < 4 }
-
-    fn on_switch(&self, idx: usize) {
-        unsafe {
-            if idx == 0 {
-                crate::desktop_scale::set_lens(!crate::desktop_scale::lens_on());
-            } else if idx == 1 {
-                crate::desktop_scale::set_pitch(!crate::desktop_scale::pitch_on());
-            } else if idx == 2 {
-                crate::desktop_scale::set_inset(!crate::desktop_scale::inset_on());
-            } else if idx == 3 {
-                crate::honeycomb::toggle();
-            } else {
-                return;
-            }
-            crate::honeycomb::reapply_now();
-            crate::render_req(APP_LIST_PID as usize);
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
 
 // ===== 页4: 系统美化 -> 系统模糊(二级) =====
@@ -169,78 +143,60 @@ pub(crate) struct BlurPage;
 
 pub(crate) const BLUR_LEGACY_PID: u32 = 7;
 
+// 页4 开关/刷新定义
+unsafe fn blur_bg_off() {
+    // 选回官方背景须关闭两开关；引擎和 v2 图标都由背景生命周期安全退役。
+    crate::corona_blur::set(false);
+    crate::corona_blur::set_v2_enabled(false);
+    crate::background_home::request(0);
+}
+unsafe fn blur_bg_refresh(slot: usize) {
+    let pid = st_rd!(FG_PAGE) as usize;
+    if pid > MAX_PID { return; }
+    let r = read_volatile(page_rows_ptr(pid).add(slot));
+    if r != 0 {
+        fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
+            (crate::background_home::mode() == 0 && !crate::corona_blur::active()) as u8);
+    }
+}
+unsafe fn blur_v2_get() -> bool { crate::corona_blur::v2_enabled() }
+unsafe fn blur_v2_toggle() { crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled()); }
+unsafe fn blur_status_ptr() -> *const u8 { crate::background_home::status().as_ptr() }
+static BLUR_V2_DEF: ToggleDef = ToggleDef { get: blur_v2_get, toggle: blur_v2_toggle, status: None };
+
+/// 页4 行模型(菜单骨架; 返回靠标题栏返回键):
+///   0 系统背景勾选(点一下切回官方背景并关两开关) / 1 模糊v2 / 2 状态行 /
+///   3 旧版选项 / 4 模糊区域 / corona 长说明。
+/// (corona模糊那一行已按要求停用: 引擎没删, v2 是同一套引擎, 旧配置若还是 1,
+///  点一下"系统背景"即可关掉它。)
+static BLUR_ROWS: &[RowModel] = &[
+    RowModel::action("系统背景\0".as_bytes(), blur_bg_off, fw_api::trailing::CHECKBOX, Some(blur_bg_refresh)),
+    RowModel::toggle("模糊v2\0".as_bytes(), &BLUR_V2_DEF),
+    RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(blur_status_ptr),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "旧版选项\0".as_bytes(), sub: RowSub::Static("关闭上面的模糊开关后生效\0".as_bytes()),
+               kind: RowKind::Nav(BLUR_LEGACY_PID), trailing: 0, refresh: None },
+    RowModel { label: "模糊区域\0".as_bytes(), sub: RowSub::Static("适用于所有模糊选项（含通知图标去黑底）\0".as_bytes()),
+               kind: RowKind::Nav(Pid::BlurZone as u32), trailing: 0, refresh: None },
+    RowModel::note("说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor。\0".as_bytes()),
+];
+
+impl MenuSpec for BlurPage {
+    fn rows(&self) -> &'static [RowModel] { BLUR_ROWS }
+}
+
 impl Page for BlurPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "系统模糊\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            let prev = build_rows(ctx, ctx.title, &[
-                (0, RowSpec::check("系统背景\0".as_bytes(), core::ptr::null())),
-                // 行1 = corona模糊开关：按要求停用（保留空位，不重排其它行号）。
-                // 引擎本身没删：模糊v2 是同一套 Corona 引擎，corona_blur::active()
-                // 只要 v2 打开就成立；旧配置若还是 1，点一下“系统背景”即可关掉它
-                // （on_click 分支仍然调用 corona_blur::set(false)）。
-                // (1, RowSpec::switch("corona模糊\0".as_bytes())),
-                (2, RowSpec::switch("模糊v2\0".as_bytes())),
-                (3, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (4, RowSpec::tap("旧版选项\0".as_bytes(), "关闭上面的模糊开关后生效\0".as_bytes().as_ptr())),
-                (5, RowSpec::tap("模糊区域\0".as_bytes(), "适用于所有模糊选项（含通知图标去黑底）\0".as_bytes().as_ptr())),
-                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            // 长说明不放入会裁切的行副标题。与许可全文相同：标签只限宽，
-            // 高度随换行增长；挂在原生可滚动 content 上，完整 URL 不含 Markdown 标记。
-            let label = fw_api::label_create(ctx.content);
-            if label == 0 { return Err(PageError::RowFailed(6)); }
-            fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
-            fw_api::obj_set_width(label, 320);
-            fw_api::label_set_text(label,
-                "说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor。\0".as_bytes().as_ptr());
-            fw_api::obj_align_to(label, prev, fw_api::align::OUT_BOTTOM_MID, 0, 8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                (crate::background_home::mode() == 0 && !crate::corona_blur::active()) as u8);
-            // 行1（corona模糊）已停用，不再刷新勾选态。
-            // fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
-            //     fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-            //     crate::corona_blur::enabled() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(2)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::corona_blur::v2_enabled() as u8);
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            match idx {
-                0 => {
-                    // 选回官方背景须关闭两开关；引擎和 v2 图标都由背景生命周期安全退役。
-                    crate::corona_blur::set(false);
-                    crate::corona_blur::set_v2_enabled(false);
-                    crate::background_home::request(0);
-                },
-                4 => nav_goto(BLUR_LEGACY_PID, 0),
-                5 => nav_goto(crate::blur_zone::PAGE_PID, 0),
-                11 => nav_back(),
-                _ => {}
-            }
-        }
-    }
-
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 2 }
-
-    fn on_switch(&self, idx: usize) {
-        unsafe {
-            // 行1（corona模糊）已停用：不接开关事件，避免它被“看不见的手”翻开。
-            // if idx == 1 {
-            //     crate::corona_blur::set(!crate::corona_blur::enabled());
-            // } else
-            if idx == 2 {
-                crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled());
-            }
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
 
 // ===== 页7: 系统模糊 -> 旧版选项 =====
@@ -249,58 +205,50 @@ impl Page for BlurPage {
 // 其余旧档位/实时截取设置全部集中到本页；corona 开启时保留设置但不应用。
 pub(crate) struct BlurLegacyPage;
 
+// 页7 开关定义(初态/翻转都从 background_home 的真源现读)
+unsafe fn legacy_static_get() -> bool { crate::background_home::mode() == 1 }
+unsafe fn legacy_static_toggle() {
+    crate::background_home::request(if crate::background_home::mode() == 1 { 0 } else { 1 });
+}
+unsafe fn legacy_rt_get() -> bool { crate::background_home::realtime_on() != 0 }
+unsafe fn legacy_rt_toggle() {
+    crate::background_home::set_realtime(if crate::background_home::realtime_on() != 0 { 0 } else { 1 });
+}
+unsafe fn legacy_clear_get() -> bool { crate::background_home::mode() == 3 }
+unsafe fn legacy_clear_toggle() {
+    crate::background_home::request(if crate::background_home::mode() == 3 { 0 } else { 3 });
+}
+static LEGACY_STATIC_DEF: ToggleDef = ToggleDef { get: legacy_static_get, toggle: legacy_static_toggle, status: None };
+static LEGACY_RT_DEF: ToggleDef = ToggleDef { get: legacy_rt_get, toggle: legacy_rt_toggle, status: None };
+static LEGACY_CLEAR_DEF: ToggleDef = ToggleDef { get: legacy_clear_get, toggle: legacy_clear_toggle, status: None };
+static LEGACY_STATUS_ROWS: &[RowModel] = &[
+    RowModel::toggle("静态背景图(表盘)\0".as_bytes(), &LEGACY_STATIC_DEF),
+    RowModel::toggle("自动截取替换图片\0".as_bytes(), &LEGACY_RT_DEF),
+    RowModel::action("手动生成或更新表盘背景\0".as_bytes(), legacy_generate, 0, None),
+    RowModel::toggle("完全透明背景（实验性）\0".as_bytes(), &LEGACY_CLEAR_DEF),
+    RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(blur_status_ptr),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel::display("关闭 corona模糊后生效\0".as_bytes()),
+];
+
+unsafe fn legacy_generate() { crate::background_home::generate(); }
+
+impl MenuSpec for BlurLegacyPage {
+    fn rows(&self) -> &'static [RowModel] { LEGACY_STATUS_ROWS }
+}
+
 impl Page for BlurLegacyPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "旧版选项\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::switch("静态背景图(表盘)\0".as_bytes())),
-                (1, RowSpec::switch("自动截取替换图片\0".as_bytes())),
-                (2, RowSpec::clickable("手动生成或更新表盘背景\0".as_bytes())),
-                (3, RowSpec::switch("完全透明背景（实验性）\0".as_bytes())),
-                (4, RowSpec::display(crate::background_home::status(), core::ptr::null())),
-                (5, RowSpec::display("关闭 corona模糊后生效\0".as_bytes(), core::ptr::null())),
-                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            let mode = crate::background_home::mode();
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (mode == 1) as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-                crate::background_home::realtime_on() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(3)), fw_api::NONE_PTR,
-                fw_api::NONE_PTR, fw_api::NONE_PTR, 0, (mode == 3) as u8);
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            match idx {
-                2 => crate::background_home::generate(),
-                11 => nav_back(),
-                _ => {}
-            }
-        }
-    }
-
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 0 || idx == 1 || idx == 3 }
-
-    fn on_switch(&self, idx: usize) {
-        unsafe {
-            match idx {
-                0 => crate::background_home::request(
-                    if crate::background_home::mode() == 1 { 0 } else { 1 }),
-                1 => crate::background_home::set_realtime(
-                    if crate::background_home::realtime_on() != 0 { 0 } else { 1 }),
-                3 => crate::background_home::request(
-                    if crate::background_home::mode() == 3 { 0 } else { 3 }),
-                _ => {}
-            }
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
 
 // ===== 页5: 系统美化 -> 更换字体(二级) =====
@@ -327,6 +275,17 @@ impl Page for FontListPage {
         }
     }
 
+    /// 进页重读字体清单: 刚投递进去的字体不用重启就该出现在列表里。
+    fn on_enter(&self) {
+        unsafe { font_list::refresh(); }
+    }
+
+    /// 新页面实例交付: 旧页根连同挂在页根上的确认框已被固件销毁, 框状态必须归零,
+    /// 否则后续删除会打到复用同一块内存的新对象上(见 confirm_pop.rs)。
+    fn on_instance_reset(&self) {
+        unsafe { font_list::popup_forget(Pid::FontList as usize); }
+    }
+
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             // 确认框挂在页根上, 重建只销毁 content 带不走它 —— 先把它的状态归零。
@@ -348,12 +307,9 @@ impl Page for FontListPage {
             // 字体一个都没有时不新增行(复用行 0 那个槽位), 只给一句说明:
             // 空列表页什么都不说会像是界面坏了。副标签指着那句静态文本。
             if ent == 0 {
-                let r = build_row(ctx, last, FONT_ROW0, &RowSpec::display(
+                let _ = build_row(ctx, last, FONT_ROW0, &RowSpec::display(
                     "还没有投递过字体\0".as_bytes(), FONT_EMPTY_SUB.as_ptr()));
-                if r != 0 { last = r; }
             }
-            build_rows(ctx, last, &[
-                (9, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 建完行立刻原地补写勾选态, 并把行句柄交给 font_list: 切换与两步删除
             // 的反馈都走原地刷新(不重建整页 —— 重建会把整页字体样式重抄一遍)。
             font_list::bind_rows(ctx.rows, FONT_ROW0, ent as usize);
@@ -367,7 +323,6 @@ impl Page for FontListPage {
             match idx {
                 // 行0固定为官方字体，行1..8对应八个自定义字体槽位。
                 0..=8 => font_list::click_row(idx),
-                9 => nav_back(),
                 _ => {}
             }
         }
@@ -382,6 +337,16 @@ pub(crate) struct IconSubPage;
 impl Page for IconSubPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "桌面图标\0".as_bytes()); }
+    }
+
+    /// 进页重读图标包清单: 刚侧载投递完的包不用重启就该出现在列表里。
+    fn on_enter(&self) {
+        unsafe { icon_apply::refresh_packs(); }
+    }
+
+    /// 新页面实例交付: 与字体页同款, 把挂在页根上的确认框状态归零。
+    fn on_instance_reset(&self) {
+        unsafe { icon_apply::popup_forget(Pid::IconSub as usize); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
@@ -405,7 +370,6 @@ impl Page for IconSubPage {
                 if r != 0 { last = r; }
                 i += 1;
             }
-            build_rows(ctx, last, &[(11, RowSpec::clickable("返回\0".as_bytes()))])?;
             // 建完行立刻原地补写勾选态, 并把行句柄交给 icon_apply: 之后点一下切换、
             // 两次确认删除都只走原地刷新(不重建整页 —— 重建会把整页字体样式重抄一遍)。
             icon_apply::bind_rows(ctx.rows, ICON_ROW0, ent as usize);
@@ -420,7 +384,6 @@ impl Page for IconSubPage {
                 // 0..9 = 图标包条目。选中语义全在 icon_apply::click_row 里:
                 // 点未选中的 = 切过去; 点已选中的包 = 先变成"再点一次删除", 再点才删。
                 0..=9 => icon_apply::click_row(idx),
-                11 => nav_back(),
                 _ => {}
             }
         }
@@ -440,6 +403,51 @@ impl Page for IconSubPage {
 // 这些行没有副标签, 详见 fw_api::row_update 注释)。
 pub(crate) struct BlurZonePage;
 
+// 页15 开关定义(四个背景替换区域; 数据与持久化全在 blur_zone.rs)
+unsafe fn zone0_get() -> bool { crate::blur_zone::on(0) }
+unsafe fn zone0_toggle() {
+    if crate::blur_zone::set(0, !crate::blur_zone::on(0)) {
+        crate::background_home::remount();
+    }
+}
+static ZONE0_DEF: ToggleDef = ToggleDef { get: zone0_get, toggle: zone0_toggle, status: None };
+unsafe fn zone1_get() -> bool { crate::blur_zone::on(1) }
+unsafe fn zone1_toggle() {
+    if crate::blur_zone::set(1, !crate::blur_zone::on(1)) {
+        crate::background_home::remount();
+    }
+}
+static ZONE1_DEF: ToggleDef = ToggleDef { get: zone1_get, toggle: zone1_toggle, status: None };
+unsafe fn zone2_get() -> bool { crate::blur_zone::on(2) }
+unsafe fn zone2_toggle() {
+    if crate::blur_zone::set(2, !crate::blur_zone::on(2)) {
+        crate::background_home::remount();
+    }
+}
+static ZONE2_DEF: ToggleDef = ToggleDef { get: zone2_get, toggle: zone2_toggle, status: None };
+unsafe fn zone3_get() -> bool { crate::blur_zone::on(3) }
+unsafe fn zone3_toggle() {
+    if crate::blur_zone::set(3, !crate::blur_zone::on(3)) {
+        crate::background_home::remount();
+    }
+}
+static ZONE3_DEF: ToggleDef = ToggleDef { get: zone3_get, toggle: zone3_toggle, status: None };
+
+static ZONE_ROWS: &[RowModel] = &[
+    RowModel { label: "适用于 Corona 模糊\0".as_bytes(), sub: RowSub::Static("包括通知图标去黑底\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel::toggle("启动器\0".as_bytes(), &ZONE0_DEF),
+    RowModel::toggle("控制中心\0".as_bytes(), &ZONE1_DEF),
+    RowModel::toggle("小部件\0".as_bytes(), &ZONE2_DEF),
+    RowModel::toggle("通知中心\0".as_bytes(), &ZONE3_DEF),
+    RowModel { label: "关闭通知区域恢复原图标\0".as_bytes(), sub: RowSub::Static("同时撤销通知图标去黑底\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+];
+
+impl MenuSpec for BlurZonePage {
+    fn rows(&self) -> &'static [RowModel] { ZONE_ROWS }
+}
+
 impl Page for BlurZonePage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "模糊区域\0".as_bytes()); }
@@ -448,41 +456,14 @@ impl Page for BlurZonePage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             crate::blur_zone::ensure_loaded();
-            build_rows(ctx, ctx.title, &[
-                (4, RowSpec::display("适用于 Corona 模糊\0".as_bytes(),
-                    "包括通知图标去黑底\0".as_bytes().as_ptr())),
-                (0, RowSpec::switch("启动器\0".as_bytes())),
-                (1, RowSpec::switch("控制中心\0".as_bytes())),
-                (2, RowSpec::switch("小部件\0".as_bytes())),
-                (3, RowSpec::switch("通知中心\0".as_bytes())),
-                (5, RowSpec::display("关闭通知区域恢复原图标\0".as_bytes(),
-                    "同时撤销通知图标去黑底\0".as_bytes().as_ptr())),
-                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            for i in 0..crate::blur_zone::REGION_N {
-                fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(i)),
-                    fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                    0, crate::blur_zone::on(i) as u8);
-            }
-            Ok(())
+            frame::build(self, ctx, ctx.title)
         }
     }
 
-    fn on_click(&self, idx: usize) {
-        if idx == 11 { unsafe { nav_back(); } }
-    }
-
-    fn is_switch_row(&self, idx: usize) -> bool { idx < crate::blur_zone::REGION_N }
-
-    fn on_switch(&self, idx: usize) {
-        unsafe {
-            if idx >= crate::blur_zone::REGION_N { return; }
-            if crate::blur_zone::set(idx, !crate::blur_zone::on(idx)) {
-                crate::background_home::remount();
-            }
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
-
 
 pub(super) static PAGE_BEAUTIFY: BeautifyPage = BeautifyPage;
 pub(super) static PAGE_APPLIST: AppListPage = AppListPage;

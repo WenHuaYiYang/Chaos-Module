@@ -446,6 +446,9 @@ pub(crate) unsafe fn tick() {
     let honeycomb = crate::honeycomb::enabled();
     if honeycomb { disable_for_honeycomb(); }
     save_deferred();
+    // 息屏时桌面不可见, 缩放探测与写值都是白费; 亮屏后 on_resume/页面重建会重算,
+    // 所以这里直接返回安全。配置落盘已在上面做过, 不受息屏影响。
+    if !fw_api::screen_is_on() { return; }
     let cont = rd32(GRID_GLOBAL as *const u32);
     if cont == 0 || !safe_ptr(cont) {
         st_wr!(LAW_SIG, 0);

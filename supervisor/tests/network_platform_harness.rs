@@ -34,5 +34,7 @@ unsafe fn read(fd:i32,out:*mut u8,capacity:u32)->i32 {with(|m|{
     }
 })}
 unsafe fn close(fd:i32)->i32 {with(|m|m.closes.push(fd));0}
-unsafe fn nsh_spawn(name:Cp,entry:Entry,actions:*mut usize)->i32 {assert!(actions.is_null());with(|m|{m.spawns.push((std::ffi::CStr::from_ptr(name.cast()).to_bytes().to_vec(),entry));m.spawn_rc})}
+unsafe fn nsh_spawn(name:Cp,entry:Entry,_actions:*mut usize)->i32 {with(|m|{m.spawns.push((std::ffi::CStr::from_ptr(name.cast()).to_bytes().to_vec(),entry));m.spawn_rc})}
+unsafe fn nsh_actions_init(head:*mut usize)->i32 {*head=1;0}
+unsafe fn nsh_actions_destroy(_head:*mut usize){}
 unsafe fn nsh_waitpid_nohang(pid:i32,status:&mut i32)->i32 {with(|m|{m.waits.push(pid);*status=0;m.wait_results.pop_front().unwrap_or(0)})}

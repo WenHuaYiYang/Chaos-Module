@@ -667,9 +667,9 @@ pub(crate) unsafe fn tick() {
     // 在安静拍上重建 —— 与"更换字体""桌面图标"两页同一套做法。
     if st_rd!(DIRTY) != 0 {
         st_wr!(DIRTY, 0);
-        if crate::page_is_live(BLUR_PID as usize) { crate::render_req(BLUR_PID as usize); }
+        if crate::page_is_live(BLUR_PID as usize) { crate::render_req(BLUR_PID); }
         if crate::page_is_live(crate::page::BLUR_LEGACY_PID as usize) {
-            crate::render_req(crate::page::BLUR_LEGACY_PID as usize);
+            crate::render_req(crate::page::BLUR_LEGACY_PID);
         }
     }
     // Give Corona exclusive ownership before ANY legacy surface worker,

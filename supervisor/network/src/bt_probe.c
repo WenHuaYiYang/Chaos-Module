@@ -316,7 +316,8 @@ void bt_probe_scan(void)
     if(state.phase!=IDLE){state.error=-607;unlock(p);return;}
     state.count=state.selected=0;state.error=0;state.phase=SCAN;state.started=state.ticks;
     state.scan_stopped=state.scan_seen_start=0;state.scan_stage=4;state.scan_result=0;unlock(p);
-    uint32_t timeout=20;int rc=request(30,&timeout,sizeof(timeout));
+    /* 12s: inquiry 覆盖两个 train 的下限是 10.24s, 留 1.7s 余量。20s 是纯等待。 */
+    uint32_t timeout=12;int rc=request(30,&timeout,sizeof(timeout));
     p=lock();state.scan_result=rc;
     if(rc){state.error=rc;state.error_stage=1;state.phase=IDLE;state.scan_stage=8;}
     else if(state.scan_stage==4)state.scan_stage=5;
@@ -400,7 +401,7 @@ void bt_probe_leave(void) {bt_probe_disconnect();}
 void bt_probe_poll(void)
 {
     uint32_t p=lock();state.ticks++;
-    if(state.phase==SCAN && state.ticks-state.started>88) {
+    if(state.phase==SCAN && state.ticks-state.started>56) {
         state.phase=IDLE;state.scan_stage=7;
         if(!state.scan_seen_start){state.error=-617;state.scan_stage=9;}
     }
@@ -472,6 +473,20 @@ void bt_probe_poll(void)
         if((rc && rc!=-11) || ipc){p=lock();state.bond=2;state.bonding=0;state.bond_pending=0;state.connect_ready=1;unlock(p);}
     }
     if(connect)queue(1);
+}
+/* 用记住的地址直连, 跳过 inquiry: 经典 inquiry 只返回"当前允许被发现"的对端,
+ * 而 page scan 在蓝牙开着时一直都在, 所以已知地址随时可以连上。 */
+int bt_probe_connect_address(const uint8_t address[6],const char *name)
+{
+    if(!address)return -22;
+    uint32_t p=lock();
+    if(state.phase!=IDLE){unlock(p);return -16;}
+    struct bt_probe_device *d=&state.devices[0];
+    memcpy(d->address,address,6);d->rssi=0;
+    unsigned j=0;if(name)for(;j<20 && name[j];j++)d->name[j]=name[j];d->name[j]=0;
+    state.count=1;state.selected=0;unlock(p);
+    bt_probe_connect();
+    return 0;
 }
 /* Bounded formatting: no dependency on an unaudited firmware printf. */
 struct output {char *s;uint32_t n,cap;};

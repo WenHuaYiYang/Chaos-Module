@@ -811,13 +811,13 @@ unsafe fn delete_tick() {
                 st_wr!(IC_LOADED, 0);
                 st_wr!(IC_DEL_ST, 0);
                 st_wr!(IC_DEL, 0);
-                render_req(ICON_PID as usize);
+                render_req(ICON_PID);
                 return;
             }
             st_wr!(IC_LOADED, 1);                  // 内存清单 == 刚写下去的磁盘内容
             st_wr!(IC_DEL_K, 0);
             st_wr!(IC_DEL_ST, 4);
-            render_req(ICON_PID as usize);                        // 列表立刻少一项
+            render_req(ICON_PID);                        // 列表立刻少一项
         }
         4 => {
             let k = st_rd!(IC_DEL_K) as usize;
@@ -859,7 +859,7 @@ unsafe fn delete_tick() {
             }
             st_wr!(IC_DEL_ST, 0);
             st_wr!(IC_DEL, 0);
-            render_req(ICON_PID as usize);
+            render_req(ICON_PID);
         }
         _ => {}
     }
@@ -870,7 +870,7 @@ unsafe fn delete_tick() {
 //   1. render: lines_fill() 填文本 -> 按需**动态建行**(有几条建几行) -> bind_rows + refresh_rows
 //   2. 之后任何状态变化(切换选中、两步删除的确认态)只走 refresh_rows(): 重填文本 +
 //      用 row_update 的第 6 参原地写勾选态, **不销毁/重建任何对象**(表盘页 wf_apply_selection 同款)
-//   3. 定时器侧(跑批、删除流水线)一概不直接碰对象, 只置 render_req(ICON_PID as usize) 让框架重建
+//   3. 定时器侧(跑批、删除流水线)一概不直接碰对象, 只置 render_req(ICON_PID) 让框架重建
 // ---------------------------------------------------------------------------
 
 /// 条目总数 = 1(系统原图标) + 包数
@@ -1130,7 +1130,7 @@ pub(crate) unsafe fn tick() {
     // 批过去自然跟上; 页不在前台了就不用排(下次 on_create 会把旗标清掉)。
     if st_rd!(IP_POP_DIRT) != 0 && !running && page_is_live(ICON_PID as usize) {
         st_wr!(IP_POP_DIRT, 0);
-        render_req(ICON_PID as usize);
+        render_req(ICON_PID);
     }
     if !running {
         match st_rd!(IC_REQ) {

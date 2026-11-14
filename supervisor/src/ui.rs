@@ -11,7 +11,9 @@ use crate::mem::{rd16, rd32};
 const CONTENT_W: i32 = 336;
 const CONTENT_H: i32 = 424;
 const CONTENT_TOP: i32 = 56;
-const CONTENT_PAD_BOTTOM: i32 = 32;
+const CONTENT_PAD_BOTTOM: i32 = crate::page::theme::T::SAFE_BOTTOM;
+/// 列表页 content 的基准 y(动效归零/相对偏移都用它; 整页页面的基准是 0)。
+pub(crate) const CONTENT_BASE_Y: i32 = CONTENT_TOP;
 
 pub(crate) unsafe extern "C" fn chaos_on_signal() -> i32 {
     core::arch::asm!("nop");
@@ -42,9 +44,8 @@ pub(crate) unsafe extern "C" fn chaos_on_create(_page: u32, _p1: u32, _p2: u32) 
         PAGES[pid].built = 0;
         // 页5/页6 的确认框挂在**页根**上(状态机见 confirm_pop.rs), 新实例 = 旧根连同旧框已被
         // 固件销毁: 框句柄状态必须在这里归零, 否则后面的删除会打到复用同一块内存的新对象上。
-        crate::font_list::popup_forget(pid);
-        crate::icon_apply::popup_forget(pid);
-        if pid == crate::terminal_ui::PAGE_PID as usize { crate::terminal_ui::forget_ui(); }
+        // 各页在 on_instance_reset 里作废自己挂在页根上的浮层状态与句柄缓存。
+        PAGE_TABLE[pid].on_instance_reset();
         st_wr!(HEAL_TRYS, 0);
     st_wr!(APP_FG, 1);   // 我们的应用在前台(逐对象补写那类跑批按这道门过滤)
 
@@ -101,9 +102,10 @@ pub(crate) unsafe fn apply_row_visibility(pid: usize) {
 }
 
 // 登记"重建某页"请求: 点击回调里不能直接销毁自身对象树(事件派发中 → use-after-free),
-// 交给常驻 lv_timer(UI线程, 不在事件派发上下文)真正重建
-pub(crate) unsafe fn render_req(pid: usize) {
-    st_wr!(RENDER_REQ, pid as u32);
+// 交给常驻 lv_timer(UI线程, 不在事件派发上下文)真正重建。
+// 走 dirty 总线(位图): 多页同时请求互不覆盖, 每拍只消费一个。
+pub(crate) unsafe fn render_req(pid: u32) {
+    crate::page::dirty::mark(pid, crate::page::dirty::D_FULL);
 }
 
 // ===== 动态建行(固件核对: 无批量建行 API, 由调用方按需循环建) =====
@@ -129,22 +131,32 @@ pub(crate) unsafe fn rows_sync(pid: usize, slots: &[usize]) {
             let sub: *const u8 = if slot >= 1 && slot <= 8 {
                 (core::ptr::addr_of!(WATCH_SUB) as *const u8).add(slot * 88)
             } else { core::ptr::null() };
-            // slot0 = switch(1); slot1..8 = 复选框(2); 其余 = 无
+            // slot0 = switch(1); slot1..8: 表盘切换页=单选(6, 选中只有一个),
+            // 轮换页=复选框(2, 多选参与); 其余 = 无
             let tr: u32 = if slot == 0 { fw_api::trailing::SWITCH }
-                          else if slot >= 1 && slot <= 8 { fw_api::trailing::CHECKBOX }
+                          else if slot >= 1 && slot <= 8 {
+                              if pid == 8 { fw_api::trailing::RADIO } else { fw_api::trailing::CHECKBOX }
+                          }
                           else { fw_api::trailing::NONE };
             row = rc(c, p, sub, tr);
             if row != 0 {
                 write_volatile(rows.add(slot), row);
                 if slot == 0 {
                     // switch 行: 事件挂在 trailing 对象上、事件码 0(=LV_EVENT_ALL),
-                    // 取不到 trailing 时退回挂整行(事件码 7=CLICKED)
+                    // 取不到 trailing 时退回挂整行(事件码 7=CLICKED)。行号走 user_data。
                     let gtr: unsafe extern "C" fn(u32) -> u32 = fw_api::row_trailing;
                     let tobj = gtr(row);
-                    if tobj != 0 { ea(tobj, row_ev_fn(slot), 0, 0); }
-                    else { ea(row, row_ev_fn(slot), 7, 0); }
+                    if tobj != 0 { ea(tobj, row_cb(), 0, slot as u32); }
+                    else { ea(row, row_cb(), 7, slot as u32); }
                 } else {
-                    ea(row, row_ev_fn(slot), 7, 0);
+                    ea(row, row_cb(), 7, slot as u32);
+                    // 单选圈也接 CLICKED(点圈 = 点这一行, 应用图标页同款);
+                    // 复选框在 build_row 有专门分支, 这里不走 build_row, 自己补。
+                    if tr == fw_api::trailing::RADIO {
+                        let gtr: unsafe extern "C" fn(u32) -> u32 = fw_api::row_trailing;
+                        let tobj = gtr(row);
+                        if tobj != 0 { ea(tobj, row_cb(), 7, slot as u32); }
+                    }
                 }
             }
         }
@@ -187,13 +199,26 @@ pub(crate) unsafe fn rows_layout(pid: usize) {
     let mut slots = [0usize; 12];
     let mut n = 0usize;
     let mut i = 0usize;
-    // 表盘页/轮换页: 0=显示内置表盘 switch, 1..8=条目, 9=更多, 10=返回
+    // 表盘页/轮换页: 0=显示内置表盘 switch, 1..8=条目, 9=更多(返回靠标题栏)
     slots[n] = 0; n += 1;
     while i < ent { slots[n] = i + 1; n += 1; i += 1; }
     if ent == 0 { slots[n] = 1; n += 1; }    // 空列表: 用 slot1 显示提示语
     if (win + 1) * 8 < cnt { slots[n] = 9; n += 1; }
-    slots[n] = 10; n += 1;
     rows_sync(pid, &slots[..n]);
+}
+
+// 页2/3 那组字面偏移的基准盒由框架在这里给: 页面只声明 geometry() = FullBleed。
+/// 整页几何(时间/日期滚轮页): content 铺满整页、顶对齐 0、不留白。
+///
+/// 框架给列表页的默认是 `336x424` 摆在 `y=56`(标题栏固有高 `0x38=56`)再加底部留白 32。
+/// 闹钟页那一串字面偏移(滚轮 `dy=0`、遮罩 `+104/-105`、提示标签 `+75`、确认按钮 `-16`)
+/// 是按"content 铺满整页"算的: 滚轮在 `dy=0` 时正好落在整页中心 = 屏幕中心，
+/// 按钮底边离屏幕底 16。照抄偏移而不照抄基准，整组就会比系统低 28px、按钮也跟着抬 16。
+/// LVGL 的这些偏移都是相对"父对象内边距之后的可用区"量的，所以可用区错了整组跟着错。
+unsafe fn content_full_bleed(content: u32) {
+    fw_api::obj_set_size(content, 336, 480);
+    fw_api::obj_align(content, fw_api::align::TOP_MID, 0, 0);
+    fw_api::content_pad_bottom(content, 0, 0);
 }
 
 // 统一渲染: 需要重建时先删旧 content/title → content 三件套 → title → 页面专属控件挂 content
@@ -230,16 +255,24 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
         PAGES[pid].built = 0;
     }
     if PAGES[pid].built == 0 {
-        // content 三件套: 创建 → 定尺寸 → 顶部对齐 → 底部留白
+        // content 三件套: 创建 → 定尺寸 → 顶部对齐 → 底部留白。
+        // 尺寸/位置按页面自己的 geometry(): 列表页口径是框架默认; 整页口径
+        // (时间/日期滚轮页)铺满 336x480、顶对齐 0、无留白 —— 那组页的字面偏移
+        // 是按整页可用区算的, 照抄偏移就必须照抄基准。
         let cc: unsafe extern "C" fn(u32) -> u32 = fw_api::content_create;
         let c = cc(root);
         if c == 0 { return -1; }
         let ss: unsafe extern "C" fn(u32, i32, i32) -> u32 = fw_api::obj_set_size;
-        ss(c, CONTENT_W, CONTENT_H);
         let al: unsafe extern "C" fn(u32, u32, i32, i32) -> u32 = fw_api::obj_align;
-        al(c, fw_api::align::TOP_MID, 0, CONTENT_TOP);
         let pb: unsafe extern "C" fn(u32, i32, u32) -> u32 = fw_api::content_pad_bottom;
-        pb(c, CONTENT_PAD_BOTTOM, 0);
+        match PAGE_TABLE[pid].geometry() {
+            Geom::List => {
+                ss(c, CONTENT_W, CONTENT_H);
+                al(c, fw_api::align::TOP_MID, 0, CONTENT_TOP);
+                pb(c, CONTENT_PAD_BOTTOM, 0);
+            }
+            Geom::FullBleed => content_full_bleed(c),
+        }
         PAGES[pid].content = c;
         // title(content 后创建→frontmost; mode 由各页 title_mode() 给出, 1=带返回键 → 动画返回上级)
         let tc: unsafe extern "C" fn(u32, *const u8, u32, u32, u32) -> u32 =
@@ -273,6 +306,12 @@ pub(crate) unsafe fn render_page(pid: usize) -> i32 {
         };
         let _ = page_ref.render(&ctx);  // 失败时页面部分渲染, 不阻塞
         PAGES[pid].built = 1;
+        // 整页重建完成: 自增 epoch, 供页面 tick 识别"句柄是不是旧树的"。
+        crate::page::dirty::bump(pid as u32);
+        apply_row_visibility(pid);
+        // 重建立即归零进行中的动效(动效只在 on_resume 真重建的那次重新武装)。
+        crate::page::motion::reset();
+        return 1;   // 1 = 这次真重建过(调用方可据此武装进入动效)
     }
     apply_row_visibility(pid);
     0
@@ -290,6 +329,8 @@ pub(crate) unsafe fn nav_back() {
 }
 
 // 行事件分发(通过 trait 查表, 不写 if-else 长链)
+// 行号从 event_user_data 取(注册时由 row_create 链路写进第 4 参; 键盘页与
+// 时间页滚轮早已用同一读法, 见 keyboard.rs / time.rs)。
 pub(crate) unsafe fn chaos_row_dispatch(idx: usize, event: u32) -> u32 {
     if event == 0 { return 0; }
     let pid = st_rd!(FG_PAGE) as usize;
@@ -314,56 +355,19 @@ fn cb_u32(f: unsafe extern "C" fn(u32) -> u32) -> u32 {
     f as u32
 }
 
-pub(crate) unsafe fn row_ev_fn(i: usize) -> u32 {
-    match i {
-        0 => cb_u32(chaos_row_ev0), 1 => cb_u32(chaos_row_ev1), 2 => cb_u32(chaos_row_ev2),
-        3 => cb_u32(chaos_row_ev3), 4 => cb_u32(chaos_row_ev4), 5 => cb_u32(chaos_row_ev5),
-        6 => cb_u32(chaos_row_ev6), 7 => cb_u32(chaos_row_ev7), 8 => cb_u32(chaos_row_ev8),
-        9 => cb_u32(chaos_row_ev9),
-        // 注意: 每个槽位都要有自己的回调; 用 catch-all 兜住 slot10/11 会把"返回"当"更多"派发
-        10 => cb_u32(chaos_row_ev10),
-        // 12..=51 = 应用管理页全量条目行(事件槽 = 条目下标 + 12, 见 lib.rs chaos_row_cb 注释)
-        11 => cb_u32(chaos_row_ev11),
-        12 => cb_u32(chaos_row_ev12), 13 => cb_u32(chaos_row_ev13), 14 => cb_u32(chaos_row_ev14),
-        15 => cb_u32(chaos_row_ev15), 16 => cb_u32(chaos_row_ev16), 17 => cb_u32(chaos_row_ev17),
-        18 => cb_u32(chaos_row_ev18), 19 => cb_u32(chaos_row_ev19), 20 => cb_u32(chaos_row_ev20),
-        21 => cb_u32(chaos_row_ev21), 22 => cb_u32(chaos_row_ev22), 23 => cb_u32(chaos_row_ev23),
-        24 => cb_u32(chaos_row_ev24), 25 => cb_u32(chaos_row_ev25), 26 => cb_u32(chaos_row_ev26),
-        27 => cb_u32(chaos_row_ev27), 28 => cb_u32(chaos_row_ev28), 29 => cb_u32(chaos_row_ev29),
-        30 => cb_u32(chaos_row_ev30), 31 => cb_u32(chaos_row_ev31), 32 => cb_u32(chaos_row_ev32),
-        33 => cb_u32(chaos_row_ev33), 34 => cb_u32(chaos_row_ev34), 35 => cb_u32(chaos_row_ev35),
-        36 => cb_u32(chaos_row_ev36), 37 => cb_u32(chaos_row_ev37), 38 => cb_u32(chaos_row_ev38),
-        39 => cb_u32(chaos_row_ev39), 40 => cb_u32(chaos_row_ev40), 41 => cb_u32(chaos_row_ev41),
-        42 => cb_u32(chaos_row_ev42), 43 => cb_u32(chaos_row_ev43), 44 => cb_u32(chaos_row_ev44),
-        45 => cb_u32(chaos_row_ev45), 46 => cb_u32(chaos_row_ev46), 47 => cb_u32(chaos_row_ev47),
-        48 => cb_u32(chaos_row_ev48), 49 => cb_u32(chaos_row_ev49), 50 => cb_u32(chaos_row_ev50),
-        51 => cb_u32(chaos_row_ev51),
-        52 => cb_u32(chaos_row_ev52),
-        53 => cb_u32(chaos_row_ev53),
-        54 => cb_u32(chaos_row_ev54),
-        55 => cb_u32(chaos_row_ev55),
-        56 => cb_u32(chaos_row_ev56),
-        57 => cb_u32(chaos_row_ev57),
-        58 => cb_u32(chaos_row_ev58),
-        59 => cb_u32(chaos_row_ev59),
-        60 => cb_u32(chaos_row_ev60),
-        61 => cb_u32(chaos_row_ev61),
-        62 => cb_u32(chaos_row_ev62),
-        63 => cb_u32(chaos_row_ev63),
-        64 => cb_u32(chaos_row_ev64),
-        65 => cb_u32(chaos_row_ev65),
-        66 => cb_u32(chaos_row_ev66),
-        67 => cb_u32(chaos_row_ev67),
-        68 => cb_u32(chaos_row_ev68),
-        69 => cb_u32(chaos_row_ev69),
-        70 => cb_u32(chaos_row_ev70),
-        71 => cb_u32(chaos_row_ev71),
-        72 => cb_u32(chaos_row_ev72),
-        73 => cb_u32(chaos_row_ev73),
-        74 => cb_u32(chaos_row_ev74),
-        75 => cb_u32(chaos_row_ev75),
-        _ => cb_u32(chaos_row_ev_invalid),
-    }
+/// 全部行控件共用的那一个回调。行号不固化在回调里 —— 注册时写进
+/// obj_add_event 的 user_data(第 4 参), 派发时从 event_user_data(event) 读回。
+/// 越界行号(超过 75)一概不派发: appmgr 条目行的最大槽号是 12+51。
+#[no_mangle]
+unsafe extern "C" fn chaos_row_any(event: u32) -> u32 {
+    let idx = fw_api::event_user_data(event) as usize;
+    if idx > 75 { return 0; }
+    chaos_row_dispatch(idx, event)
+}
+
+#[inline]
+pub(crate) unsafe fn row_cb() -> u32 {
+    cb_u32(chaos_row_any)
 }
 
 // ===== 页面生命周期(对应固件的 manager_page_on_* 一组回调; 描述符 +0x14 = page_id) =====
@@ -383,38 +387,22 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     if pid > MAX_PID { return 0; }
     st_wr!(FG_PAGE, pid as u32);
     shake_arm();   // 首次进入(UI线程)订阅摇一摇+建timer, 幂等
-    // 页3 原来是文件管理的最后一级，现在让给日期第二步(月/日)。
-    // 目录页退役后这里不再有 load_dir/opendir 分支；只有表盘页 8/9 需要加载表盘清单。
-    if pid == 8 || pid == 9 {
-        // 两页各自独立过滤: 表盘页看 WF_SHOW_BUILTIN, 轮换页看 WF_SEL_BUILTIN
-        let f = if pid == 8 {
-            st_rd!(WF_SHOW_BUILTIN)
-        } else {
-            st_rd!(WF_SEL_BUILTIN)
-        };
-        load_watchfaces(f);
+    // 进页动作交回页面自己(on_enter): 表盘页 8/9 重读清单、图标页 6 重读包清单、
+    // 应用管理页 1 重读注册表、字体页 5 重读字体清单。框架只管渲染。
+    PAGE_TABLE[pid].on_enter();
+    // 返回值: 1 = 这次真重建过对象树 -> 武装进入微动效; 0 = 复用旧树(如息屏唤醒)不抖。
+    if render_page(pid) == 1 {
+        crate::page::motion::arm(pid as u32);
     }
-    if pid == 6 {
-        // 桌面图标页(系统美化的二级页): 进页重读图标包清单 —— 刚侧载投递完的包
-        // 不用重启就该出现在列表里。列表行的原地刷新在 render 里做。
-        icon_apply::refresh_packs();
-    }
-    if pid == 1 {
-        // 应用管理页: 进页重读注册表(改写后的状态每次进入都取磁盘真值)
-        crate::appmgr::invalidate();
-    }
-    if pid == 5 {
-        // 更换字体页(系统美化的二级页): 进页重读字体清单, 同理 —— 刚投递进去的字体
-        // 不用重启就该出现在列表里。
-        font_list::refresh();
-    }
-    render_page(pid);
     0
 }
 
 #[no_mangle]
 pub(crate) unsafe extern "C" fn chaos_on_pause() -> i32 {
     st_wr!(APP_FG, 0);
+    crate::page::motion::reset();
+    let pid = st_rd!(FG_PAGE) as usize;
+    if pid <= MAX_PID { PAGE_TABLE[pid].on_pause(); }
     // 息屏/退后台: 不做任何事。在这里置旗标让 on_resume 重建 lv_timer 是不行的 —— 实测
     // 定时器在息屏期间存活, 重建只会多出一个并发实例(见 watchface.rs shake_arm 注释)
     0
@@ -426,6 +414,10 @@ pub(crate) unsafe extern "C" fn chaos_on_destroy(_page: u32) -> i32 {
     // (唤醒后行控件照样能点、内容照样显示 —— 事件回调就挂在我们建的行对象上)。
     // 一旦在这里清零 built/root, 信息页的刷新会永久停摆, 而点击却正常(点击不看这些句柄)。
     // 句柄作废统一放到 on_create: 那时固件给的是新页, 旧对象树确实已经销毁。
+    // 页面自己的 on_screen_off 同理只清逻辑旗, 不碰树。
+    crate::page::motion::reset();
+    let pid = st_rd!(FG_PAGE) as usize;
+    if pid <= MAX_PID { PAGE_TABLE[pid].on_screen_off(); }
     0
 }
 
@@ -438,8 +430,8 @@ pub(crate) unsafe extern "C" fn chaos_on_ui_destroy(page: u32) -> i32 {
     if page == 0 { return 0; }
     let pid = rd16((page + 0x14) as *const u16) as usize;
     if pid > MAX_PID { return 0; }
+    PAGE_TABLE[pid].on_tree_gone();
     PAGES[pid].desc = 0;
-    if pid == crate::terminal_ui::PAGE_PID as usize { crate::terminal_ui::forget_ui(); }
     PAGES[pid].root = 0;
     PAGES[pid].content = 0;
     PAGES[pid].label = 0;

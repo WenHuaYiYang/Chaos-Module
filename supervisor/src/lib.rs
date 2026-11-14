@@ -154,110 +154,9 @@ type FnInitBuffer = unsafe extern "C" fn(u32) -> *mut u8;
 
 
 
-// 与固件自带模块的 ROW_CALLBACK 宏等价: 每行独立回调, 把行号固化进回调本身。
-// 新增槽位时必须同时补 `chaos_row_cb!(...)` 与 `row_ev_fn` 的分支,
-// 且**禁止在 dispatch 里写 `_ => ev9` 这类 catch-all** —— 槽位布局一变就会静默错配
-// (踩过的坑: slot10「返回」拿到 ev9 的回调, 被当成「更多」派发)。
-macro_rules! chaos_row_cb {
-    ($name:ident, $idx:expr) => {
-        #[no_mangle]
-        unsafe extern "C" fn $name(event: u32) -> u32 { chaos_row_dispatch($idx, event) }
-    };
-}
-// 未知槽位: 不派发任何页面动作。
-#[no_mangle]
-unsafe extern "C" fn chaos_row_ev_invalid(_event: u32) -> u32 { 0 }
-chaos_row_cb!(chaos_row_ev0, 0);
-chaos_row_cb!(chaos_row_ev1, 1);
-chaos_row_cb!(chaos_row_ev2, 2);
-chaos_row_cb!(chaos_row_ev3, 3);
-chaos_row_cb!(chaos_row_ev4, 4);
-chaos_row_cb!(chaos_row_ev5, 5);
-chaos_row_cb!(chaos_row_ev6, 6);
-chaos_row_cb!(chaos_row_ev7, 7);
-chaos_row_cb!(chaos_row_ev8, 8);
-chaos_row_cb!(chaos_row_ev9, 9);
-chaos_row_cb!(chaos_row_ev10, 10);   // slot10 = 返回行(表盘页/轮换页)
-chaos_row_cb!(chaos_row_ev11, 11);
-// 12..=51: 应用管理页的全量条目行(事件槽 = 条目下标 + 12; 0..11 是 ctx.rows
-// 顶部按钮/状态行, 条目复用会被派发成点按钮 —— 2026-10-15 修的槽位冲突)。
-// 这些槽位**不走 ctx.rows**(PAGES[pid].rows 只有 MAX_ROWS_PER_PAGE=12 个,
-// build_row 写它会被拒), 行句柄由 appmgr.rs 自管的 APP_ROWS 持有;
-// 槽号只进事件派发(chaos_row_dispatch -> AppMgrPage::on_click)。
-chaos_row_cb!(chaos_row_ev12, 12);
-chaos_row_cb!(chaos_row_ev13, 13);
-chaos_row_cb!(chaos_row_ev14, 14);
-chaos_row_cb!(chaos_row_ev15, 15);
-chaos_row_cb!(chaos_row_ev16, 16);
-chaos_row_cb!(chaos_row_ev17, 17);
-chaos_row_cb!(chaos_row_ev18, 18);
-chaos_row_cb!(chaos_row_ev19, 19);
-chaos_row_cb!(chaos_row_ev20, 20);
-chaos_row_cb!(chaos_row_ev21, 21);
-chaos_row_cb!(chaos_row_ev22, 22);
-chaos_row_cb!(chaos_row_ev23, 23);
-chaos_row_cb!(chaos_row_ev24, 24);
-chaos_row_cb!(chaos_row_ev25, 25);
-chaos_row_cb!(chaos_row_ev26, 26);
-chaos_row_cb!(chaos_row_ev27, 27);
-chaos_row_cb!(chaos_row_ev28, 28);
-chaos_row_cb!(chaos_row_ev29, 29);
-chaos_row_cb!(chaos_row_ev30, 30);
-chaos_row_cb!(chaos_row_ev31, 31);
-chaos_row_cb!(chaos_row_ev32, 32);
-chaos_row_cb!(chaos_row_ev33, 33);
-chaos_row_cb!(chaos_row_ev34, 34);
-chaos_row_cb!(chaos_row_ev35, 35);
-chaos_row_cb!(chaos_row_ev36, 36);
-chaos_row_cb!(chaos_row_ev37, 37);
-chaos_row_cb!(chaos_row_ev38, 38);
-chaos_row_cb!(chaos_row_ev39, 39);
-chaos_row_cb!(chaos_row_ev40, 40);
-chaos_row_cb!(chaos_row_ev41, 41);
-chaos_row_cb!(chaos_row_ev42, 42);
-chaos_row_cb!(chaos_row_ev43, 43);
-chaos_row_cb!(chaos_row_ev44, 44);
-chaos_row_cb!(chaos_row_ev45, 45);
-chaos_row_cb!(chaos_row_ev46, 46);
-chaos_row_cb!(chaos_row_ev47, 47);
-chaos_row_cb!(chaos_row_ev48, 48);
-chaos_row_cb!(chaos_row_ev49, 49);
-chaos_row_cb!(chaos_row_ev50, 50);
-chaos_row_cb!(chaos_row_ev51, 51);
-chaos_row_cb!(chaos_row_ev52, 52);
-chaos_row_cb!(chaos_row_ev53, 53);
-chaos_row_cb!(chaos_row_ev54, 54);
-chaos_row_cb!(chaos_row_ev55, 55);
-chaos_row_cb!(chaos_row_ev56, 56);
-chaos_row_cb!(chaos_row_ev57, 57);
-chaos_row_cb!(chaos_row_ev58, 58);
-chaos_row_cb!(chaos_row_ev59, 59);
-chaos_row_cb!(chaos_row_ev60, 60);
-chaos_row_cb!(chaos_row_ev61, 61);
-chaos_row_cb!(chaos_row_ev62, 62);
-chaos_row_cb!(chaos_row_ev63, 63);
-chaos_row_cb!(chaos_row_ev64, 64);
-chaos_row_cb!(chaos_row_ev65, 65);
-chaos_row_cb!(chaos_row_ev66, 66);
-chaos_row_cb!(chaos_row_ev67, 67);
-chaos_row_cb!(chaos_row_ev68, 68);
-chaos_row_cb!(chaos_row_ev69, 69);
-chaos_row_cb!(chaos_row_ev70, 70);
-chaos_row_cb!(chaos_row_ev71, 71);
-chaos_row_cb!(chaos_row_ev72, 72);
-chaos_row_cb!(chaos_row_ev73, 73);
-chaos_row_cb!(chaos_row_ev74, 74);
-chaos_row_cb!(chaos_row_ev75, 75);
-
-
-
-
-
-
-
-
-
-
+// 行事件回调只有一个(chaos_row_any, 在 ui.rs): 行号注册时写进 obj_add_event 的
+// user_data, 派发时从 event_user_data 读回 —— 新增行不再需要在这里补回调。
+// 旧的一行一回调(chaos_row_ev0..75)已随该方案删除。
 
 // 模块加载即执行的构造(instream: Vela 的 insmod 会对 init_array 调一次):
 // 铺 fops 四件套(open/close/read/write) + 版本字, 然后向固件注册设备节点。
@@ -293,6 +192,21 @@ unsafe extern "C" fn chaos_ctor() {
         // shake_arm 本身幂等，页面首次打开时不会重复创建定时器。
         // 这里只建立延后执行的维护定时器；真正的订阅、hook 和设置应用
         // 由定时器在启动窗口结束后统一开始。
+        // 模拟器安全模式也可以在 insmod 之前用文件打开: /data/chaos/simlite.cfg
+        // 存在且首字节非 0 就开。走文件是因为**时间窗**: watchface::BOOT_DELAY 只有
+        // 50 拍 × 50ms = 2.5 秒, 命令帧(0x51)要走 NSH 往返, 往往赶不上第一拍;
+        // 文件则能在 insmod 之前就摆好, ctor 里直接读。
+        {
+            const SIMLITE_PATH: &[u8] = b"/data/chaos/simlite.cfg\0";
+            let fd = fw_api::open(SIMLITE_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
+            if fd >= 0 {
+                let mut v = 0u8;
+                if fw_api::read(fd, &mut v, 1) == 1 && v != 0 {
+                    st_wr!(SIM_LITE, 1);
+                }
+                fw_api::close(fd);
+            }
+        }
         crate::watchface::maintenance_arm();
         // 定时器句柄: 0 说明 timer_create 没成, 那样 chaos_shake_timer 永远不会被调,
         // 依赖它的一切(页面 tick / desktop_scale)都不会跑。

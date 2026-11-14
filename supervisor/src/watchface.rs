@@ -191,7 +191,7 @@ pub(crate) unsafe fn load_watchfaces(show_builtin: u32) {
     restore_deselected();
 }
 
-// 表盘页行文本: 行0="显示内置表盘"开关, 行1-8=窗内条目(主标签=名称, 副标签=ID), 行9="更多", 行10="返回"
+// 表盘页行文本: 行0="显示内置表盘"开关, 行1-8=窗内条目(主标签=名称, 副标签=ID), 行9="更多"
 pub(crate) unsafe fn refresh_watchface_lines() {
     // 双排: 主标签 = 表盘名称 / 副标签 = 表盘 ID
     let base = core::ptr::addr_of_mut!(WATCH_LINES) as *mut u8;
@@ -252,12 +252,10 @@ pub(crate) unsafe fn refresh_watchface_lines() {
     let mut x = W::new(base, 88);
     x.s("显示内置表盘".as_bytes());
     x.end();
-    // slot9 = 更多, slot10 = 返回
+    // slot9 = 更多(返回靠标题栏返回键, 不再自建返回行)
     let mut x = W::new(base.add(9 * 88), 88);
     if (win + 1) * 8 < cnt { x.s("更多".as_bytes()); }
     x.end();
-    let mut x = W::new(base.add(10 * 88), 88);
-    x.s("返回".as_bytes());
     x.end();
 }
 
@@ -332,15 +330,24 @@ pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
 
 // lv_timer(UI线程): 框架级维护 + 页面 tick 分发
 //
-// 节拍自适应:
-//   **亮屏期间一律 50ms** —— 亮屏就是有人在操作, 手感不能退(50ms 是为压末段延迟从 200ms 收窄来的);
-//   **息屏且完全空闲 = 1000ms**。手表绝大部分时间息屏, 恒定的 20 拍/秒里绝大多数拍只是
-//   读几个静态量就早退, 但它是永不停脚的唤醒源; 加上信息页那 0.5 秒一次的 /proc 读与重绘
-//   (息屏时同样不需要), 这两项就是息屏功耗里本模块贡献的那一份。
-//   "完全空闲" = 下面 tick_busy() 里那些旗标全为 0 —— 任何倒计时/跑批/待重建/提示挂着
-//   都算有活, 所以**所有以"拍"为单位的等待量都还在按 50ms 走, 不会因为降频被拉长**。
+// 节拍自适应(三档):
+//   **快拍 50ms** = tick_busy() 为真 —— 前台页有逐拍活(needs_tick)、刷新请求排队、
+//   摇一摇冷却/触发、自愈、任一跑批流水线、桌面滚动/蜂窝拖动、动态图标播放、开机补偿未收敛;
+//   **中档 200ms** = 亮屏但无活(用户停在表盘/其它应用) —— 旧版在这里 20Hz 空转,
+//   是亮屏闲时本模块贡献的那份功耗; 5 倍降频后 watch_keep/热替换巡检等 tick 计数
+//   的巡检周期等比拉长(0.8s/4s), 它们防的都是秒级以上的状态漂移, 不影响手感;
+//   **慢拍 1000ms** = 息屏。手表绝大部分时间息屏, 恒定的唤醒源就是本模块贡献的那一份,
+//   陷阱 18 那一轮(§48)已经把息屏页修过; 这轮再砍的是亮屏闲时的 20Hz 空转。
+//   不变式: 所有以"拍"为单位计时的等待量, 其活跃窗口都在 tick_busy() 里, 走快拍 —— 
+//   墙钟节奏与旧版一致; 档位切换对页面透明。
 const TICK_FAST_MS: u32 = 50;
-const TICK_IDLE_MS: u32 = 1000;
+/// 中档: 亮屏但没有任何逐拍活(用户停在表盘/其它应用, 各流水线都空闲)。
+/// 5Hz 的维护节拍 vs 旧版 20Hz 空转 —— 亮屏闲时本模块贡献的唤醒少了 3/4。
+/// 所有需要 50ms 的东西都会出现在 tick_busy() 里, 档位切换对它们透明。
+const TICK_MID_MS: u32 = 200;
+/// 息屏档从 1s 加深到 4s: 息屏时唯一可能的长活是后台终端会话(它有自己的
+/// busy 信号), 其余全是旗标检查。4s 一拍 = 整夜唤醒再降 4 倍。
+const TICK_IDLE_MS: u32 = 4000;
 // 曾经有过一档"桌面滚动时把节拍提到 16ms"。两次复测都更糟：写入频率高 3 倍，
 // 屏上反而连"缩"都看不到（拖拽帧全 100）—— 列表每帧重排会把倍率重置，绘制紧跟着重排，
 // 外部写多快都插不进去。现在滚动中干脆不写（见 desktop_scale::fast_cb），停下后缓入。
@@ -349,17 +356,36 @@ static mut BOOT_DELAY: u32 = 50;
 
 /// 有没有活在推进(或有人在用)。为 true 就保持快节拍。
 unsafe fn tick_busy() -> bool {
-    fw_api::screen_is_on()                        // 亮屏 = 随时可能有操作, 不降频
-    || st_rd!(RENDER_REQ) != RENDER_NONE          // 有一次重建排队
-    || st_rd!(SHAKE_COOL) != 0                    // 摇一摇冷却按拍计
-    || st_rd!(HEAL_TRYS) != 0                     // 自愈重试的痕迹: 保持快节拍到本轮结束
+    // 前台页自己有活: 首页 1s 状态刷新、应用管理分批建行、终端排水、
+    // 时间页反馈等 —— 它们的拍计数都假设 50ms。
+    let fg = st_rd!(FG_PAGE) as usize;
+    // APP_FG 门: 离开应用后 FG_PAGE 仍停在最后一页, 而主页 needs_tick 恒真 ——
+    // 不判它的话, 打开过一次 Chaos 的人中档就永远不生效(优化归零)。
+    if st_rd!(APP_FG) != 0
+        && fw_api::screen_is_on()
+        && fg <= MAX_PID
+        && PAGES[fg].built != 0
+        && page_is_live(fg)
+        && PAGE_TABLE[fg].needs_tick()
+    {
+        return true;
+    }
+    dirty::any_pending()
+    || st_rd!(SHAKE_PENDING) != 0
+    || st_rd!(SHAKE_COOL) != 0
+    || st_rd!(HEAL_TRYS) != 0
     || font_apply::pending()
     || icon_apply::pending()
     || res_hook::pending()
     || font_list::pending()
     || confirm_pop::pending()
-    || crate::background_home::pending()
-    || crate::beautify_restore::pending()
+    || background_home::pending()
+    || beautify_restore::pending()
+    || crate::desktop_scale::scrolling()
+    || crate::honeycomb::busy()
+    || crate::fw_api::dynamic_icon::pack_animation_busy()
+    || (st_rd!(SIM_LITE) == 0 && crate::appmgr::boot_pending())
+    || crate::terminal_ui::busy()
 }
 
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。
@@ -373,8 +399,11 @@ unsafe fn tick_adapt() {
         }
         return;
     }
-    let want = if tick_busy() {
+    let busy = tick_busy();
+    let want = if busy {
         TICK_FAST_MS
+    } else if fw_api::screen_is_on() {
+        TICK_MID_MS
     } else {
         TICK_IDLE_MS
     };
@@ -392,32 +421,55 @@ unsafe fn tick_adapt() {
     st_wr!(TICK_PERIOD_MS, want);
 }
 
-#[no_mangle]
-pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
-    // Drain terminal output on the resident UI timer even when another page is foreground.
+// 主节拍拆成五段(顺序与拆分前一致, 行为不变):
+//   tick_terminal  终端输出排水 + 文件桥启停(不依赖开机延迟, 每拍都跑)
+//   tick_app       开机延迟倒数 + 桌面侧补偿/看门狗/手势订阅
+//   tick_pages     节拍自适应 + 自愈 + 前台页 tick + 桌面缩放/蜂窝
+//   tick_requests  消费刷新总线(每拍最多一个页, 前台页优先)
+//   tick_background 各后台跑批(字体/图标/背景/登记入口)
+// 摇一摇的冷却与消费留在主函数尾部(它有提前 return, 与五段无交集)。
+
+unsafe fn tick_terminal() {
+    // 终端输出即使别的页在前台也要排掉, 所以放在最前、且不过开机延迟门。
     crate::terminal_ui::poll_output();
     // 文件桥只在这里启动/停止：UI owner 已就绪，且开关变化由维护 tick
     // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
     crate::bridge_cfg::tick();
+}
+
+/// 返回 false = 开机延迟还没走完, 本拍后面的段都不跑。
+unsafe fn tick_app() -> bool {
     if st_rd!(BOOT_DELAY) != 0 {
         st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
-        return;
+        return false;
     }
     // 开机补偿: 免重启模式下, 把 Chaos 隐藏名单里的应用重新置位/摘图标。
     // 必须在 UI 线程(timer)里做: app_launcher_del 会碰 LVGL 对象, 不能在 insmod 线程调。
-    crate::appmgr::boot_apply();
-    // 运行期看门狗: 换绑新手机/手机重发应用清单会触发固件重注册应用,
-    // 普通隐藏的隐藏位会被新节点重置, 这里持续补回(见 appmgr::watch_keep 注释)。
-    crate::appmgr::watch_keep();
-    // 延时窗口结束后才订阅手势；此前不触碰事件总线。
-    if st_rd!(SHAKE_SUB) == 0 {
-        shake_arm();
+    //
+    // 模拟器安全模式(SIM_LITE): 下面这几项都要摸固件全局对象(事件总线订阅、
+    // 应用表、桌面树)。MiBand Studio 的 QEMU 固件环境与真机不同, 打上去会让
+    // guest 复位(实例当场消失), 所以模拟器里整段跳过; 真机默认不走这条路。
+    let lite = st_rd!(SIM_LITE) != 0;
+    if !lite {
+        crate::appmgr::boot_apply();
+        // 运行期看门狗: 换绑新手机/手机重发应用清单会触发固件重注册应用,
+        // 普通隐藏的隐藏位会被新节点重置, 这里持续补回(见 appmgr::watch_keep 注释)。
+        crate::appmgr::watch_keep();
+        // 延时窗口结束后才订阅手势；此前不触碰事件总线。
+        if st_rd!(SHAKE_SUB) == 0 {
+            shake_arm();
+        }
     }
+    true
+}
+
+unsafe fn tick_pages(lite: bool) {
     // 0. 先按上一拍的忙闲把节拍定好(放在最前: 后面的分支里有提前 return)
     tick_adapt();
     // 1. 自愈: 页句柄还在但内容树没建(built == 0, 而 on_resume 没来, 例如息屏唤醒)。
     //    **只在亮屏时做**: 息屏时把它重建起来等于在关闭的屏幕上凭空画一整页,
     //    而且信息页会因此继续 0.5 秒读写一遍 —— 纯粹多耗功耗。
+    //    (render_page 返回值: -1 = 失败, 0 = 复用旧树, 1 = 真重建; 这里只数失败。)
     {
         let fgp = st_rd!(FG_PAGE) as usize;
         if fgp <= MAX_PID
@@ -426,7 +478,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
             && PAGES[fgp].built == 0
             && page_is_live(fgp)
             && st_rd!(HEAL_TRYS) < 3
-            && render_page(fgp) != 0
+            && render_page(fgp) < 0
         {
             st_wr!(HEAL_TRYS, st_rd!(HEAL_TRYS).wrapping_add(1));
         }
@@ -441,39 +493,68 @@ pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
             }
         }
     }
-    // 2.5 桌面图标缩放(与页面无关: 固件 launcher 桌面不是我们的页, 前台页 tick 不会跑到)
-    crate::desktop_scale::tick();
-    crate::honeycomb::tick();
-    // 3. 消费重建请求(lv_timer 上下文销毁/重建对象树是安全的)
-    let rq = st_rd!(RENDER_REQ);
-    if rq != RENDER_NONE {
-        st_wr!(RENDER_REQ, RENDER_NONE);
-        if page_is_live(rq as usize) { render_page(rq as usize); }
+    // 2.5 进入微动效推进(只动前台页 content 的 y; 不满足条件时内部立即归零)
+    crate::page::motion::tick();
+    // 2.6 桌面图标缩放(与页面无关: 固件 launcher 桌面不是我们的页, 前台页 tick 不会跑到)
+    if !lite {
+        crate::desktop_scale::tick();
+        crate::honeycomb::tick();
     }
-    // 4. 字体: 先消费样式级写回请求(含开机自动应用)。
+}
+
+unsafe fn tick_requests() {
+    // 消费刷新请求(lv_timer 上下文销毁/重建对象树是安全的)。
+    // 每拍最多消费一个: 重建是整页销毁+重建, 一拍做多个会在亮屏期间卡出可感顿挫;
+    // 前台页优先(用户正在看的页最先恢复), 其余请求保留到后续的拍。
+    if let Some((pid, kind)) = crate::page::dirty::take_next() {
+        if kind == crate::page::dirty::D_FULL {
+            if page_is_live(pid as usize) { render_page(pid as usize); }
+        }
+        // D_VALUES: 页面只要原地刷数值, 整页重建反而是浪费 —— 交给前台页自己的 tick。
+        // 非前台页的 Values 请求到这里就算消费完(下一拍进页时 render 自会刷新)。
+    }
+}
+
+unsafe fn tick_background(lite: bool) {
+    // 3. 字体: 先消费样式级写回请求(含开机自动应用)。
     //    放定时器而不是页面渲染路径, 是因为**目标页不是我们的页** —— 系统页
     //    没有任何我们能挂的渲染钩子(生命周期槽位只属于我们注册的页, eventbus 也
     //    没有"页面切换"主题)。
-    crate::settings_entry::tick();
-    crate::system_update_entry::tick();
+    // 模拟器安全模式下除 Launcher 图标外全部跳过: 这些跑批都要读写固件全局
+    // 池(字体表/图标池/事件总线), 模拟器固件环境不同会复位 guest。
+    if !lite {
+        crate::settings_entry::tick();
+        crate::system_update_entry::tick();
+        crate::dynamic_icon::tick();
+        crate::system_version::tick();
+        crate::beautify_restore::tick();
+        font_apply::tick();
+        // wrapper 原地热替换(融合 Corona 的核心一招): 20 拍一轮 + quiet 门,
+        // fail-closed(结构校验任一不过一个字节都不写)。详见 font_hot.rs 头部。
+        // (v3.6) 原 font_tree::tick 逐对象补写退役 —— 热替换全面接管, 不再需要。
+        font_hot::tick();
+        icon_apply::tick();
+        crate::icon_pack_animation::tick();
+        // 系统资源缓存逐拍退役，与文件回调安装共用现有节拍。
+        res_hook::tick();
+        // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面几项跑批同一个位置:
+        // 快节拍 50ms 一拍, 息屏空闲时降到 1000ms(页面不在前台时刷新请求也只是置位, 由存活门挡住)。
+        font_list::tick();
+        // 背景沿用本调度，截图与有限跑批先过亮屏及字体安静门。
+        crate::background_home::tick();
+    }
+    // Launcher 图标: 模拟器安全模式下保留 —— 这是进 Chaos 页面的唯一入口。
     crate::launcher_entry::tick();
-    crate::dynamic_icon::tick();
-    crate::system_version::tick();
-    crate::beautify_restore::tick();
-    font_apply::tick();
-    // wrapper 原地热替换(融合 Corona 的核心一招): 20 拍一轮 + quiet 门,
-    // fail-closed(结构校验任一不过一个字节都不写)。详见 font_hot.rs 头部。
-    // (v3.6) 原 font_tree::tick 逐对象补写退役 —— 热替换全面接管, 不再需要。
-    font_hot::tick();
-    icon_apply::tick();
-    crate::icon_pack_animation::tick();
-    // 系统资源缓存逐拍退役，与文件回调安装共用现有节拍。
-    res_hook::tick();
-    // 字体清单页(更换字体)的删除流水线 + 提示超时。与上面几项跑批同一个位置:
-    // 快节拍 50ms 一拍, 息屏空闲时降到 1000ms(页面不在前台时 render_req 也只是置位, 由存活门挡住)。
-    font_list::tick();
-    // 背景沿用本调度，截图与有限跑批先过亮屏及字体安静门。
-    crate::background_home::tick();
+}
+
+#[no_mangle]
+pub(crate) unsafe extern "C" fn chaos_shake_timer(_t: u32) {
+    tick_terminal();
+    if !tick_app() { return; }
+    let lite = st_rd!(SIM_LITE) != 0;
+    tick_pages(lite);
+    tick_requests();
+    tick_background(lite);
     // 5. 摇一摇: 冷却 + 消费旗标 + 切表盘
     let cool = st_rd!(SHAKE_COOL);
     if cool > 0 {
@@ -585,10 +666,3 @@ pub(crate) unsafe fn maintenance_arm() {
     }
 }
 
-// 信息页行3 开关文本
-pub(crate) unsafe fn shake_toggle_text(dp: *mut u8) {
-    // 开/关状态由行右侧 switch 组件表达, 行内只留名称
-    let mut x = W::new(dp, 88);
-    x.s("摇一摇".as_bytes());
-    x.end();
-}

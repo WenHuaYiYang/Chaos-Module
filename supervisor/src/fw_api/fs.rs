@@ -16,7 +16,10 @@ pub unsafe extern "C" fn open(path: Cp, flags: u32, mode: u32) -> i32 {
 }
 
 pub unsafe extern "C" fn close(fd: i32) -> i32 {
-    let f: unsafe extern "C" fn(i32) -> i32 = transmute(0x0C1B_9D81usize);
+    // 公共 close 用 NSH 原生 callback 那条 0x0C1B9E49: 失败时写 errno 并返回 -1,
+    // 与 read/write/ioctl 的 libc_result 口径一致。0x0C1B9D81 那条坏 fd 直接返回
+    // 负 errno(-9), 调用方按 -1+errno 判断会读错。
+    let f: unsafe extern "C" fn(i32) -> i32 = transmute(0x0C1B_9E49usize);
     f(fd)
 }
 

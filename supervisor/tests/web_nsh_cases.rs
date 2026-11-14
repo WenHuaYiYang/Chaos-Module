@@ -9,6 +9,7 @@ fn reset() {
     STOP_REQUEST.store(false, Ordering::Relaxed);
     CHILD_DONE.store(false, Ordering::Relaxed); CHILD_EXIT.store(0, Ordering::Relaxed);
     CHILD_CONSOLE.store(0, Ordering::Relaxed); ORIGINAL_EXIT.store(0, Ordering::Relaxed);
+    LOW_FDS_READY.store(false, Ordering::Relaxed);
     DROPPED.store(0, Ordering::Relaxed); NOTICE_COUNT.store(0, Ordering::Relaxed); NOTICE_OFFSET.store(0, Ordering::Relaxed);
     unsafe { RX.reset_quiescent(); TX.reset_quiescent(); }
 }
@@ -58,7 +59,8 @@ fn every_startup_failure_closes_only_owned_fds_and_destroys_actions_once() {
         with(|m| {
             let expected = match phase { 0 => vec![], 1 => vec![2], 2 | 3 => vec![5], _ => vec![6, 5] };
             assert_eq!(m.closed, expected, "phase {phase}");
-            assert_eq!(m.destroys, usize::from(phase >= 5), "phase {phase}");
+            // worker spawn 也会 init/destroy 一个空 actions 链(1 次)
+            assert_eq!(m.destroys, 1 + usize::from(phase >= 5), "phase {phase}");
             assert!(m.waits.is_empty());
         });
     }
@@ -71,7 +73,8 @@ fn dup2_is_child_only_and_active_start_is_idempotent() {
     let mut session = None; step(&mut session); assert_eq!(start(), Ok(()));
     with(|m| {
         assert_eq!(m.actions, [(6, 0), (6, 1), (6, 2), (6, 5)]);
-        assert_eq!(m.events[..2], ["actions_destroy", "close:6"]);
+        // worker 的空 actions 链先 destroy 一次, 再是 session 的 actions, 最后 slave close
+        assert_eq!(m.events[..3], ["actions_destroy", "actions_destroy", "close:6"]);
         assert_eq!(m.spawns.len(), 2); assert_eq!(m.closed, [6]);
         assert_eq!(m.spawns[0].0, b"chaos.web.nsh.worker"); assert!(m.spawns[0].2);
         assert_eq!(m.spawns[1].0, b"chaos.web.nsh"); assert!(!m.spawns[1].2);
@@ -301,6 +304,36 @@ fn stop_discards_pending_tx_suffix_and_never_executes_unfinished_line() {
     assert!(STOP_SEQUENCE[1..257].iter().all(|&b| b == 8));
     assert_eq!(&STOP_SEQUENCE[257..], b"exit\n");
     assert_eq!(STOP_SEQUENCE.iter().filter(|&&b| b == b'\n').count(), 1);
+}
+
+#[test]
+fn stop_gives_up_after_three_reissues_instead_of_blocking_forever() {
+    // 真机"第二次连接永远 1013"：停止序列三轮都没换来退出时, 必须放弃这个会话
+    // 并把状态落到 Failed(下一次 start 才开得起来), 而不是永远停在 Stopping。
+    let _lock = setup(); let mut session = boot();
+    with(|m| { for _ in 0..400 { m.write_results.push_back(0); } });
+    stop();
+    let mut steps = 0;
+    while state() == State::Stopping && steps < 400 { step(&mut session); steps += 1; }
+    assert_eq!(state(), State::Failed);
+    assert!(session.is_none());
+    assert_eq!(error(), ETIMEDOUT);
+    assert_eq!(start(), Ok(()));
+}
+
+#[test]
+fn stalled_stop_sequence_is_reissued_instead_of_stranding_the_next_connection() {
+    // 真机"第二次连网页终端永远 1013": 停止序列整段被吃掉时 stop_offset 不推进,
+    // 状态永远停在 STOPPING。这里钉住兜底: 40 拍没进展就从头重发整段。
+    let _lock = setup(); let mut session = boot();
+    with(|m| { m.write_results.push_back(100); for _ in 0..80 { m.write_results.push_back(0); } });
+    stop();
+    for _ in 0..3 { step(&mut session); }
+    assert_eq!(state(), State::Stopping);
+    with(|m| assert!(m.writes.last().unwrap().len() < STOP_SEQUENCE.len()));
+    for _ in 0..45 { step(&mut session); }
+    with(|m| { assert_eq!(m.writes.last().unwrap().len(), STOP_SEQUENCE.len()); assert_eq!(m.writes.last().unwrap()[0], 3); });
+    assert_eq!(state(), State::Stopping, "兜底只重发, 不伪造结束");
 }
 
 #[test]

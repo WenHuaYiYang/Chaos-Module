@@ -67,6 +67,12 @@ unsafe fn load() {
     }
 }
 
+/// 蜂窝视图是否处在需要快拍的活跃态(编辑中/重排挂起/镜头或回位动画在动)。
+/// 维护定时器的节拍自适应用: 不活跃时亮屏也可以降频到中档。
+pub(crate) unsafe fn busy() -> bool {
+    EDIT_GRID != 0 || DRAWING || REAPPLY_PENDING || (ENABLED && moving())
+}
+
 pub(crate) unsafe fn enabled() -> bool {
     load();
     ENABLED

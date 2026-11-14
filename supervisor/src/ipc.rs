@@ -117,52 +117,16 @@ let cb_resume = chaos_on_resume as *const () as u32;
 let app_id = st_rd!(APP_ID);
 
 let desc = core::ptr::addr_of_mut!(DESC) as *mut u32;
-let pnames: [u32; PAGE_COUNT] = [
-    core::ptr::addr_of!(PAGE_MAIN) as u32,
-    core::ptr::addr_of!(PAGE_DIR0) as u32,
-    core::ptr::addr_of!(PAGE_TIME) as u32,
-    core::ptr::addr_of!(PAGE_DATEMD) as u32,
-    core::ptr::addr_of!(PAGE_BLUR) as u32,
-    core::ptr::addr_of!(PAGE_TXTSUB) as u32,
-    core::ptr::addr_of!(PAGE_ICONSUB) as u32,
-    core::ptr::addr_of!(PAGE_BLUR_LEGACY) as u32,
-    core::ptr::addr_of!(PAGE_WFACES) as u32,
-    core::ptr::addr_of!(PAGE_ROT) as u32,
-    core::ptr::addr_of!(PAGE_MGR) as u32,
-    core::ptr::addr_of!(PAGE_BRIGHT) as u32,
-    core::ptr::addr_of!(PAGE_CACHE) as u32,
-    core::ptr::addr_of!(PAGE_FONTD) as u32,
-    core::ptr::addr_of!(PAGE_ABOUT) as u32,
-    core::ptr::addr_of!(PAGE_ZONE) as u32,
-    core::ptr::addr_of!(PAGE_VIB) as u32,
-    core::ptr::addr_of!(PAGE_LOG) as u32,
-    core::ptr::addr_of!(PAGE_ABOUT2) as u32,
-    core::ptr::addr_of!(PAGE_FETCH) as u32,
-    core::ptr::addr_of!(PAGE_LICENSES) as u32,
-    core::ptr::addr_of!(PAGE_LICENSE_MPL) as u32,
-    core::ptr::addr_of!(PAGE_SYSVER) as u32,
-    core::ptr::addr_of!(PAGE_KEYBOARD) as u32,
-    core::ptr::addr_of!(PAGE_ABOUT_MOD) as u32,
-    core::ptr::addr_of!(PAGE_SYSTEXT) as u32,
-    core::ptr::addr_of!(PAGE_DEVNAME) as u32,
-    core::ptr::addr_of!(PAGE_DEVMODEL) as u32,
-    core::ptr::addr_of!(PAGE_APPLIST) as u32,
-    core::ptr::addr_of!(PAGE_DETAIL) as u32,
-    core::ptr::addr_of!(PAGE_BATCH) as u32,
-    core::ptr::addr_of!(PAGE_NSH) as u32,
-    core::ptr::addr_of!(PAGE_BTPAN) as u32,
-    core::ptr::addr_of!(PAGE_WEBSRV) as u32,
-    core::ptr::addr_of!(PAGE_NETINFO) as u32,
-    core::ptr::addr_of!(PAGE_EXP) as u32,
-    core::ptr::addr_of!(PAGE_BTDIAG) as u32,
-    core::ptr::addr_of!(PAGE_DEBUG) as u32,
-    core::ptr::addr_of!(PAGE_CAPTURE) as u32,
-    core::ptr::addr_of!(PAGE_RECORDINGS) as u32,
-    core::ptr::addr_of!(PAGE_SCREENSHOTS) as u32,
-    core::ptr::addr_of!(PAGE_RECORDSET) as u32,
-    core::ptr::addr_of!(PAGE_SHOTSET) as u32,
-    core::ptr::addr_of!(PAGE_APP_ICON) as u32,
-];
+// 页名指针从单一注册表现取(page/registry.rs 的 PAGE_DEFS): 此前这里手写 44 行
+// addr_of!(PAGE_*), 与 state/page 两处靠下标对齐 —— 加页漏一行就是静默错页名。
+let mut pnames = [0u32; PAGE_COUNT];
+{
+    let mut i = 0usize;
+    while i < PAGE_COUNT {
+        pnames[i] = PAGE_DEFS[i].name.as_ptr() as u32;
+        i += 1;
+    }
+}
 let mut pg = 0usize;
 while pg < PAGE_COUNT {
     let b = desc.add(pg * 29);                       // 每页 29 word = 116B
@@ -361,6 +325,9 @@ unsafe fn run_install_cmd(arg0: u32, arg1: u32) {
         0x46 => { crate::launcher_entry::set_enabled(arg1 != 0); }
         0x18 => { st_wr!(LANG, 1); } // 设中文
         0x19 => { st_wr!(LANG, 0); } // 设英文
+        // 0x51: 模拟器安全模式开关(arg1 != 0 打开)。见 state.rs::SIM_LITE 注释:
+        // 模拟器固件环境不同, 后台 hook 会把 guest 复位; 打开后只留页面框架。
+        0x51 => { st_wr!(SIM_LITE, if arg1 != 0 { 1 } else { 0 }); }
         0x22 => {
             // 回读槽统计: d0=选中id d1=空闲数 d2=空闲位图
             fops_wr(FOPS_DBG0, st_rd!(APP_ID));

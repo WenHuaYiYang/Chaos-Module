@@ -25,8 +25,17 @@ mod keyboard;
 mod debug;
 mod capture;
 mod app_icon;
-pub(crate) use app_icon::APP_ICON_PID;
-pub(crate) use capture::CAPTURE_PID;
+// 单一页注册表(Pid / PAGE_DEFS / PAGE_TABLE)与刷新总线(dirty)。
+// 页身份三处对齐由 registry 的宏 + 编译期断言兜住; ipc.rs 的页名指针从 PAGE_DEFS 取。
+mod registry;
+pub(crate) mod dirty;
+// 视觉 token / 页面骨架 / 组件 kit / 进入微动效(B1 起)。
+pub(crate) mod theme;
+pub(crate) mod frame;
+pub(crate) mod motion;
+pub(crate) mod kit;
+pub(crate) use registry::{Pid, PAGE_DEFS, PAGE_TABLE};
+pub(crate) use theme::T;
 
 pub(crate) use beautify::BLUR_LEGACY_PID;
 
@@ -106,19 +115,19 @@ pub(crate) unsafe fn build_row(ctx: &PageCtx, prev: u32, slot: usize, spec: &Row
     // 列表行拉成大字)。改由 InfoPage::render 显式调用, 只作用于主页行。
     if spec.trailing == fw_api::trailing::SWITCH {
         let tobj = fw_api::row_trailing(r);
-        if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(slot), 0, 0); }
-        else { fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0); }
+        if tobj != 0 { fw_api::obj_add_event(tobj, row_cb(), 0, slot as u32); }
+        else { fw_api::obj_add_event(r, row_cb(), 7, slot as u32); }
     } else if spec.clickable {
-        fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
+        fw_api::obj_add_event(r, row_cb(), 7, slot as u32);
         // 复选框行: 复选框自己也挂一份, 点到圈上也算点这一行(表盘页只挂行本体,
         // 点到圈上没有反应)。这一行不是 switch 行, 所以复选框发出来的 VALUE_CHANGED
         // 会被 chaos_row_dispatch 丢掉, 只有 CLICKED 会走到 on_click。
         if spec.trailing == fw_api::trailing::CHECKBOX {
             let tobj = fw_api::row_trailing(r);
-            if tobj != 0 { fw_api::obj_add_event(tobj, row_ev_fn(slot), 0, 0); }
+            if tobj != 0 { fw_api::obj_add_event(tobj, row_cb(), 0, slot as u32); }
         }
     }
-    fw_api::obj_align_to(r, prev, 14, 0, 8);
+    fw_api::obj_align_to(r, prev, 14, 0, T::ROW_GAP);
     r
 }
 
@@ -153,7 +162,7 @@ unsafe fn tile_base(ctx: &PageCtx, slot: usize, text: &[u8], w: u32, h: u32) -> 
     fw_api::obj_set_size_wh(r, w, h);
     cardify(r);
     fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::RADIUS, h / 2, 0);
-    fw_api::obj_add_event(r, row_ev_fn(slot), 7, 0);
+    fw_api::obj_add_event(r, row_cb(), 7, slot as u32);
     r
 }
 
@@ -186,7 +195,7 @@ pub(crate) unsafe fn pill(lab: u32, col: u32, bg: u32, txt: &[u8]) {
     fw_api::obj_style_color_a70(lab, col, 0);
     fw_api::obj_set_local_style_prop(lab, ps::BG_COLOR, bg, 0);
     fw_api::obj_set_local_style_prop(lab, ps::BG_OPA, 255, 0);
-    fw_api::obj_set_local_style_prop(lab, ps::RADIUS, 100, 0);
+    fw_api::obj_set_local_style_prop(lab, ps::RADIUS, T::R_PILL, 0);
     fw_api::obj_set_local_style_prop(lab, ps::PAD_0, 1, 0);
     fw_api::obj_set_local_style_prop(lab, ps::PAD_1, 1, 0);
     fw_api::obj_set_local_style_prop(lab, ps::PAD_3, 0, 0);
@@ -255,17 +264,23 @@ pub(crate) static mut DBG_ON: u32 = 0;
 pub(crate) static mut DBG_CLICKS: u32 = 0;
 
 // ===== 共享 UI 配色 =====
-#[allow(dead_code)] pub(crate) const C_SECONDARY: u32 = 0x8E_8E93;
-pub(crate) const C_ACCENT: u32 = 0x2D_7CF6;
-#[allow(dead_code)] pub(crate) const C_SUCCESS: u32 = 0x30_D158;
-pub(crate) const C_WARNING: u32 = 0xFF_9F0A;
-pub(crate) const C_DANGER: u32 = 0xFF_453A;
-pub(crate) const C_HIDDEN: u32 = C_WARNING;
-pub(crate) const C_HIDDEN_TINT: u32 = 0x4A3008;
-pub(crate) const C_VISIBLE_TINT: u32 = 0x10284D;
-pub(crate) const C_VISIBLE: u32 = C_ACCENT;
+// 真源在 theme.rs 的 T::*; 这些旧名是别名, 既有调用点不动, 逐步改成 T::。
+#[allow(dead_code)] pub(crate) const C_SECONDARY: u32 = T::SECONDARY;
+pub(crate) const C_ACCENT: u32 = T::ACCENT;
+#[allow(dead_code)] pub(crate) const C_SUCCESS: u32 = T::SUCCESS;
+pub(crate) const C_DANGER: u32 = T::DANGER;
+pub(crate) const C_HIDDEN: u32 = T::HIDDEN;
+pub(crate) const C_HIDDEN_TINT: u32 = T::HIDDEN_TINT;
+pub(crate) const C_VISIBLE_TINT: u32 = T::VISIBLE_TINT;
+pub(crate) const C_VISIBLE: u32 = T::VISIBLE;
 
 // ===== Page trait =====
+
+/// 页面内容几何: 框架建 content 时按它定尺寸。
+/// List = 列表页口径(336x424 摆在 y=56, 底部留白 32); FullBleed = 整页口径
+/// (336x480 摆在 y=0, 无留白) —— 时间/日期滚轮页那组字面偏移(滚轮 dy=0、
+/// 遮罩 +104/-105、提示标签 +75)是按整页算的, 不走 List 的 56/32 基准。
+pub(crate) enum Geom { List, FullBleed }
 
 /// 页面行为接口。页面知道自己是谁, 不需要外部传 pid。
 pub(crate) trait Page: Sync {
@@ -273,8 +288,21 @@ pub(crate) trait Page: Sync {
     fn fill_title(&self, buf: *mut u8);
     /// 标题模式: 0=无返回键, 1=有返回键
     fn title_mode(&self) -> u32 { 1 }
+    /// 内容几何(默认列表页口径; 时间/日期滚轮页返回 FullBleed)
+    fn geometry(&self) -> Geom { Geom::List }
     /// 建页面专属控件(框架已建好 content + title)
     fn render(&self, ctx: &PageCtx) -> PageResult;
+    /// 进入页面(on_resume, FG_PAGE 已置位、render 之前)。进页要重读的数据放这里。
+    fn on_enter(&self) {}
+    /// 离开前台/退后台(on_pause)。只清逻辑旗, 不碰对象树。
+    fn on_pause(&self) {}
+    /// 息屏回调(on_destroy)。息屏时对象树仍在, 禁止碰树/句柄 —— 只清逻辑旗。
+    fn on_screen_off(&self) {}
+    /// 对象树即将被固件递归删除(on_ui_destroy)。句柄清理由框架做, 页面只作废自己的缓存。
+    fn on_tree_gone(&self) {}
+    /// 新页面实例交付(on_create)。旧实例连同对象树已被销毁, 页面在这里作废
+    /// 挂在页根上的浮层状态(确认框等)与自己的句柄缓存。
+    fn on_instance_reset(&self) {}
     /// 行点击(CLICKED 事件)
     fn on_click(&self, idx: usize);
     /// 开关翻转(VALUE_CHANGED 事件)
@@ -298,49 +326,5 @@ pub(crate) unsafe fn cstr_len(s: *const u8) -> usize {
 }
 
 
-pub(crate) static PAGE_TABLE: [&dyn Page; PAGE_COUNT] = [
-    &home::PAGE_INFO,       // 0
-    &appmgr::PAGE_APPMGR,     // 1  应用管理(Shell++ 移植; 文件管理入口已注释退役)
-    &time::PAGE_TIMESET,      // 2  时间设置 / 日期第一步(年)(原目录 2 级, 文件管理退役后空出)
-    &time::PAGE_DATE_MD,      // 3  日期设置(月日)(原目录 3 级, 一直不可达)
-    &beautify::PAGE_BLURP,      // 4  系统美化 -> 系统模糊(原来是目录 4 级, 为腾独立 page_id 重分配)
-    &beautify::PAGE_FONTLIST,   // 5  系统美化 -> 更换字体(字体清单 + 自由切换)
-    &beautify::PAGE_ICONSUB,    // 6  系统美化 -> 桌面图标
-    &beautify::PAGE_BLUR_LEGACYP, // 7  系统模糊 -> 旧版选项
-    &watchface::PAGE_WF_LIST_8,  // 8
-    &watchface::PAGE_WF_LIST_9,  // 9
-    &watchface::PAGE_WF_MGMT,    // 10
-    &settings::PAGE_BRIGHT,     // 11
-    &settings::PAGE_CACHEP,     // 12
-    &beautify::PAGE_BEAUTIFY,     // 13
-    &settings::PAGE_SETTINGS,     // 14  设置(时间/日期/亮度/震动/缓存/版本)
-    &beautify::PAGE_ZONEP,        // 15 系统模糊 -> 模糊区域
-    &settings::PAGE_VIBP,         // 16 主页 -> 震动
-    &log::PAGE_LOG,          // 17 设置 -> 运行日志
-    &about::PAGE_ABOUT_PAGE,   // 18 主页 -> 关于
-    &settings::PAGE_FETCHP,       // 19 设置 -> 恢复 fetch 支持
-    &about::PAGE_LICENSESP,    // 20 关于 -> 开放源代码许可
-    &about::PAGE_LICENSEP,     // 21 Corona AGPL / MPL-2.0 全文
-    &system::PAGE_SYSVERP,      // 22 系统关于页面修改 -> 系统版本显示
-    &keyboard::PAGE_KEYBOARDP,    // 23 通用英文数字键盘
-    &system::PAGE_ABOUT_MODP,   // 24 设置 -> 系统关于页面修改
-    &system::PAGE_SYSTEXTP,     // 25 系统关于页面修改 -> 手环系统文本
-    &system::PAGE_DEVNAMEP,     // 26 系统关于页面修改 -> 设备名称
-    &system::PAGE_DEVMODELP,    // 27 系统关于页面修改 -> 手环型号
-    &beautify::PAGE_APPLIST,      // 28 系统美化 -> 应用列表设置(桌面缩放/排距/内缩)
-    &appmgr::PAGE_DETAILP,      // 29 应用管理 -> 应用详情(P0 占位)
-    &appmgr::PAGE_BATCHP,       // 30 应用管理 -> 批量操作(P0 占位)
-    &crate::terminal_ui::PAGE, // 31 NSH终端
-    &crate::btpan::PAGE_BTPAN_P, // 32 主页 -> btpan联网
-    &crate::btpan::PAGE_WEBSRV_P, // 33 主页 -> 网页服务器
-    &crate::btpan::PAGE_NETINFO_P, // 34 BTPAN -> 连接信息
-    &crate::btpan::PAGE_EXP_P, // 35 主页 -> 实验性功能
-    &crate::btpan::PAGE_DIAG_P, // 36 实验性功能 -> 蓝牙诊断
-    &debug::PAGE_DEBUGP,        // 37 调试模式 -> 调试信息(纯文本)
-    &capture::PAGE_CAPTURE,    // 38 主页 -> 截屏与录屏
-    &capture::PAGE_RECORDINGS, // 39 截屏与录屏 -> 管理录屏
-    &capture::PAGE_SCREENSHOTS, // 40 截屏与录屏 -> 管理截屏
-    &capture::PAGE_RECORDSET,   // 41 截屏与录屏 -> 录屏设置
-    &capture::PAGE_SHOTSET,     // 42 截屏与录屏 -> 截图设置
-    &app_icon::PAGE_APP_ICON,   // 43 设置 -> 应用图标
-];
+// PAGE_TABLE 已搬到 page/registry.rs: 与 Pid 枚举、页名一起由 `pages!` 宏一次生成,
+// 页号/页名/页实例三处对齐由编译期断言兜住(见 registry.rs 头注释)。

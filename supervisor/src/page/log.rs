@@ -30,7 +30,7 @@ static mut LOG_TEXT: [u8; LOG_TEXT_CAP] = [0; LOG_TEXT_CAP];
 static mut LOG_LINE_OFF: [u32; 1024] = [0; 1024];
 static mut LOG_TEXT_H: i32 = 0;
 static mut LOG_MSG: [u8; 48] = [0; 48];
-static mut LOG_CLEAR_ARMED: u32 = 0;
+static LOG_CLEAR: crate::page::kit::confirm::Arm = crate::page::kit::confirm::Arm::new();
 
 /// 24px MiSans 的保守字宽估计（只用于手算折行；宁愿多折，不能让 LVGL 再折一次）。
 fn log_char_metrics(c: u8) -> (usize, u32) {
@@ -217,37 +217,19 @@ impl Page for LogPage {
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             log_page_load();
-            // 顶部两排按钮固定不动，文字放进独立纵向滚动视口：
-            // 视口底 = content 相对 392 = 屏幕 448，正好避开底部 32px 手势区。
-            let t0 = build_tile_below(ctx, ctx.title, 0, "返回\0".as_bytes(), TILE_W, 44);
+            // 顶部一排按钮固定不动(刷新/清空), 返回靠标题栏返回键;
+            // 文字放进统一滚动视口(kit/scroll.rs), 视口底避开底部 32px 手势区。
+            let t0 = build_tile_below(ctx, ctx.title, 0, "刷新\0".as_bytes(), TILE_W, 44);
             if t0 == 0 { return Err(PageError::RowFailed(0)); }
-            let _t1 = build_tile_right(ctx, t0, 1, "刷新\0".as_bytes(), TILE_W, 44);
-            let cl: &[u8] = if LOG_CLEAR_ARMED != 0 { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() };
-            let t2 = build_tile_below(ctx, t0, 2, cl, TILE_ROW_W, 44);
-            if t2 == 0 { return Err(PageError::RowFailed(2)); }
+            let cl: &[u8] = if LOG_CLEAR.armed() { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() };
+            let _t1 = build_tile_right(ctx, t0, 1, cl, TILE_W, 44);
 
-            let vp = fw_api::obj_create(ctx.content, 0);
+            let vp = crate::page::kit::scroll::viewport(ctx.content, t0,
+                LOG_VIEWPORT_W as i32, LOG_VIEWPORT_H as i32, false);
             if vp != 0 {
-                fw_api::obj_clear_box_spacing(vp);
-                fw_api::obj_set_size(vp, LOG_VIEWPORT_W as i32, LOG_VIEWPORT_H as i32);
-                fw_api::obj_align_to(vp, t2, fw_api::align::OUT_BOTTOM_MID, 0, 8);
-                fw_api::obj_style_color(vp, 0, 0);
-                fw_api::obj_add_flag(vp, fw_api::LV_OBJ_FLAG_SCROLLABLE | fw_api::LV_OBJ_FLAG_CLICKABLE);
-                fw_api::obj_set_scroll_dir(vp, fw_api::LV_DIR_VER);
-                // 滚到头就停，不要把纵向拖动传给 content/系统手势。
-                fw_api::obj_clear_flag(vp,
-                    fw_api::LV_OBJ_FLAG_SCROLL_CHAIN
-                        | fw_api::LV_OBJ_FLAG_GESTURE_BUBBLE
-                        | fw_api::LV_OBJ_FLAG_SCROLL_ELASTIC);
-
                 let board_h = if LOG_TEXT_H > LOG_VIEWPORT_H as i32 { LOG_TEXT_H } else { LOG_VIEWPORT_H as i32 };
-                let board = fw_api::obj_create(vp, 0);
+                let board = crate::page::kit::scroll::board(vp, LOG_VIEWPORT_W as i32, board_h);
                 if board != 0 {
-                    fw_api::obj_clear_box_spacing(board);
-                    fw_api::obj_clear_scrollable(board);
-                    fw_api::obj_set_size(board, LOG_VIEWPORT_W as i32, board_h);
-                    fw_api::obj_align(board, fw_api::align::TOP_LEFT, 0, 0);
-                    fw_api::obj_style_color(board, 0, 0);
                     let lab = fw_api::label_create(board);
                     if lab != 0 {
                         fw_api::style_apply(lab, crate::FW_STYLE_MISANS_REG_24, 255, 0);
@@ -263,22 +245,18 @@ impl Page for LogPage {
     }
     fn on_click(&self, idx: usize) {
         unsafe {
+            LOG_CLEAR.reset();   // 点了别的按钮: 撤销清空武装
             if idx == 0 {
-                LOG_CLEAR_ARMED = 0;
-                nav_back();
+                render_req(Pid::Log as u32);
             } else if idx == 1 {
-                LOG_CLEAR_ARMED = 0;
-                render_req(17);
-            } else if idx == 2 {
-                if LOG_CLEAR_ARMED == 0 {
-                    LOG_CLEAR_ARMED = 1;
-                    render_req(17);
-                } else {
+                if LOG_CLEAR.click() {
                     let ok = crate::log::clear();
-                    LOG_CLEAR_ARMED = 0;
                     put_str(core::ptr::addr_of_mut!(LOG_MSG) as *mut u8,
                         if ok { "日志已清空\0".as_bytes() } else { "清空失败\0".as_bytes() });
-                    render_req(17);
+                    render_req(Pid::Log as u32);
+                } else {
+                    // 武装击: 换文案
+                    render_req(Pid::Log as u32);
                 }
             }
         }

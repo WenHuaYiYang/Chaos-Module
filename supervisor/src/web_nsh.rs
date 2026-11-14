@@ -22,6 +22,8 @@ const EINVAL: i32 = -22;
 const EPIPE: i32 = -32;
 const EMSGSIZE: i32 = -90;
 const ENOTSUP: i32 = -95;
+/// 停止超时: 停止序列重发 3 轮仍没换来子进程退出, 放弃这个会话。
+const ETIMEDOUT: i32 = -110;
 const RX_CAP: usize = 8192;
 const TX_CAP: usize = 2048;
 const IO_CHUNK: usize = 256;
@@ -54,6 +56,7 @@ static CHILD_DONE: AtomicBool = AtomicBool::new(false);
 static CHILD_EXIT: AtomicI32 = AtomicI32::new(0);
 static CHILD_CONSOLE: AtomicUsize = AtomicUsize::new(0);
 static ORIGINAL_EXIT: AtomicUsize = AtomicUsize::new(0);
+static LOW_FDS_READY: AtomicBool = AtomicBool::new(false);
 static RX: Spsc<RX_CAP> = Spsc::new();
 static TX: Spsc<TX_CAP> = Spsc::new();
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -91,7 +94,16 @@ fn start() -> Result<(), i32> {
     STOP_REQUEST.store(false, Ordering::Relaxed);
     REQUEST.store(true, Ordering::Release);
     if !WORKER_STARTED.swap(true, Ordering::AcqRel) {
-        let pid = unsafe { crate::fw_api::nsh_spawn(WORKER_NAME.as_ptr(), worker_entry, core::ptr::null_mut()) };
+        // 空链与 NULL 等价: task_spawn 读 *actions 取链头, 空链的头是 0。
+        // 这里与下面 child spawn 用同一种形状。
+        let mut head = 0usize;
+        let init_rc = unsafe { crate::fw_api::nsh_actions_init(&mut head) };
+        let pid = if init_rc == 0 {
+            unsafe { crate::fw_api::nsh_spawn(WORKER_NAME.as_ptr(), worker_entry, &mut head) }
+        } else {
+            init_rc
+        };
+        unsafe { crate::fw_api::nsh_actions_destroy(&mut head) };
         if pid <= 0 {
             let code = if pid < 0 { pid } else { EIO };
             REQUEST.store(false, Ordering::Release);
@@ -207,13 +219,28 @@ struct Actions(usize);
 impl Drop for Actions {
     fn drop(&mut self) { unsafe { crate::fw_api::nsh_actions_destroy(&mut self.0); } }
 }
+
+/// web NSH 的 worker 从 PAN worker 克隆 fd 表; PAN worker 的 0/1/2 不一定开着,
+/// ptmx 会落到 0/1/2 并被 master 保护判成坏 fd。先用 /dev/null 占住 0/1/2
+/// (最多 3 个, worker 常驻, 故意不关), 保证 master 永远 >= 3。
+unsafe fn ensure_low_fds() {
+    if LOW_FDS_READY.load(Ordering::Acquire) { return; }
+    let mut ok = true;
+    for _ in 0..3 {
+        let fd = crate::fw_api::open(b"/dev/null\0".as_ptr(), crate::fw_api::oflag::RDWR, 0);
+        if fd < 0 { ok = false; break; }
+    }
+    if ok { LOW_FDS_READY.store(true, Ordering::Release); }
+}
 struct Session {
     master: Fd, child: i32, pending: [u8; IO_CHUNK],
     pending_len: usize, pending_offset: usize, failure: i32,
     write_failed: bool, stopping: bool, stop_offset: usize,
+    stop_stall: u32, stop_restarts: u32,
 }
 impl Session {
     unsafe fn open() -> Result<Self, i32> {
+        ensure_low_fds();
         let master = crate::fw_api::nsh_master_open();
         if master < 0 { return Err(master); }
         let master = Fd(master);
@@ -241,7 +268,8 @@ impl Session {
         drop(slave);
         if child <= 0 { return Err(if child < 0 { child } else { EIO }); }
         Ok(Self { master, child, pending: [0; IO_CHUNK], pending_len: 0,
-            pending_offset: 0, failure: 0, write_failed: false, stopping: false, stop_offset: 0 })
+            pending_offset: 0, failure: 0, write_failed: false, stopping: false, stop_offset: 0,
+            stop_stall: 0, stop_restarts: 0 })
     }
     fn fail(&mut self, code: i32) {
         if self.failure == 0 {
@@ -328,7 +356,27 @@ impl Session {
             self.fail(if waited < 0 { waited } else { EIO });
         }
         if STOP_REQUEST.swap(false, Ordering::AcqRel) { self.begin_stop(); }
+        let before = self.stop_offset;
         self.write_once();
+        if self.stopping {
+            // 停止序列可能整段被吃掉(那一刻 shell 不在读输入), 也可能整段发完
+            // 但子进程仍不退。两种都表现为 stop_offset 长时间不推进: 隔 40 拍
+            // (约 0.8s)从头再来一次 Ctrl-C + exit, 最多 3 次。
+            // 没有这个兜底, 状态会永久停在 STOPPING, 之后每次连网页终端都是
+            // 1013 "会话正在回收", 只有重启才能恢复。
+            if self.stop_offset == before { self.stop_stall += 1; } else { self.stop_stall = 0; }
+            if self.stop_stall > 40 && !self.write_failed && self.stop_restarts < 3 {
+                self.stop_offset = 0; self.stop_stall = 0; self.stop_restarts += 1;
+            }
+            /* 三轮停止序列都没换来退出: 放弃这个会话, 让下一次连接能开新的。
+             * 不调 complete(): 子进程还活着, 释放它的 console 会踩内存 —— 代价是
+             * 漏一个 shell 任务和它的 console, 但比"必须重启整机才能再用网页终端"好。
+             * 关掉 master 之后 shell 下次写 PTY 就会失败退出。 */
+            if self.stop_restarts >= 3 && self.stop_stall > 40 {
+                self.failure = ETIMEDOUT;
+                return Some(ETIMEDOUT);
+            }
+        }
         let read_error = self.read_burst(LIVE_READ_BUDGET);
         if read_error == EIO {
             let waited = crate::fw_api::nsh_waitpid_nohang(self.child, &mut status);

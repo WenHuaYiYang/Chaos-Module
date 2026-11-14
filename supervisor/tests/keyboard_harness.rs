@@ -26,7 +26,7 @@ fn nav_goto(pid: u32, _: u32) {
 fn nav_back() {
     mock::with(|ui| ui.back_count += 1);
 }
-fn render_req(pid: usize) { mock::with(|ui| ui.render_requests.push(pid)); }
+fn render_req(pid: u32) { mock::with(|ui| ui.render_requests.push(pid)); }
 mod terminal_ui {
     pub unsafe fn submit_command(text: *const u8) -> bool {
         let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
@@ -91,7 +91,7 @@ mod mock {
         pub save_ok: bool,
         pub saves: Vec<(u32, Vec<u8>)>,
         pub back_count: usize,
-        pub render_requests: Vec<usize>,
+        pub render_requests: Vec<u32>,
         pub fail_at: Option<usize>,
     }
 
@@ -131,6 +131,7 @@ mod fw_api {
     use super::mock;
 
     pub const LV_DIR_HOR: u32 = 0x3;
+    pub const LV_DIR_VER: u32 = 0xC;
     pub const LV_OBJ_FLAG_CLICKABLE: u32 = 0x2;
     pub const LV_OBJ_FLAG_SCROLLABLE: u32 = 0x10;
     pub const LV_OBJ_FLAG_SCROLL_ELASTIC: u32 = 0x20;

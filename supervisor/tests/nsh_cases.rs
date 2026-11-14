@@ -8,6 +8,7 @@ fn reset() {
     WORKER_STARTED.store(false, Ordering::Relaxed); REQUEST.store(false, Ordering::Relaxed);
     CHILD_DONE.store(false, Ordering::Relaxed); CHILD_EXIT.store(0, Ordering::Relaxed);
     CHILD_CONSOLE.store(0, Ordering::Relaxed); ORIGINAL_EXIT.store(0, Ordering::Relaxed);
+    LOW_FDS_READY.store(false, Ordering::Relaxed);
     DROPPED.store(0, Ordering::Relaxed); NOTICE_COUNT.store(0, Ordering::Relaxed); NOTICE_OFFSET.store(0, Ordering::Relaxed);
     unsafe { RX.reset_quiescent(); TX.reset_quiescent(); }
 }
@@ -57,7 +58,8 @@ fn every_startup_failure_closes_only_owned_fds_and_destroys_actions_once() {
         with(|m| {
             let expected = match phase { 0 => vec![], 1 => vec![2], 2 | 3 => vec![5], _ => vec![6, 5] };
             assert_eq!(m.closed, expected, "phase {phase}");
-            assert_eq!(m.destroys, usize::from(phase >= 5), "phase {phase}");
+            // worker spawn 也会 init/destroy 一个空 actions 链(1 次)
+            assert_eq!(m.destroys, 1 + usize::from(phase >= 5), "phase {phase}");
             assert!(m.waits.is_empty());
         });
     }
@@ -70,7 +72,8 @@ fn dup2_is_child_only_and_active_start_is_idempotent() {
     let mut session = None; step(&mut session); assert_eq!(start(), Ok(()));
     with(|m| {
         assert_eq!(m.actions, [(6, 0), (6, 1), (6, 2), (6, 5)]);
-        assert_eq!(m.events[..2], ["actions_destroy", "close:6"]);
+        // worker 的空 actions 链先 destroy 一次, 再是 session 的 actions, 最后 slave close
+        assert_eq!(m.events[..3], ["actions_destroy", "actions_destroy", "close:6"]);
         assert_eq!(m.spawns.len(), 2); assert_eq!(m.closed, [6]);
         assert_eq!(m.spawns[0].0, b"chaos.nsh.worker"); assert!(m.spawns[0].2);
         assert_eq!(m.spawns[1].0, b"chaos.nsh"); assert!(!m.spawns[1].2);

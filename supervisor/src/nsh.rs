@@ -39,6 +39,7 @@ static CHILD_DONE: AtomicBool = AtomicBool::new(false);
 static CHILD_EXIT: AtomicI32 = AtomicI32::new(0);
 static CHILD_CONSOLE: AtomicUsize = AtomicUsize::new(0);
 static ORIGINAL_EXIT: AtomicUsize = AtomicUsize::new(0);
+static LOW_FDS_READY: AtomicBool = AtomicBool::new(false);
 static RX: Spsc<RX_CAP> = Spsc::new();
 static TX: Spsc<TX_CAP> = Spsc::new();
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -77,7 +78,16 @@ pub(crate) fn start() -> Result<(), i32> {
     SESSION_ERROR.store(0, Ordering::Release);
     REQUEST.store(true, Ordering::Release);
     if !WORKER_STARTED.swap(true, Ordering::AcqRel) {
-        let pid = unsafe { crate::fw_api::nsh_spawn(WORKER_NAME.as_ptr(), worker_entry, core::ptr::null_mut()) };
+        // 空链与 NULL 等价: task_spawn 读 *actions 取链头, 空链的头是 0。
+        // worker 不改 fd, 这里与 child spawn 用同一种形状。
+        let mut head = 0usize;
+        let init_rc = unsafe { crate::fw_api::nsh_actions_init(&mut head) };
+        let pid = if init_rc == 0 {
+            unsafe { crate::fw_api::nsh_spawn(WORKER_NAME.as_ptr(), worker_entry, &mut head) }
+        } else {
+            init_rc
+        };
+        unsafe { crate::fw_api::nsh_actions_destroy(&mut head) };
         if pid <= 0 {
             let code = if pid < 0 { pid } else { EIO };
             REQUEST.store(false, Ordering::Release);
@@ -185,6 +195,19 @@ struct Actions(usize);
 impl Drop for Actions {
     fn drop(&mut self) { unsafe { crate::fw_api::nsh_actions_destroy(&mut self.0); } }
 }
+
+/// 工作线程的 fd 表是从父任务克隆的; UI 任务的 0/1/2 不一定开着, ptmx 会落到
+/// 0/1/2 并被下面的保护判成坏 fd。先用 /dev/null 占住 0/1/2(最多 3 个, 工作线程
+/// 常驻, 故意不关), 保证 master 永远 >= 3。
+unsafe fn ensure_low_fds() {
+    if LOW_FDS_READY.load(Ordering::Acquire) { return; }
+    let mut ok = true;
+    for _ in 0..3 {
+        let fd = crate::fw_api::open(b"/dev/null\0".as_ptr(), crate::fw_api::oflag::RDWR, 0);
+        if fd < 0 { ok = false; break; }
+    }
+    if ok { LOW_FDS_READY.store(true, Ordering::Release); }
+}
 struct Session {
     master: Fd,
     child: i32,
@@ -196,6 +219,7 @@ struct Session {
 }
 impl Session {
     unsafe fn open() -> Result<Self, i32> {
+        ensure_low_fds();
         let master = crate::fw_api::nsh_master_open();
         if master < 0 { return Err(master); }
         let master = Fd(master);

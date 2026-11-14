@@ -95,7 +95,7 @@ unsafe fn apply_now(value: u8) {
 
 /// 把所有已建页面的内容根标脏。`obj_invalidate` 只重画这一棵子树，不发样式事件。
 unsafe fn invalidate_pages() {
-    let pages: &[crate::state::Page] = &*core::ptr::addr_of!(crate::state::PAGES);
+    let pages: &[crate::state::PageState] = &*core::ptr::addr_of!(crate::state::PAGES);
     for page in pages.iter() {
         if page.content != 0 {
             fw_api::obj_invalidate(page.content);

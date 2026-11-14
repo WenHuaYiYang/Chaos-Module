@@ -70,6 +70,12 @@ pub(crate) unsafe fn animation_active(active: bool, period: u32) -> bool {
     update_timer()
 }
 
+/// 动态图标动画是否在播放(OWN/PACK 任一周期非 0 = 帧定时器在跑)。
+/// 帧预载挂在主维护节拍上, 播放期间必须保持快档, 否则预载跟不上播放节奏。
+pub(crate) fn pack_animation_busy() -> bool {
+    unsafe { OWN_PERIOD != 0 || PACK_PERIOD != 0 }
+}
+
 pub(crate) unsafe fn pack_animation_active(active: bool, period: u32) -> bool {
     PACK_PERIOD = if active { period.clamp(10,50) } else { 0 };
     update_timer()

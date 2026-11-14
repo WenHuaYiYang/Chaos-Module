@@ -1,6 +1,7 @@
 //! Screenshots/recordings: four actions, two settings pages and storage footers. Two independent
 //! third-level file lists use immutable filenames for two-tap deletion.
 use crate::page::*;
+use crate::page::kit::checklist::{click as ck_click, render as ck_render, CheckSpec};
 use crate::capture::{self, State};
 use crate::capture_format::{self as format, Kind, Storage, VideoFormat};
 use crate::capture_settings;
@@ -74,9 +75,9 @@ impl Page for CapturePage {
     } }
     fn on_click(&self, idx: usize) { unsafe {
         match idx {
-            0 if capture::state() != State::Stopping => { capture::toggle_recording(); render_req(CAPTURE_PID as usize); }
+            0 if capture::state() != State::Stopping => { capture::toggle_recording(); render_req(CAPTURE_PID); }
             1 => { PAGE_RECORDINGS.enter(); nav_goto(RECORDINGS_PID as u32, 0); }
-            2 => { capture::toggle_shot(); render_req(CAPTURE_PID as usize); }
+            2 => { capture::toggle_shot(); render_req(CAPTURE_PID); }
             3 => { PAGE_SCREENSHOTS.enter(); nav_goto(SCREENSHOTS_PID as u32, 0); }
             4 => nav_goto(RECORDSET_PID as u32, 0),
             5 => nav_goto(SHOTSET_PID as u32, 0),
@@ -87,7 +88,7 @@ impl Page for CapturePage {
     fn tick(&self) { unsafe {
         // Update rows in place: don't rebuild a scrolling list every frame.
         if LAST_REVISION != capture::revision() {
-            render_req(CAPTURE_PID as usize);
+            render_req(CAPTURE_PID);
         } else if (LAST_FRAMES != capture::frames() || LAST_FPS != capture::fps())
             && matches!(capture::state(), State::Starting | State::Recording) {
             LAST_FRAMES = capture::frames();
@@ -111,36 +112,32 @@ impl SettingsPage {
     fn pid(&self) -> usize { if self.recording { RECORDSET_PID } else { SHOTSET_PID } }
     fn slot(&self) -> usize { if self.recording { 0 } else { 1 } }
 }
-impl Page for SettingsPage {
-    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, if self.recording { "录屏设置\0".as_bytes() } else { "截图设置\0".as_bytes() }); } }
-    fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
-        let setting = capture_settings::get(); let mut anchor = ctx.title;
-        let path_slot = if self.recording { 2 } else { 0 };
-        let location = if self.recording { setting.recording } else { setting.screenshot };
+
+// 录屏/截图设置页的选项 spec(单选 RADIO): 录屏 = 格式两项 + 存储两项,
+// 截图 = 存储两项。点选后走整页重建(底部的条件提示行会随结果增减)。
+struct CapSetCheck { recording: bool }
+impl CheckSpec for CapSetCheck {
+    fn count(&self) -> usize { if self.recording { 4 } else { 2 } }
+    unsafe fn label(&self, i: usize) -> *const u8 {
         let texts: [&[u8]; 4] = ["GIF\0".as_bytes(), "APNG\0".as_bytes(), b"/data/chaos/media\0", b"/data/offlinelog\0"];
-        let count = if self.recording { 4 } else { 2 };
-        for i in 0..count {
-            let text = texts[if self.recording { i } else { i + 2 }];
-            let sub = if self.recording && i < 2 { "录屏格式\0".as_bytes() } else { "储存路径\0".as_bytes() };
-            let spec = RowSpec { text, sub: sub.as_ptr(), trailing: fw_api::trailing::RADIO, clickable: true };
-            let row = build_row(ctx, anchor, i, &spec);
-            if row == 0 { return Err(PageError::RowFailed(i)); }
-            // Bind the radio itself here, leaving existing pages' row events unchanged.
-            let radio = fw_api::row_trailing(row);
-            if radio != 0 { fw_api::obj_add_event(radio, row_ev_fn(i), 7, 0); }
-            let selected = if self.recording && i < 2 { i == setting.format as usize }
-                else { (i == path_slot && location == Storage::Media) || (i == path_slot + 1 && location == Storage::OfflineLog) };
-            fw_api::row_update(row, core::ptr::null(), core::ptr::null(), core::ptr::null(), 0, selected as u8);
-            anchor = row;
+        texts[if self.recording { i } else { i + 2 }].as_ptr()
+    }
+    unsafe fn sub(&self, i: usize) -> *const u8 {
+        let sub: &[u8] = if self.recording && i < 2 { "录屏格式\0".as_bytes() } else { "储存路径\0".as_bytes() };
+        sub.as_ptr()
+    }
+    fn trailing(&self) -> u32 { fw_api::trailing::RADIO }
+    unsafe fn selected(&self, i: usize) -> bool {
+        let setting = capture_settings::get();
+        if self.recording {
+            if i < 2 { i == setting.format as usize } else {
+                (i == 2 && setting.recording == Storage::Media) || (i == 3 && setting.recording == Storage::OfflineLog)
+            }
+        } else {
+            (i == 0 && setting.screenshot == Storage::Media) || (i == 1 && setting.screenshot == Storage::OfflineLog)
         }
-        if SETTINGS_RESULT[self.slot()] < 0 {
-            build_row(ctx, anchor, count, &RowSpec::display("设置保存失败，请重试\0".as_bytes(), core::ptr::null()));
-        } else if capture::state() != State::Idle && self.recording {
-            build_row(ctx, anchor, count, &RowSpec::display("修改将在下次录屏生效\0".as_bytes(), core::ptr::null()));
-        }
-        Ok(())
-    } }
-    fn on_click(&self, i: usize) { unsafe {
+    }
+    unsafe fn choose(&self, i: usize) {
         let mut setting = capture_settings::get();
         match (self.recording, i) {
             (true, 0) => setting.format = VideoFormat::Gif,
@@ -151,8 +148,30 @@ impl Page for SettingsPage {
             (false, 1) => setting.screenshot = Storage::OfflineLog,
             _ => return,
         }
-        SETTINGS_RESULT[self.slot()] = capture_settings::set(setting).err().unwrap_or(0);
-        capture::settings_changed(); render_req(self.pid());
+        let slot = if self.recording { 0 } else { 1 };
+        let pid = if self.recording { RECORDSET_PID } else { SHOTSET_PID };
+        SETTINGS_RESULT[slot] = capture_settings::set(setting).err().unwrap_or(0);
+        capture::settings_changed();
+        render_req(pid as u32);
+    }
+}
+
+impl Page for SettingsPage {
+    fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, if self.recording { "录屏设置\0".as_bytes() } else { "截图设置\0".as_bytes() }); } }
+    fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
+        let spec = CapSetCheck { recording: self.recording };
+        let anchor = ck_render(&spec, ctx)?;
+        // 条件提示行(失败/录屏中修改的说明), 跟在选项列表后
+        if SETTINGS_RESULT[self.slot()] < 0 {
+            build_row(ctx, anchor, spec.count(), &RowSpec::display("设置保存失败，请重试\0".as_bytes(), core::ptr::null()));
+        } else if capture::state() != State::Idle && self.recording {
+            build_row(ctx, anchor, spec.count(), &RowSpec::display("修改将在下次录屏生效\0".as_bytes(), core::ptr::null()));
+        }
+        Ok(())
+    } }
+    fn on_click(&self, i: usize) { unsafe {
+        let spec = CapSetCheck { recording: self.recording };
+        ck_click(&spec, self.pid() as u32, i);
     } }
 }
 
@@ -285,7 +304,7 @@ impl Page for FilesPage {
             }
             _ => return,
         }
-        render_req(self.pid());
+        render_req(self.pid() as u32);
     } }
     fn needs_tick(&self) -> bool { true }
     fn tick(&self) { unsafe {
@@ -296,7 +315,7 @@ impl Page for FilesPage {
             let busy = list.armed.name[..len].ends_with(b".part") &&
                 ((self.kind == Kind::Recording && capture::state() != State::Idle)
                  || (self.kind == Kind::Screenshot && capture::shot_state() == 2));
-            if busy { list.delete = false; list.armed = Entry::EMPTY; list.result = -16; render_req(self.pid()); return; }
+            if busy { list.delete = false; list.armed = Entry::EMPTY; list.result = -16; render_req(self.pid() as u32); return; }
             list.result = match format::path_at(&list.armed.name, false, list.armed.storage, &mut path) {
                 Ok(()) => {
                     let rc = fw_api::capture_result(fw_api::fs_remove(path.as_ptr()));
@@ -304,7 +323,7 @@ impl Page for FilesPage {
                 }
                 Err(e) => e,
             };
-            list.delete = false; list.armed = Entry::EMPTY; render_req(self.pid());
-        } else if list.revision != capture::revision() { render_req(self.pid()); }
+            list.delete = false; list.armed = Entry::EMPTY; render_req(self.pid() as u32);
+        } else if list.revision != capture::revision() { render_req(self.pid() as u32); }
     } }
 }

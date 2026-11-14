@@ -21,7 +21,6 @@ use crate::{st_rd, st_wr};
 pub(crate) const REGION_N: usize = 4;
 
 /// 本页的 page_id(系统模糊 -> 模糊区域; 页15, 注册见 ipc.rs/state.rs/page.rs)
-pub(crate) const PAGE_PID: u32 = 15;
 
 static mut MASK: u32 = 0x0F;
 static mut LOADED: u32 = 0;

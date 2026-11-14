@@ -2,17 +2,31 @@
 
 use crate::page::*;
 use crate::page::Page;
-use super::time::{time_edit_enter, TIME_PID, DATE_MD_PID};
-
-use core::sync::atomic::{AtomicU32, Ordering};
+use crate::page::kit::{MenuSpec, RowKind, RowModel, RowSub, ToggleDef};
 
 pub(crate) struct SettingsPage;
 
 // ===== 页11: 亮度 =====
 
-pub(crate) struct BrightnessPage {
-    pub req: AtomicU32,
-    pub req_val: AtomicU32,
+pub(crate) struct BrightnessPage;
+
+// 静态行模型 + 保留原 tick 的原地刷新(行槽位不变: 0 状态 / 3 自动开关)。
+unsafe fn bright_status_ptr() -> *const u8 { core::ptr::addr_of!(BRIGHT_STATUS) as *const u8 }
+unsafe fn bright_set_600() { st_wr!(BRIGHT_REQ_VAL, 600); st_wr!(BRIGHT_REQ, 4); }
+unsafe fn bright_set_2000() { st_wr!(BRIGHT_REQ_VAL, 2000); st_wr!(BRIGHT_REQ, 4); }
+unsafe fn bright_auto_get() -> bool { fw_api::brightness_get_auto_adjustment() != 0 }
+unsafe fn bright_auto_toggle() { st_wr!(BRIGHT_REQ, 2); }
+
+static BRIGHT_AUTO_DEF: ToggleDef = ToggleDef { get: bright_auto_get, toggle: bright_auto_toggle, status: None };
+static BRIGHT_ROWS: &[RowModel] = &[
+    RowModel::display_sub("当前亮度\0".as_bytes(), RowSub::Dyn(bright_status_ptr)),
+    RowModel::action("600nit\0".as_bytes(), bright_set_600, 0, None),
+    RowModel::action("2000nit\0".as_bytes(), bright_set_2000, 0, None),
+    RowModel::toggle("自动亮度\0".as_bytes(), &BRIGHT_AUTO_DEF),
+];
+
+impl MenuSpec for BrightnessPage {
+    fn rows(&self) -> &'static [RowModel] { BRIGHT_ROWS }
 }
 
 impl Page for BrightnessPage {
@@ -23,59 +37,18 @@ impl Page for BrightnessPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            let cur = fw_api::brightness_get_target();
-            st_wr!(BRIGHT_VAL, cur);
-            let auto_on = fw_api::brightness_get_auto_adjustment();
+            st_wr!(BRIGHT_VAL, fw_api::brightness_get_target());
             bright_fill_status();
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::display("当前亮度\0".as_bytes(), core::ptr::addr_of!(BRIGHT_STATUS) as *const u8)),
-                (1, RowSpec::clickable(b"600nit\0")),
-                (2, RowSpec::clickable(b"2000nit\0")),
-                (3, RowSpec::switch("自动亮度\0".as_bytes())),
-            ])?;
-            // 补写开关初态
-            let rows = page_rows_ptr(11);
-            let r3 = read_volatile(rows.add(3));
-            if r3 != 0 {
-                let upd = fw_api::row_update;
-                upd(r3, core::ptr::null(), "自动亮度\0".as_bytes().as_ptr(),
-                    core::ptr::null(), 0, auto_on as u8);
-            }
-            Ok(())
+            frame::build(self, ctx, ctx.title)
         }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 3 }
-
-    fn on_click(&self, idx: usize) {
-        match idx {
-            1 => {
-                self.req_val.store(600, Ordering::Relaxed);
-                self.req.store(4, Ordering::Relaxed);
-                unsafe {
-                    st_wr!(BRIGHT_REQ_VAL, 600);
-                    st_wr!(BRIGHT_REQ, 4);
-                }
-            }
-            2 => {
-                self.req_val.store(2000, Ordering::Relaxed);
-                self.req.store(4, Ordering::Relaxed);
-                unsafe {
-                    st_wr!(BRIGHT_REQ_VAL, 2000);
-                    st_wr!(BRIGHT_REQ, 4);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn on_switch(&self, _idx: usize) {
-        self.req.store(2, Ordering::Relaxed);
-        unsafe { st_wr!(BRIGHT_REQ, 2); }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, _idx: usize) { unsafe { kit::menu_switch(self, _idx) } }
 
     fn needs_tick(&self) -> bool {
-        self.req.load(Ordering::Relaxed) != 0
+        unsafe { st_rd!(BRIGHT_REQ) != 0 }
     }
 
     fn tick(&self) {
@@ -154,7 +127,7 @@ impl Page for CachePage {
                 if card != 0 { last = card; }
                 r += 1;
             }
-            let label: &[u8] = if st_rd!(crate::cacheclean::CC_ARM) != 0 {
+            let label: &[u8] = if crate::cacheclean::CC_ARM.armed() {
                 "再次点击确认清理\0".as_bytes()
             } else {
                 "开始清理\0".as_bytes()
@@ -168,9 +141,8 @@ impl Page for CachePage {
     fn on_click(&self, idx: usize) {
         unsafe {
             if idx != 5 { return; }
-            if st_rd!(crate::cacheclean::CC_ARM) == 0 {
+            if !crate::cacheclean::CC_ARM.click() {
                 // 第一次点: 武装确认(只改行文本, 不在事件回调做长 FS 操作)
-                st_wr!(crate::cacheclean::CC_ARM, 1);
                 let rows = page_rows_ptr(12);
                 let r1 = read_volatile(rows.add(5));   // 行5 = 清理按钮(1..4 是路径卡片)
                 if r1 != 0 {
@@ -193,7 +165,7 @@ impl Page for CachePage {
             st_wr!(crate::cacheclean::CC_REQ, 0);
             crate::cacheclean::clean();
             st_wr!(crate::cacheclean::CC_HAS_RESULT, 1);
-            render_req(12);
+            render_req(Pid::Cache as u32);
         }
     }
 }
@@ -201,10 +173,34 @@ impl Page for CachePage {
 
 // ===== 页16: 主页 -> 震动 =====
 //
-// 行0 = "滑动列表震动"(launcher 根 SCROLL_END + 拖拽距离过滤, 见 background_home.rs);
-// 行1 = "右滑返回震动"(前台 app 切回 HOME 震一次); 行2 = "测试震动";
-// 行11 = 返回。两个开关独立持久化 /data/chaos/swipe_vib.cfg, 默认全关。
+// 两个开关独立持久化 /data/chaos/swipe_vib.cfg, 默认全关; "测试震动"是动作行。
+// 走统一菜单骨架, 返回靠标题栏返回键。
 pub(crate) struct VibPage;
+
+unsafe fn vib_list_get() -> bool { crate::background_home::swipe_list_on() != 0 }
+unsafe fn vib_list_toggle() {
+    crate::background_home::set_swipe_vib(true,
+        if crate::background_home::swipe_list_on() != 0 { 0 } else { 1 });
+}
+unsafe fn vib_back_get() -> bool { crate::background_home::swipe_back_on() != 0 }
+unsafe fn vib_back_toggle() {
+    crate::background_home::set_swipe_vib(false,
+        if crate::background_home::swipe_back_on() != 0 { 0 } else { 1 });
+}
+unsafe fn vib_test() { crate::background_home::vib_test_req(); }
+
+static VIB_LIST_DEF: ToggleDef = ToggleDef { get: vib_list_get, toggle: vib_list_toggle, status: None };
+static VIB_BACK_DEF: ToggleDef = ToggleDef { get: vib_back_get, toggle: vib_back_toggle, status: None };
+
+static VIB_ROWS: &[RowModel] = &[
+    RowModel::toggle("滑动列表震动\0".as_bytes(), &VIB_LIST_DEF),
+    RowModel::toggle("右滑返回震动\0".as_bytes(), &VIB_BACK_DEF),
+    RowModel::action("测试震动\0".as_bytes(), vib_test, 0, None),
+];
+
+impl MenuSpec for VibPage {
+    fn rows(&self) -> &'static [RowModel] { VIB_ROWS }
+}
 
 impl Page for VibPage {
     fn fill_title(&self, buf: *mut u8) {
@@ -212,117 +208,86 @@ impl Page for VibPage {
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::switch("滑动列表震动\0".as_bytes())),
-                (1, RowSpec::switch("右滑返回震动\0".as_bytes())),
-                (2, RowSpec::clickable("测试震动\0".as_bytes())),
-                (11, RowSpec::clickable("返回\0".as_bytes()))])?;
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(0)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::background_home::swipe_list_on() as u8);
-            fw_api::row_update(core::ptr::read_volatile(ctx.rows.add(1)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::background_home::swipe_back_on() as u8);
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            if idx == 2 { crate::background_home::vib_test_req(); }
-            else if idx == 11 { nav_back(); }
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
+}
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 0 || idx == 1 }
+// ===== 页14: 设置 =====
+//
+// 走统一菜单骨架(MenuSpec + RowModel): 分组标题不占行槽, 11 行在预算内。
+// 信息架构(只重排, 不增删入口):
+//   显示与交互  亮度 / 震动 / 屏幕翻转 / 应用图标
+//   时间与外观  时间设置 / 日期设置 / 系统关于页面修改
+//   存储与维护  缓存清理 / 运行日志 / 恢复fetch支持 / 文件桥
+// 页名字符串沿用 `about`(registry.rs): 它只是 page_goto 的解析键, 与标题无关。
 
-    fn on_switch(&self, idx: usize) {
-        unsafe {
-            if idx == 0 {
-                crate::background_home::set_swipe_vib(true,
-                    if crate::background_home::swipe_list_on() != 0 { 0 } else { 1 });
-            } else if idx == 1 {
-                crate::background_home::set_swipe_vib(false,
-                    if crate::background_home::swipe_back_on() != 0 { 0 } else { 1 });
-            }
-        }
-    }
+unsafe fn enter_time() {
+    crate::page::time::time_edit_enter(crate::page::time::TIME_PID as u32);
+}
+unsafe fn enter_date() {
+    crate::page::time::time_edit_enter(crate::page::time::DATE_MD_PID as u32);
+}
+
+unsafe fn rot_get() -> bool { crate::screen_rotation::enabled() }
+unsafe fn rot_toggle() { crate::screen_rotation::toggle(); }
+unsafe fn bridge_get() -> bool { crate::bridge_cfg::enabled() }
+unsafe fn bridge_toggle() {
+    let on = crate::bridge_cfg::toggle();
+    crate::log::kv("文件桥开关 ", if on { 1 } else { 0 });
+}
+unsafe fn appicon_sub() -> *const u8 {
+    crate::dynamic_icon::name(crate::dynamic_icon::selected()).as_ptr()
+}
+
+static ROT_DEF: ToggleDef = ToggleDef { get: rot_get, toggle: rot_toggle, status: None };
+static BRIDGE_DEF: ToggleDef = ToggleDef { get: bridge_get, toggle: bridge_toggle, status: None };
+
+static SETTINGS_ROWS: &[RowModel] = &[
+    RowModel::section("显示与交互\0".as_bytes()),
+    RowModel::nav("亮度\0".as_bytes(), Pid::Bright as u32),
+    RowModel::nav("震动\0".as_bytes(), Pid::Vibrate as u32),
+    RowModel { label: "屏幕翻转\0".as_bytes(), sub: RowSub::None,
+               kind: RowKind::Toggle(&ROT_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
+    RowModel { label: "应用图标\0".as_bytes(),
+               sub: RowSub::Dyn(appicon_sub),
+               kind: RowKind::Nav(Pid::AppIcon as u32),
+               trailing: 0, refresh: None },
+    RowModel::section("时间与外观\0".as_bytes()),
+    RowModel { label: "时间设置\0".as_bytes(), sub: RowSub::None,
+               kind: RowKind::Fn(enter_time), trailing: 0, refresh: None },
+    RowModel { label: "日期设置\0".as_bytes(), sub: RowSub::None,
+               kind: RowKind::Fn(enter_date), trailing: 0, refresh: None },
+    RowModel::nav("系统关于页面修改\0".as_bytes(), Pid::AboutMod as u32),
+    RowModel::section("存储与维护\0".as_bytes()),
+    RowModel::nav("缓存清理\0".as_bytes(), Pid::Cache as u32),
+    RowModel::nav("运行日志\0".as_bytes(), Pid::Log as u32),
+    RowModel::nav("恢复fetch支持\0".as_bytes(), Pid::Fetch as u32),
+    RowModel { label: "文件桥\0".as_bytes(), sub: RowSub::None,
+               kind: RowKind::Toggle(&BRIDGE_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
+];
+
+impl MenuSpec for SettingsPage {
+    fn rows(&self) -> &'static [RowModel] { SETTINGS_ROWS }
 }
 
 impl Page for SettingsPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "设置\0".as_bytes()); }
     }
-    /// 页14 原来叫"关于"，只放版本与开发者。2026-10-18 重排：主页只留四个一级入口
-    /// (应用管理 / 表盘管理 / 系统美化 / 设置)，常用的小开关与时间日期都收进这里，
-    /// 版本信息压到底部当展示行 —— 用户要"清楚"，就不要在主页堆十个平级行。
-    /// 页名字符串沿用 `about`(state/ipc 没动)：它只是 page_goto 的解析键，与标题无关。
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            let rows: &[(usize, RowSpec<'_>)] = &[
-                (0, RowSpec::clickable("时间设置\0".as_bytes())),
-                (1, RowSpec::clickable("日期设置\0".as_bytes())),
-                (2, RowSpec::clickable("亮度\0".as_bytes())),
-                (3, RowSpec::clickable("震动\0".as_bytes())),
-                (4, RowSpec::clickable("缓存清理\0".as_bytes())),
-                (5, RowSpec::clickable("运行日志\0".as_bytes())),
-                (6, RowSpec::clickable("恢复fetch支持\0".as_bytes())),
-                (7, RowSpec::clickable("系统关于页面修改\0".as_bytes())),
-                (8, RowSpec::switch("文件桥\0".as_bytes())),
-                (9, RowSpec::switch("屏幕翻转\0".as_bytes())),
-                (10, RowSpec { text: "应用图标\0".as_bytes(),
-                    sub: crate::dynamic_icon::name(crate::dynamic_icon::selected()).as_ptr(),
-                    trailing: fw_api::trailing::FORWARD, clickable: true }),
-            ];
-            build_rows(ctx, ctx.title, rows)?;
-            fw_api::row_update(
-                core::ptr::read_volatile(ctx.rows.add(8)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::bridge_cfg::enabled() as u8,
-            );
-            fw_api::row_update(
-                core::ptr::read_volatile(ctx.rows.add(9)),
-                fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                0, crate::screen_rotation::enabled() as u8,
-            );
             // 开机后第一次进设置页补一次方向；已经对齐过就是一次原子读。
             crate::screen_rotation::ensure_applied();
-            Ok(())
+            frame::build(self, ctx, ctx.title)
         }
     }
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            match idx {
-                0 => time_edit_enter(TIME_PID as u32),
-                1 => time_edit_enter(DATE_MD_PID as u32),
-                2 => nav_goto(11, 0),   // 亮度
-                3 => nav_goto(16, 0),   // 震动
-                4 => nav_goto(12, 0),   // 缓存清理
-                5 => nav_goto(17, 0),   // 运行日志
-                6 => nav_goto(19, 0),   // 恢复 fetch 支持
-                7 => nav_goto(24, 0),   // 系统关于页面修改
-                10 => nav_goto(crate::page::APP_ICON_PID, 0),
-                _ => {}
-            }
-        }
-    }
-    fn is_switch_row(&self, idx: usize) -> bool {
-        idx == 8 || idx == 9
-    }
-    fn on_switch(&self, idx: usize) {
-        if idx == 8 {
-            unsafe {
-                let on = crate::bridge_cfg::toggle();
-                crate::log::kv("文件桥开关 ", if on { 1 } else { 0 });
-            }
-        } else if idx == 9 {
-            unsafe {
-                let flipped = crate::screen_rotation::toggle();
-                crate::log::kv("屏幕翻转 ", if flipped { 1 } else { 0 });
-            }
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
 
 
@@ -331,30 +296,27 @@ pub(crate) struct FetchPage;
 pub(super) static PAGE_FETCHP: FetchPage = FetchPage;
 static FETCH_HELP: &[u8] = "使用：\n1.前提条件：安装了autorun（如果没安装请在AstroBox上搜索或者加群1018886448获取autorun最新版本）\n2.开启方式：在Chaos的注入器表盘中点击注入设置->注册自启动，然后在autorun表盘中按照流程开启自启动，重启即可。\n3.注意事项：此功能只保证在小米运动健康中正常使用。\0".as_bytes();
 
+/// 页19 行模型: 一条长说明(Note), 挂在原生可滚动的 content 上。
+static FETCH_ROWS: &[RowModel] = &[RowModel::note(FETCH_HELP)];
+
+impl MenuSpec for FetchPage {
+    fn rows(&self) -> &'static [RowModel] { FETCH_ROWS }
+}
+
 impl Page for FetchPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "恢复fetch支持\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            let label = fw_api::label_create(ctx.content);
-            if label != 0 {
-                fw_api::style_apply(label, crate::FW_STYLE_HR_NAME, 255, 0);
-                fw_api::label_set_text(label, FETCH_HELP.as_ptr());
-                // 说明页没有开关；完整文本超出首屏后由 content 原生滚动。
-                fw_api::obj_set_size_wh(label, 320, 640);
-                fw_api::obj_align(label, fw_api::align::TOP_MID, 0, 12);
-            }
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
     fn on_click(&self, _idx: usize) {}
 }
 
 
-pub(super) static PAGE_BRIGHT: BrightnessPage = BrightnessPage { req: AtomicU32::new(0), req_val: AtomicU32::new(0) };
+pub(super) static PAGE_BRIGHT: BrightnessPage = BrightnessPage;
 pub(super) static PAGE_CACHEP: CachePage = CachePage;
 pub(super) static PAGE_VIBP: VibPage = VibPage;
 pub(super) static PAGE_SETTINGS: SettingsPage = SettingsPage;

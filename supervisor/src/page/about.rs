@@ -2,6 +2,7 @@
 
 use crate::page::*;
 use crate::page::Page;
+use crate::page::kit::{MenuSpec, RowKind, RowModel, RowSub};
 
 static mut ABOUT_FW: [u8; 32] = [0; 32];
 static mut ABOUT_BT: [u8; 40] = [0; 40];
@@ -49,7 +50,7 @@ pub(super) static PAGE_ABOUT_PAGE: AboutPage = AboutPage;
 static mut DBG_VAL: u32 = 50;
 static mut DBG_TXT: [u8; 8] = [0; 8];
 static mut DBG_DUMP_MSG: [u8; 32] = [0; 32];
-static mut DBG_DUMP_ARM: u32 = 0;
+static DBG_DUMP: crate::page::kit::confirm::Arm = crate::page::kit::confirm::Arm::new();
 static mut DBG_TICKS: u32 = 0;
 
 unsafe fn dbg_text() {
@@ -80,6 +81,45 @@ unsafe fn dbg_dump() {
     for i in 0..t.len() { write_volatile(m.add(i), t[i]); }
 }
 
+// 页18 正常分支的行模型(菜单骨架)。行0 保留"连点 5 次进调试"的彩蛋入口;
+// 编译时间/固件版本是取值时现算的副标签(Dyn)。
+unsafe fn about_fw_ptr() -> *const u8 { about_firmware().as_ptr() }
+unsafe fn about_bt_ptr() -> *const u8 { about_build_time().as_ptr() }
+unsafe fn dbg_bump() {
+    DBG_CLICKS += 1;
+    if DBG_CLICKS >= 5 {
+        DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP.reset();
+        crate::ui::render_req(Pid::About as u32);
+    }
+}
+
+static ABOUT_ROWS: &[RowModel] = &[
+    RowModel { label: "Chaos\0".as_bytes(),
+               sub: RowSub::Static(concat!("v", env!("CARGO_PKG_VERSION"), "\0").as_bytes()),
+               kind: RowKind::Fn(dbg_bump), trailing: 0, refresh: None },
+    RowModel { label: "编译时间\0".as_bytes(), sub: RowSub::Dyn(about_bt_ptr),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "运行固件\0".as_bytes(), sub: RowSub::Dyn(about_fw_ptr),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "文华逸洋\0".as_bytes(), sub: RowSub::Static("开发者\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "IKUN_CXKPRO\0".as_bytes(), sub: RowSub::Static("开发者\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "谦虚的海鸥\0".as_bytes(), sub: RowSub::Static("开发者\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "Lh杨\0".as_bytes(), sub: RowSub::Static("开发者\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "@wzx\0".as_bytes(), sub: RowSub::Static("贡献者(fetch实现)\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel { label: "许可证\0".as_bytes(), sub: RowSub::Static("AGPL-3.0\0".as_bytes()),
+               kind: RowKind::Display, trailing: 0, refresh: None },
+    RowModel::nav("开放源代码许可\0".as_bytes(), Pid::Licenses as u32),
+];
+
+impl MenuSpec for AboutPage {
+    fn rows(&self) -> &'static [RowModel] { ABOUT_ROWS }
+}
+
 impl Page for AboutPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe {
@@ -89,68 +129,11 @@ impl Page for AboutPage {
     }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
+            // 正常分支走统一菜单骨架(行模型见 ABOUT_ROWS); 调试分支保持自绘。
             if DBG_ON != 0 {
-                dbg_text();
-                // 4 环 = 2x2 验证矩阵（全部只写角度字段，不碰样式 API）：
-                //   A/B 灰底环(MAIN 整圈) + 蓝进度(INDICATOR 90..90+pct*3.6) 25%/75%
-                //   C   只有 INDICATOR 整圈 90..450，验证整圈特例
-                //   D   对照：一个字段都不写，看构造函数默认值到底画出什么
-                let specs: [(i32, i32, u32, bool, bool); 4] = [(52, 96, 25, true, true), (196, 96, 75, true, true), (52, 268, 100, false, true), (196, 268, 0, false, false)];
-                let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 100%\0", b"D def\0"];
-                for (i, &(x, y, pct, track, progress)) in specs.iter().enumerate() {
-                    if track {
-                        let t = fw_api::arc_create(ctx.content);
-                        if t != 0 {
-                            fw_api::obj_set_size_wh(t, 120, 120);
-                            fw_api::obj_align(t, fw_api::align::TOP_LEFT, x, y);
-                            fw_api::arc_set_bg_full(t);
-                            fw_api::arc_disable_input(t);
-                        }
-                    }
-                    if progress {
-                        let arc = fw_api::arc_create(ctx.content);
-                        if arc != 0 {
-                            fw_api::obj_set_size_wh(arc, 120, 120);
-                            fw_api::obj_align(arc, fw_api::align::TOP_LEFT, x, y);
-                            fw_api::arc_set_progress(arc, pct);
-                            fw_api::arc_disable_input(arc);
-                        }
-                    }
-                    let cl = fw_api::label_create(ctx.content);
-                    if cl != 0 {
-                        fw_api::style_apply(cl, crate::FW_STYLE_HR_NAME, 255, 0);
-                        fw_api::label_set_text(cl, caps[i].as_ptr());
-                        fw_api::obj_align(cl, fw_api::align::TOP_LEFT, x + 34, y + 122);
-                    }
-                }
-                let _ = build_rows(ctx, ctx.content, &[
-                    (0, RowSpec::tap("① 重绘四个对比环\0".as_bytes(), core::ptr::null())),
-                    (1, RowSpec::tap("② 导出 LVGL dump\0".as_bytes(), core::ptr::null())),
-                    (2, RowSpec::tap("③ 调试信息\0".as_bytes(), core::ptr::null())),
-                ]);
-                let msg = fw_api::label_create(ctx.content);
-                if msg != 0 {
-                    fw_api::style_apply(msg, crate::FW_STYLE_HR_NAME, 255, 0);
-                    fw_api::label_set_text(msg, core::ptr::addr_of!(DBG_DUMP_MSG) as *const u8);
-                    fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 420);
-                }
-                return Ok(());
+                return dbg_render(ctx);
             }
-            let bt = about_build_time();
-            let fw = about_firmware();
-            build_rows(ctx, ctx.title, &[
-                (0, RowSpec::tap("Chaos\0".as_bytes(), concat!("v", env!("CARGO_PKG_VERSION"), "\0").as_bytes().as_ptr())),
-                (1, RowSpec::display("编译时间\0".as_bytes(), bt.as_ptr())),
-                (2, RowSpec::display("运行固件\0".as_bytes(), fw.as_ptr())),
-                (3, RowSpec::display("文华逸洋\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (4, RowSpec::display("IKUN_CXKPRO\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (5, RowSpec::display("谦虚的海鸥\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (6, RowSpec::display("Lh杨\0".as_bytes(), "开发者\0".as_bytes().as_ptr())),
-                (7, RowSpec::display("@wzx\0".as_bytes(), "贡献者(fetch实现)\0".as_bytes().as_ptr())),
-                (8, RowSpec::display("许可证\0".as_bytes(), "AGPL-3.0\0".as_bytes().as_ptr())),
-                (9, RowSpec::clickable("开放源代码许可\0".as_bytes())),
-            ])?;
-            Ok(())
+            frame::build(self, ctx, ctx.title)
         }
     }
     fn on_click(&self, idx: usize) {
@@ -158,38 +141,78 @@ impl Page for AboutPage {
             if DBG_ON != 0 {
                 if DBG_TICKS < 5 { return; }
                 if idx == 1 {
-                    if DBG_DUMP_ARM == 0 {
-                        DBG_DUMP_ARM = 1;
+                    if DBG_DUMP.click() {
+                        dbg_dump();
+                    } else {
+                        // 武装击: 换提示文案
                         let m = core::ptr::addr_of_mut!(DBG_DUMP_MSG) as *mut u8;
                         for (i, c) in "再点一次确认导出\0".as_bytes().iter().enumerate() { write_volatile(m.add(i), *c); }
-                    } else {
-                        DBG_DUMP_ARM = 0;
-                        dbg_dump();
                     }
-                    crate::ui::render_req(18);
+                    crate::ui::render_req(Pid::About as u32);
                     return;
                 }
                 if idx == 2 {
-                    nav_goto(37, 0);
+                    nav_goto(Pid::Debug as u32, 0);
                     return;
                 }
-                crate::ui::render_req(18);
+                crate::ui::render_req(Pid::About as u32);
                 return;
             }
-            if idx == 9 {
-                nav_goto(20, 0);
-            }
-
-            // debug入口
-
-            else if idx == 0 {
-                DBG_CLICKS += 1;
-                if DBG_CLICKS >= 5 { DBG_ON = 1; DBG_CLICKS = 0; DBG_TICKS = 0; DBG_DUMP_ARM = 0; crate::ui::render_req(18); }
-            }
+            // 正常分支: 导航/彩蛋都在行模型里(Nav + Fn(dbg_bump)), kit 统一派发。
+            kit::menu_click(self, idx);
         }
     }
     fn needs_tick(&self) -> bool { unsafe { DBG_ON != 0 } }
     fn tick(&self) { unsafe { if DBG_ON != 0 { DBG_TICKS = DBG_TICKS.wrapping_add(1); } } }
+}
+
+/// 调试分支的自绘渲染(4 个对比环 + 三个动作行), 结构不变。
+unsafe fn dbg_render(ctx: &PageCtx) -> PageResult {
+    dbg_text();
+    // 4 环 = 2x2 验证矩阵（全部只写角度字段，不碰样式 API）：
+    //   A/B 灰底环(MAIN 整圈) + 蓝进度(INDICATOR 90..90+pct*3.6) 25%/75%
+    //   C   只有 INDICATOR 整圈 90..450，验证整圈特例
+    //   D   对照：一个字段都不写，看构造函数默认值到底画出什么
+    let specs: [(i32, i32, u32, bool, bool); 4] = [(52, 96, 25, true, true), (196, 96, 75, true, true), (52, 268, 100, false, true), (196, 268, 0, false, false)];
+    let caps: [&[u8]; 4] = [b"A 25%\0" as &[u8], b"B 75%\0", b"C 100%\0", b"D def\0"];
+    for (i, &(x, y, pct, track, progress)) in specs.iter().enumerate() {
+        if track {
+            let t = fw_api::arc_create(ctx.content);
+            if t != 0 {
+                fw_api::obj_set_size_wh(t, 120, 120);
+                fw_api::obj_align(t, fw_api::align::TOP_LEFT, x, y);
+                fw_api::arc_set_bg_full(t);
+                fw_api::arc_disable_input(t);
+            }
+        }
+        if progress {
+            let arc = fw_api::arc_create(ctx.content);
+            if arc != 0 {
+                fw_api::obj_set_size_wh(arc, 120, 120);
+                fw_api::obj_align(arc, fw_api::align::TOP_LEFT, x, y);
+                fw_api::arc_set_progress(arc, pct);
+                fw_api::arc_disable_input(arc);
+            }
+        }
+        let cl = fw_api::label_create(ctx.content);
+        if cl != 0 {
+            fw_api::style_apply(cl, crate::FW_STYLE_HR_NAME, 255, 0);
+            fw_api::label_set_text(cl, caps[i].as_ptr());
+            fw_api::obj_align(cl, fw_api::align::TOP_LEFT, x + 34, y + 122);
+        }
+    }
+    let _ = build_rows(ctx, ctx.content, &[
+        (0, RowSpec::tap("① 重绘四个对比环\0".as_bytes(), core::ptr::null())),
+        (1, RowSpec::tap("② 导出 LVGL dump\0".as_bytes(), core::ptr::null())),
+        (2, RowSpec::tap("③ 调试信息\0".as_bytes(), core::ptr::null())),
+    ]);
+    let msg = fw_api::label_create(ctx.content);
+    if msg != 0 {
+        fw_api::style_apply(msg, crate::FW_STYLE_HR_NAME, 255, 0);
+        fw_api::label_set_text(msg, core::ptr::addr_of!(DBG_DUMP_MSG) as *const u8);
+        fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 420);
+    }
+    Ok(())
 }
 
 // ===== 页20: 关于 -> 开放源代码许可 =====
@@ -222,7 +245,7 @@ impl Page for LicensesPage {
             if idx < 2 {
                 LICENSE_KIND = idx as u32;
                 LICENSE_PAGE = 0;
-                nav_goto(21, 0);
+                nav_goto(Pid::LicenseText as u32, 0);
             }
         }
     }
@@ -326,8 +349,8 @@ impl Page for LicenseTextPage {
     fn on_click(&self, idx: usize) {
         unsafe {
             let pages = license_page_count();
-            if idx == 0 && LICENSE_PAGE > 0 { LICENSE_PAGE -= 1; crate::ui::render_req(21); }
-            else if idx == 1 && LICENSE_PAGE + 1 < pages { LICENSE_PAGE += 1; crate::ui::render_req(21); }
+            if idx == 0 && LICENSE_PAGE > 0 { LICENSE_PAGE -= 1; crate::ui::render_req(Pid::LicenseText as u32); }
+            else if idx == 1 && LICENSE_PAGE + 1 < pages { LICENSE_PAGE += 1; crate::ui::render_req(Pid::LicenseText as u32); }
         }
     }
 }

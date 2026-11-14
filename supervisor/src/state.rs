@@ -33,8 +33,6 @@ pub static mut HEAL_TRYS: u32 = 0;            // 自愈重试次数(限次防死
 
 // 蓝牙 HID 遥控(页11): 点击置位 → lv_timer 里真正发送(避开事件派发上下文)
 
-pub const RENDER_NONE: u32 = 0xFFFF_FFFF;           // 无待重建请求 // lv_obj_set_hidden(obj,hidden)
-
 pub const STAT_MAGIC: u32 = 0x5348_4332;  // "2CHS"
 
 pub const STAT_VERSION: u32 = 0x4348_5302; // "CHS2" 新版标识，旧版是 "CHS1"
@@ -332,6 +330,18 @@ pub static mut WF_RF_RC: i32 = 0;                        // 最近 refresh_cur_w
 // 摇一摇状态
 pub static mut SHAKE_SUB: u32 = 0;                       // eventbus 订阅节点(常驻至重启)
 
+/// 模拟器安全模式(默认 0 = 关闭, 真机行为不变)。
+///
+/// MiBand Studio 的 QEMU 固件环境与真机不同: 桌面对象树、事件总线、字体池、
+/// 图标池的结构/就绪时机都不一样。Chaos 的后台 hook(订阅事件总线、遍历
+/// 字体图标池、读写固件全局表)打上去会让 guest 直接复位 —— QEMU 侧表现为
+/// "guest reset requested; shutting down disposable instance", 实例当场消失。
+///
+/// 打开后只保留「页面框架」这条链: 建页/渲染/事件派发/节拍/Launcher 图标,
+/// 关掉所有会摸固件全局对象的后台 hook。用途只有一个: 在模拟器里把 Chaos
+/// 页面真的打开、截图验观感(字体、候选字、布局)。真机不打开这个开关。
+pub static mut SIM_LITE: u32 = 0;
+
 pub static mut SHAKE_TIMER: u32 = 0;
 pub static mut TIMER_CREATE_N: u32 = 0;   // 诊断: 我们一共创建了几个 lv_timer(应恒为 1)                     // lv_timer 句柄(200ms, UI线程)
 /// 节拍自适应的**许可**: 建完定时器读回 `lv_timer_t+0x00` 等于我们传进去的 50 才置 1。
@@ -377,7 +387,7 @@ pub static mut APP_FG: u32 = 0;                  // 1 = 我们的应用在前台
 
 pub static mut SHAKE_EN: u32 = 0;                        // 开关(信息页行3切换)
 
-pub static mut RENDER_REQ: u32 = RENDER_NONE;            // 待重建页号(由 lv_timer 消费)
+// 待重建请求已迁到 page/dirty.rs 的位图总线(每页一位, 多页请求互不覆盖)。
 
 pub static mut WF_CUR0: u32 = 0;                         // 引擎当前面节点(*0x20119770, 权威标记)
 
@@ -403,8 +413,9 @@ pub static CHAOS_CTOR: unsafe extern "C" fn() = crate::chaos_ctor;
 #[link_section = ".fini_array"]
 pub static CHAOS_DTOR: unsafe extern "C" fn() = crate::chaos_dtor;
 
-// 页面状态集中为一个结构体(替代原来 6 个并行数组)
-pub struct Page {
+// 页面状态集中为一个结构体(替代原来 6 个并行数组)。
+// 名字是 PageState: "Page" 这个名字留给页面行为 trait(page.rs 的 Page)。
+pub struct PageState {
     pub desc: u32,          // 固件给的页面描述符指针(存活判据要从它 +0x30 读 root)
     pub root: u32,
     pub title: u32,
@@ -414,13 +425,13 @@ pub struct Page {
     pub rows: [u32; MAX_ROWS_PER_PAGE],
 }
 
-impl Page {
-    pub const EMPTY: Page = Page {
+impl PageState {
+    pub const EMPTY: PageState = PageState {
         desc: 0, root: 0, title: 0, content: 0, label: 0, built: 0,
         rows: [0; MAX_ROWS_PER_PAGE],
     };
 }
 
-pub static mut PAGES: [Page; PAGE_COUNT] = [Page::EMPTY; PAGE_COUNT];
+pub static mut PAGES: [PageState; PAGE_COUNT] = [PageState::EMPTY; PAGE_COUNT];
 // 每页标题文本缓冲: 标题 = 进入该页时点的行控件名, 目录页/查看页是动态的
 pub static mut TITLE_TXT: [[u8; 48]; PAGE_COUNT] = [[0; 48]; PAGE_COUNT];

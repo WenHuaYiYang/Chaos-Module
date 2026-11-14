@@ -1,40 +1,29 @@
 //! Third-level icon picker: home -> settings -> application icon.
+//! 走 kit/checklist(单选 RADIO): 选项 = dynamic_icon 的图标名清单, 选中即切换。
 use crate::page::*;
+use crate::page::kit::checklist::{click as ck_click, render as ck_render, CheckSpec};
 use crate::dynamic_icon;
 
-pub(crate) const APP_ICON_PID: u32 = 43;
 pub(crate) struct AppIconPage;
 pub(crate) static PAGE_APP_ICON: AppIconPage = AppIconPage;
+
+struct AppIconCheck;
+impl CheckSpec for AppIconCheck {
+    fn count(&self) -> usize { dynamic_icon::NAMES.len() }
+    unsafe fn label(&self, i: usize) -> *const u8 { dynamic_icon::name(i as u8).as_ptr() }
+    fn trailing(&self) -> u32 { fw_api::trailing::RADIO }
+    unsafe fn selected(&self, i: usize) -> bool { i == dynamic_icon::selected() as usize }
+    unsafe fn choose(&self, i: usize) { dynamic_icon::select(i as u8); }
+}
 
 impl Page for AppIconPage {
     fn fill_title(&self, buffer: *mut u8) {
         unsafe { put_str(buffer, "应用图标\0".as_bytes()); }
     }
-    fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
-        let selected = dynamic_icon::selected();
-        let mut anchor = ctx.title;
-        for (index, text) in dynamic_icon::NAMES.iter().enumerate() {
-            let spec = RowSpec { text, sub: fw_api::NONE_PTR,
-                trailing: fw_api::trailing::RADIO, clickable: true };
-            let row = build_row(ctx, anchor, index, &spec);
-            if row == 0 { return Err(PageError::RowFailed(index)); }
-            let radio = fw_api::row_trailing(row);
-            if radio != 0 { fw_api::obj_add_event(radio, row_ev_fn(index), 7, 0); }
-            fw_api::row_update(row, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                fw_api::NONE_PTR, 0, (index == selected as usize) as u8);
-            anchor = row;
-        }
-        Ok(())
-    } }
-    fn on_click(&self, index: usize) { unsafe {
-        if index >= dynamic_icon::NAMES.len() { return; }
-        if dynamic_icon::select(index as u8) {
-            let rows = page_rows_ptr(APP_ICON_PID as usize);
-            for slot in 0..dynamic_icon::NAMES.len() {
-                let row = read_volatile(rows.add(slot));
-                if row != 0 { fw_api::row_update(row, fw_api::NONE_PTR, fw_api::NONE_PTR,
-                    fw_api::NONE_PTR, 0, (slot == index) as u8); }
-            }
-        }
-    } }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe { ck_render(&AppIconCheck, ctx).map(|_| ()) }
+    }
+    fn on_click(&self, index: usize) {
+        unsafe { ck_click(&AppIconCheck, Pid::AppIcon as u32, index) }
+    }
 }

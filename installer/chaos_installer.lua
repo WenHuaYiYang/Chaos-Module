@@ -170,7 +170,11 @@ local function detect_language()
   end
   -- 两种方法都得靠临时文件把 getprop 的输出绕回 Lua（这个运行时没有 popen）。
   -- 用完就删, 设备上不留残留文件。
-  exec("rm -f " .. LANG_OUTPUT .. " /data/chaos/allprop.txt")
+  -- 一条命令只删一个路径: NuttX NSH 的 rm 不接受多个参数(会回
+  -- "nsh: rm: too many arguments"), 之前这里一次删两个, 模拟器上安装流程
+  -- 直接断在这一步, 后面 insmod 与注册链全没跑到。
+  exec("rm -f " .. LANG_OUTPUT)
+  exec("rm -f /data/chaos/allprop.txt")
 end
 local FONT_RESOURCE = SCRIPT_PATH .. "lxgw.ttf"
 local FONT_DIR = "/data/chaos/font"
@@ -200,8 +204,10 @@ local function stage_fonts()
   if not c then return true end                    -- 容器里没这一槽: 交给投递包
   if not looks_like_font(c) then return true end   -- 占位文件: 同上
   -- 清掉早期版本多铺出来的名字副本(约 48MB), 只留上面那 2 份
-  exec("rm -f " .. FONT_DIR .. "/MiSans-*.ttf " .. FONT_DIR .. "/MiSansF-*.ttf "
-      .. FONT_DIR .. "/BaiJamjuree-*.ttf")
+  -- 一条命令只删一个路径(NSH 的 rm 不接受多参数, 见上面语言探测处的说明)
+  exec("rm -f " .. FONT_DIR .. "/MiSans-*.ttf")
+  exec("rm -f " .. FONT_DIR .. "/MiSansF-*.ttf")
+  exec("rm -f " .. FONT_DIR .. "/BaiJamjuree-*.ttf")
   for _, n in ipairs(FONT_NAMES) do
     local f = io.open(FONT_DIR .. "/" .. n, "wb")
     if not f then return false, "open " .. n end
@@ -210,14 +216,57 @@ local function stage_fonts()
   end
   return true
 end
+-- 模块已涨到 1.1MB 以上。整份读进 Lua 字符串再整份读回校验, 峰值是文件大小的
+-- 两三倍; 更新时模块本体还驻留在内存里, 这点增量足以把 Lua 堆顶爆(表现是点
+-- 「运行」当场卡死)。这里改成 64KB 分块: 峰值只多一个块, 内容相同就跳过写盘。
+local COPY_CHUNK = 65536
+local function chunked_compare(a_path, b_path)
+  local a = io.open(a_path, "rb")
+  local b = io.open(b_path, "rb")
+  if not a or not b then
+    if a then a:close() end
+    if b then b:close() end
+    return nil
+  end
+  local same = true
+  while true do
+    local x = a:read(COPY_CHUNK)
+    local y = b:read(COPY_CHUNK)
+    if x ~= y then same = false end
+    if x == nil then break end
+  end
+  a:close(); b:close()
+  return same
+end
 local function stage_resource(res, dest)
-  local c = read_all(res, "rb"); if not c then return false, "cannot read " .. res end
+  local src = io.open(res, "rb"); if not src then return false, "cannot read " .. res end
   exec("mkdir -p " .. DATA_DIR)
-  local f = io.open(dest, "wb"); if not f then return false, "cannot open " .. dest end
-  local wok, wres = pcall(f.write, f, c); local cok, cres = pcall(f.close, f)
-  if not wok or not wres or not cok or cres == false then return false, "write failed" end
-  if read_all(dest, "rb") ~= c then return false, "模块写入校验失败" end
+  src:close()
+  -- 已是最新内容就不重写: 重复点「运行」不反复磨损文件系统。
+  if chunked_compare(res, dest) == true then return true end
+  src = io.open(res, "rb"); if not src then return false, "cannot read " .. res end
+  local out = io.open(dest, "wb"); if not out then src:close(); return false, "cannot open " .. dest end
+  local wrote = true
+  while true do
+    local chunk = src:read(COPY_CHUNK)
+    if chunk == nil then break end
+    local ok, value = pcall(out.write, out, chunk)
+    if not ok or value == false then wrote = false; break end
+  end
+  local closed, result = pcall(out.close, out)
+  src:close()
+  if not wrote or not closed or result == false then return false, "write failed" end
+  if chunked_compare(res, dest) ~= true then return false, "模块写入校验失败" end
   return true
+end
+-- 只读 52 字节的 ELF 头, 不把整份模块读进内存。
+local function resource_is_elf(path)
+  local f = io.open(path, "rb")
+  if not f then return false end
+  local head = f:read(52) or ""
+  f:close()
+  -- read(52) 在真机上最多回 52 字节；测试替身会整份返回，所以按"至少 52"判。
+  return #head >= 52 and head:sub(1, 4) == string.char(127) .. "ELF"
 end
 -- 图标素材投递。主包**不内嵌图标包**: 这一槽只有本应用自己的图标
 -- chaos_icon.bin(注册原生应用必用), 整份写到 /data/chaos/chaos_icon.bin。
@@ -291,45 +340,40 @@ local function deploy_https()
 end
 
 -- 已加载的模块保持原样，仅部署下次启动的模块文件。
+-- 更新也走逐拍流水线: 1.1MB 模块的读写不能挤在一个定时器拍里, 否则 UI 循环
+-- 被占住、看门狗复位, 表现同样是点「运行」卡死。
 local send_settings_command
 local send_command
-local function update_supervisor()
-  local ko = read_all(SUPERVISOR_RESOURCE)
-  local fetch = read_all(FETCH_RESOURCE)
-  if type(ko) ~= "string" or #ko < 52 or ko:sub(1, 4) ~= string.char(127) .. "ELF" then
-    return false, "安装包模块无效"
-  end
-  if type(fetch) ~= "string" or #fetch < 52 or fetch:sub(1, 4) ~= string.char(127) .. "ELF" then
-    return false, "安装包 fetch 模块无效"
-  end
-  exec("mkdir -p " .. DATA_DIR)
-  local ok, err = write_file(SUPERVISOR_PATH, ko)
-  if not ok then return false, err end
-  ok, err = write_file(FETCH_PATH, fetch)
-  if not ok then return false, err end
-  ok, err = deploy_https()
-  if not ok then return false, err end
-  local sf, serr = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
-  if not sf then return false, serr end
-  sf, serr = write_file(DATA_DIR .. "/system_update.cfg", string.char(system_update_enabled and 1 or 0))
-  if not sf then return false, serr end
-  sf, serr = write_file(DATA_DIR .. "/launcher.cfg", string.char(launcher_enabled and 1 or 0))
-  if not sf then return false, serr end
-  if module_loaded() then
-    if settings_enabled then
-      local sent, send_err = send_settings_command()
-      if not sent then return false, send_err end
-    end
-    if system_update_enabled then
-      local sent, send_err = send_command(0x45)
-      if not sent then return false, send_err end
-    end
-    local sent, send_err = send_command(0x46, launcher_enabled and 1 or 0)
-    if not sent then return false, send_err end
-  end
-  -- 状态行是单行居中、卡片只有 304 宽(22px), 太长会被屏幕裁掉; 成功提示收在 220px 内。
-  return true, (settings_enabled or system_update_enabled) and "已更新，重启后设置生效" or "模块已更新，请重启"
-end
+local update_pipeline = {
+  { name = "1 部署模块", body = function()
+      if not resource_is_elf(SUPERVISOR_RESOURCE) then return false, "安装包模块无效" end
+      if not resource_is_elf(FETCH_RESOURCE) then return false, "安装包 fetch 模块无效" end
+      return stage_resource(SUPERVISOR_RESOURCE, SUPERVISOR_PATH)
+  end },
+  { name = "1.5 部署fetch", body = function()
+      return stage_resource(FETCH_RESOURCE, FETCH_PATH)
+  end },
+  { name = "1.6 部署HTTPS", body = deploy_https },
+  { name = "2 保存选项", body = function()
+      local ok, err = write_file(DATA_DIR .. "/settings.cfg", string.char(settings_enabled and 1 or 0))
+      if not ok then return false, err end
+      ok, err = write_file(DATA_DIR .. "/system_update.cfg", string.char(system_update_enabled and 1 or 0))
+      if not ok then return false, err end
+      return write_file(DATA_DIR .. "/launcher.cfg", string.char(launcher_enabled and 1 or 0))
+  end },
+  { name = "3 应用选项", body = function()
+      if not module_loaded() then return true end
+      if settings_enabled then
+        local sent, err = send_settings_command()
+        if not sent then return false, err end
+      end
+      if system_update_enabled then
+        local sent, err = send_command(0x45)
+        if not sent then return false, err end
+      end
+      return send_command(0x46, launcher_enabled and 1 or 0)
+  end },
+}
 
 local function build_fetch_sh()
   local L = {}
@@ -723,16 +767,39 @@ local function run_next_step(timer)
     end
 end
 
+local update_index = 1
+local function run_update_step(timer)
+    local item = update_pipeline[update_index]
+    if not item then
+        update_index = 1
+        -- 状态行是单行居中、卡片只有 304 宽(22px), 成功提示收在 220px 内。
+        stop_runner(timer, true,
+            (settings_enabled or system_update_enabled)
+                and "已更新，重启后设置生效" or "模块已更新，请重启")
+        return
+    end
+    set_status("RUN " .. item.name)
+    local ok, message, extra = pcall(item.body)
+    if not ok then
+        stop_runner(timer, false, "更新失败: " .. tostring(message))
+        return
+    elseif message == false then
+        stop_runner(timer, false, "更新失败: " .. tostring(extra))
+        return
+    end
+    update_index = update_index + 1
+    timer:ready()
+end
+
 local function start_runner(update_only)
     step_index = 1
+    update_index = 1
     local timer = lvgl.Timer {
         period = 1000, repeat_count = -1, paused = true,
         cb = function(t)
             if update_only then
-                local called, ok, message = pcall(update_supervisor)
-                if not called then stop_runner(t, false, "更新失败: " .. tostring(ok))
-                elseif not ok then stop_runner(t, false, "更新失败: " .. tostring(message))
-                else stop_runner(t, true, message) end
+                local called, err = pcall(run_update_step, t)
+                if not called then stop_runner(t, false, "更新失败: " .. tostring(err)) end
                 return
             end
             local ok, message = pcall(run_next_step, t)

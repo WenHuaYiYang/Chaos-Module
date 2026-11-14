@@ -402,6 +402,11 @@ pub(crate) unsafe fn do_reapply() {
 
 /// 开机补偿: 模块加载后由维护定时器(UI 线程)调用。只对保留条目模式生效,
 /// 把 Chaos 隐藏名单里的应用重新置位并摘图标; 找不到节点时有限次重试。
+/// 开机补偿还没收敛(BOOT_APPLIED 尚未置位)。补偿期保持快拍。
+pub(crate) fn boot_pending() -> bool {
+    unsafe { BOOT_APPLIED == 0 }
+}
+
 pub(crate) unsafe fn boot_apply() {
     if BOOT_APPLIED != 0 { return; }
     apply_mode_ensure();
@@ -488,8 +493,12 @@ pub(crate) unsafe fn watch_keep() {
     // 维护定时器仍要把迁移做完，避免"配置已改、文件没搬"的跨重启不一致。
     if REQ_MODE != 0 { do_mode_apply(); }
     WATCH_WAIT = WATCH_WAIT.wrapping_add(1);
-    // 维护定时器快拍 50ms / 慢拍 1s: 4 拍 = 快时 0.2s、慢时 4s, 足够挡住重注册。
-    if WATCH_WAIT % 4 != 0 { return; }
+    // 维护定时器三档(50/200/4000ms): 4 拍 = 快/中 0.2~0.8s, 足够挡住重注册。
+    // 息屏空闲档 4s 一拍时放宽到 40 拍(160s)：这一段要遍历应用注册表链表
+    // （上限 512 节点），而它防的是"手机同步后固件重注册把隐藏位重置"，
+    // 屏幕都没亮时没人看得见；亮屏后的下一拍就回到 4 拍节奏，最迟 0.8s 内补回。
+    let every = if fw_api::screen_is_on() { 4 } else { 40 };
+    if WATCH_WAIT % every != 0 { return; }
     if WATCH_BUSY != 0 { return; }
     WATCH_BUSY = 1;
 

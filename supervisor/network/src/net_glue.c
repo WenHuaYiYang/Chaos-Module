@@ -25,6 +25,7 @@ static char web_user[32];static char web_pass[65];static unsigned have_credentia
 void chaos_pan_enable(int on){network_enable(on);}
 void chaos_pan_scan(void){network_scan();}
 void chaos_pan_connect(unsigned index){network_connect(index);}
+int chaos_pan_connect_address(const unsigned char *address,const char *name){return network_connect_address(address,name);}
 void chaos_pan_disconnect(void){network_disconnect();}
 void chaos_pan_pair_confirm(void){network_pair_confirm();}
 void chaos_httpd_set_enable(int on){unsigned p=lock();chaos_httpd_enable(on && have_credential);unlock(p);}
