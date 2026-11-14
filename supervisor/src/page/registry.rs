@@ -11,7 +11,7 @@ use crate::*;
 
 // 页实例住在兄弟子模块里; 这里 use 进来, 宏行里才能写 `time::PAGE_TIMESET` 这类路径。
 use super::{app_icon, appmgr, about, beautify, capture, debug, home, keyboard, log, settings,
-            system, time, watchface};
+            system, time, watchface, quickapp};
 
 /// 一行的注册项: 页号、页名(page_goto 的解析键)、页面实例。
 /// (pid/page 两格是注册表的"自描述": 运行期走 PAGE_TABLE 与 name, 这两格给门禁与工具读。)
@@ -72,6 +72,7 @@ pub(crate) enum Pid {
     AppIcon = 43,
     LogLevel = 44,
     BlurDebug = 45,
+    QuickappAnimation = 46,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -162,4 +163,5 @@ pages! {
     AppIcon    = 43, PAGE_APP_ICON, app_icon::PAGE_APP_ICON;
     LogLevel   = 44, PAGE_LOG_LEVEL, settings::PAGE_LOG_LEVEL;
     BlurDebug  = 45, PAGE_BLUR_DEBUG, debug::PAGE_BLUR_DEBUG;
+    QuickappAnimation = 46, PAGE_QUICKAPP_ANIMATION, quickapp::PAGE;
 }

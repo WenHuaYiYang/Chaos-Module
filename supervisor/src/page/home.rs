@@ -34,9 +34,6 @@ unsafe fn charge_text() -> *const u8 {
 
 /// 菜单区行模型。槽位从 3 起: 0/1 留给数据行、2 是 CPU 行 —— tick 按槽号原地刷,
 /// 槽位布局不动, 只重排入口顺序与分组。
-static QUICKAPP_ANIMATION: crate::page::kit::ToggleDef = crate::page::kit::ToggleDef {
-    get:crate::quickapp_animation::enabled,toggle:crate::quickapp_animation::toggle,
-    status:Some(crate::quickapp_animation::status)};
 static HOME_ROWS: &[RowModel] = &[
     RowModel::section(b"\xe5\xb8\xb8\xe7\x94\xa8\x00"),          // 常用
     RowModel::nav(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\x00", Pid::AppMgr as u32),      // 应用管理
@@ -48,7 +45,7 @@ static HOME_ROWS: &[RowModel] = &[
     RowModel::nav(b"NSH\xe7\xbb\x88\xe7\xab\xaf\x00", Pid::Nsh as u32),                              // NSH终端
     RowModel::nav(b"\xe5\xae\x9e\xe9\xaa\x8c\xe6\x80\xa7\xe5\x8a\x9f\xe8\x83\xbd\x00", Pid::Exp as u32), // 实验性功能
     RowModel::section(b"\xe4\xbf\xa1\xe6\x81\xaf\x00"),          // 信息
-    RowModel::toggle("快应用动画\0".as_bytes(),&QUICKAPP_ANIMATION),
+    RowModel::nav("快应用动画\0".as_bytes(),Pid::QuickappAnimation as u32),
     RowModel::nav(b"\xe5\x85\xb3\xe4\xba\x8e\x00", Pid::About as u32),                               // 关于
 ];
 
