@@ -65,7 +65,6 @@ static BEAUTIFY_ROWS: &[RowModel] = &[
     RowModel::nav("模糊区域\0".as_bytes(), Pid::BlurZone as u32),
     RowModel::toggle("重启恢复字体和图标\0".as_bytes(), &RESTORE_FONT_DEF),
     RowModel::toggle("重启恢复模糊\0".as_bytes(), &RESTORE_BLUR_DEF),
-    RowModel::note("说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor\0".as_bytes()),
 ];
 
 impl MenuSpec for BeautifyPage {
@@ -161,27 +160,23 @@ unsafe fn blur_bg_refresh(slot: usize) {
     }
 }
 unsafe fn blur_v2_get() -> bool { crate::corona_blur::v2_enabled() }
-unsafe fn blur_corona_get() -> bool { crate::corona_blur::enabled() }
 unsafe fn blur_choices_refresh() {
     let pid = st_rd!(FG_PAGE) as usize;
     if pid != Pid::Blur as usize { return; }
-    for (slot, on) in [(1, crate::corona_blur::enabled()), (2, crate::corona_blur::v2_enabled())] {
+    for (slot, on) in [(1, crate::corona_blur::v2_enabled())] {
         let row = read_volatile(page_rows_ptr(pid).add(slot));
         if row != 0 { fw_api::row_update(row, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, on as u8); }
     }
     blur_bg_refresh(0);
 }
-unsafe fn blur_corona_toggle() { crate::corona_blur::toggle_corona(); blur_choices_refresh(); }
-static BLUR_CORONA_DEF: ToggleDef = ToggleDef { get: blur_corona_get, toggle: blur_corona_toggle, status: None };
 unsafe fn blur_v2_toggle() { crate::corona_blur::toggle_v2(); blur_choices_refresh(); }
 unsafe fn blur_status_ptr() -> *const u8 { crate::background_home::status().as_ptr() }
 static BLUR_V2_DEF: ToggleDef = ToggleDef { get: blur_v2_get, toggle: blur_v2_toggle, status: None };
 
 /// 页4 行模型(菜单骨架; 返回靠标题栏返回键):
-///   0 系统背景 / 1 Corona / 2 V2 / 3 状态 / 4 旧版 / 5 区域。
+///   0 系统背景 / 1 V2 / 2 状态 / 3 旧版 / 4 区域。
 static BLUR_ROWS: &[RowModel] = &[
     RowModel::action("系统背景\0".as_bytes(), blur_bg_off, fw_api::trailing::CHECKBOX, Some(blur_bg_refresh)),
-    RowModel::toggle("Corona模糊\0".as_bytes(), &BLUR_CORONA_DEF),
     RowModel::toggle("模糊v2\0".as_bytes(), &BLUR_V2_DEF),
     RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(blur_status_ptr),
                kind: RowKind::Display, trailing: 0, refresh: None },
@@ -189,7 +184,6 @@ static BLUR_ROWS: &[RowModel] = &[
                kind: RowKind::Nav(BLUR_LEGACY_PID), trailing: 0, refresh: None },
     RowModel { label: "模糊区域\0".as_bytes(), sub: RowSub::Static("适用于所有模糊选项（含通知图标去黑底）\0".as_bytes()),
                kind: RowKind::Nav(Pid::BlurZone as u32), trailing: 0, refresh: None },
-    RowModel::note("说明：“corona模糊”功能源码来自https://github.com/AstralSightStudios/Canopus-Module-Corona，修改后源码可见：https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor。\0".as_bytes()),
 ];
 
 impl MenuSpec for BlurPage {

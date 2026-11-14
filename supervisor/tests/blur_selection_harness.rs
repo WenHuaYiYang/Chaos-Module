@@ -25,17 +25,18 @@ mod background_home {pub unsafe fn remount(){super::state(|s|s.mounts+=1);}}
 #[no_mangle] extern "C" fn chaos_corona_diagnostics(_: *mut u8,_:u32)->u32{0}
 #[test] fn independent_choices_persist_switch_algorithm_and_defer_when_busy(){unsafe{
     assert!(!controller::active());
-    controller::toggle_corona();assert!(controller::enabled());
+    controller::set_enabled(true);assert!(controller::enabled());
+    assert!(!controller::active()); // 旧配置不能再激活隐藏的旧算法。
     assert_eq!(controller::backgrounds_commit(true,15),0);
-    state(|s|{assert_eq!(s.files,[1,0]);assert_eq!(s.algorithm,0);assert_eq!(s.mask,15);});
+    state(|s|{assert_eq!(s.files,[1,0]);assert_eq!(s.algorithm,1);assert_eq!(s.mask,15);});
     controller::toggle_v2();
-    assert!(!controller::enabled());assert!(controller::v2_enabled());
-    state(|s|{assert_eq!(s.files,[0,1]);s.busy=true;});
+    assert!(controller::enabled());assert!(controller::v2_enabled());
+    state(|s|{assert_eq!(s.files,[1,1]);s.busy=true;});
     assert_eq!(controller::backgrounds_commit(true,5),-2145);
-    state(|s|{assert_eq!(s.algorithm,0);s.busy=false;});
+    state(|s|{assert_eq!(s.algorithm,1);s.busy=false;});
     assert_eq!(controller::backgrounds_commit(true,5),0);
     state(|s|{assert_eq!(s.algorithm,1);assert_eq!(s.mask,5);});
-    controller::toggle_corona();
+    controller::toggle_v2();
     assert!(!controller::v2_enabled());state(|s|assert_eq!(s.files,[1,0]));
     controller::set_enabled(false);controller::set_v2_enabled(false);
     assert!(!controller::active());state(|s|assert_eq!(s.files,[0,0]));

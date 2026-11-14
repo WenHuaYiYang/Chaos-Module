@@ -255,7 +255,10 @@ impl Page for LicensesPage {
     }
 }
 
-static CORONA_LICENSE_TEXT: &[u8] = include_bytes!("../../corona_vendor/LICENSE");
+static CORONA_LICENSE_TEXT: &[u8] = concat!(
+    include_str!("../../../licenses/CANOPUS-MODULE-CORONA-NOTICE.txt"),
+    "\n\n", include_str!("../../corona_vendor/LICENSE")
+).as_bytes();
 static MPL_LICENSE_TEXT: &[u8] = include_bytes!("../../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
 static LVGL_BLUR_LICENSE_TEXT: &[u8] = include_bytes!("../../syspatch_blur/LVGL-LICENCE.txt");
 static mut LICENSE_KIND: u32 = 0;

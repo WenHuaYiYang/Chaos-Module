@@ -101,20 +101,14 @@ pub(crate) unsafe fn set_v2_enabled(on: bool) {
     if changed { crate::background_home::remount(); }
 }
 
-/// Both algorithms temporarily share the audited p67 lifecycle. V2 uses the
-/// SysPatch IIR filter and retains notification-image transparency handling.
+/// V2独立读取其配置；旧Corona配置不再参与功能启用或算法选择。
+/// 背景适配仍含Corona派生代码，其来源与许可继续保留。
 pub(crate) unsafe fn active() -> bool {
-    enabled() || v2_enabled()
+    v2_enabled()
 }
 
-pub(crate) unsafe fn toggle_corona() {
-    let on = !enabled();
-    if on { set_v2_enabled(false); }
-    set_enabled(on);
-}
 pub(crate) unsafe fn toggle_v2() {
     let on = !v2_enabled();
-    if on { set_enabled(false); }
     set_v2_enabled(on);
 }
 
@@ -125,13 +119,13 @@ pub(crate) unsafe fn toggle_v2() {
 /// a non-zero return means it is still busy with a native scroll/delete and
 /// must be retried on a later UI-owner tick.
 pub(crate) unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 {
-    let rc = chaos_blur_select_algorithm(v2_enabled() as u32);
+    let rc = chaos_blur_select_algorithm(1);
     if rc != 0 { return rc; }
     chaos_corona_backgrounds_commit(enabled as u32, region_mask & 0x0F)
 }
 
 pub(crate) unsafe fn backgrounds_poll() {
-    let _ = chaos_blur_select_algorithm(v2_enabled() as u32);
+    let _ = chaos_blur_select_algorithm(1);
     chaos_corona_backgrounds_poll();
 }
 

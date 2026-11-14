@@ -470,20 +470,18 @@ pub(crate) unsafe fn status() -> &'static [u8] {
     if crate::corona_blur::active() {
         return if st_rd!(CORONA_BG_ACTIVE) == 1 {
             if st_rd!(CORONA_BG_MASK) != crate::blur_zone::mask() {
-                "等待空闲后更新 Corona 区域\0".as_bytes()
+                "等待空闲后更新模糊区域\0".as_bytes()
             } else if st_rd!(CORONA_BG_MASK) == 0 {
                 "模糊：未选择区域\0".as_bytes()
-            } else if crate::corona_blur::v2_enabled() {
-                "模糊v2模式\0".as_bytes()
             } else {
-                "Corona模糊模式\0".as_bytes()
+                "模糊v2模式\0".as_bytes()
             }
         } else {
             "等待空闲后切换模糊\0".as_bytes()
         };
     }
     if st_rd!(CORONA_BG_ACTIVE) != 0 {
-        return "正在安全退出 Corona\0".as_bytes();
+        return "正在安全退出模糊\0".as_bytes();
     }
     if st_rd!(REQUEST) != 0 && st_rd!(MODE) != 0
         && fw_api::top_app_id() != fw_api::HOME_APP_ID {

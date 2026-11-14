@@ -130,7 +130,7 @@ pub extern "C" fn chaos_corona_diagnostics(_out: *mut u8, _capacity: u32) -> u32
 unsafe fn assert_modes(corona: bool, v2: bool) {
     assert_eq!(corona_blur::enabled(), corona);
     assert_eq!(corona_blur::v2_enabled(), v2);
-    assert_eq!(corona_blur::active(), corona || v2);
+    assert_eq!(corona_blur::active(), v2);
 }
 fn reboot(corona: bool, v2: bool) {
     let bytes = with(|s| (s.files.get(CORONA).cloned(), s.files.get(V2).cloned()));
@@ -263,9 +263,9 @@ fn main() {
             "independent-load" => {
                 seed(CORONA, &[1]); seed(V2, &[1]);
                 assert!(corona_blur::active());
-                with(|s| assert_eq!(s.opens, [(CORONA.to_owned(), fw_api::oflag::RDONLY)]));
+                with(|s| assert_eq!(s.opens, [(V2.to_owned(), fw_api::oflag::RDONLY)]));
                 assert!(corona_blur::v2_enabled());
-                with(|s| assert_eq!(s.reads, 2));
+                with(|s| assert_eq!(s.reads, 1));
             }
             "combinations" => {
                 for (corona, v2) in [(false, false), (true, false), (true, true), (false, true), (false, false)] {
@@ -334,7 +334,7 @@ fn main() {
                 assert!(!corona_blur::backgrounds_pending()); assert!(!corona_blur::backgrounds_idle());
                 with(|s| { s.pending = 3; s.idle = 1; });
                 assert!(corona_blur::backgrounds_pending()); assert!(corona_blur::backgrounds_idle());
-                with(|s| { assert_eq!(s.polls, 1); assert_eq!(s.opens, [(V2.to_owned(),fw_api::oflag::RDONLY)]); assert_eq!(s.remounts, 0); });
+                with(|s| { assert_eq!(s.polls, 1); assert!(s.opens.is_empty()); assert_eq!(s.remounts, 0); });
             }
             _ => panic!("unknown scenario: {case}"),
         }
