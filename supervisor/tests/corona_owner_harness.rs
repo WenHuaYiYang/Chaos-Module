@@ -8,6 +8,8 @@ macro_rules! st_rd { ($value:expr) => { $value }; }
 macro_rules! st_wr { ($slot:expr, $value:expr) => { $slot = $value }; }
 static mut CORONA_BG_ACTIVE: u32 = 0;
 static mut CORONA_BG_MASK: u32 = 0;
+static mut CORONA_VITALITY_SEEN: bool = false;
+static mut CORONA_VITALITY_RECOVER: bool = false;
 static mut CORONA_FAIL: u32 = 0;
 static mut CORONA_HOLD: u32 = 0;
 static mut CORONA_HOLD_ARM: u32 = 0;
@@ -58,9 +60,39 @@ fn reset() {
         REQUEST = 0; GENERATE = 0; MODE = 0; DIRTY = 0; BOOT_DELAY = 0;
         CORONA_FAIL = 0; CORONA_HOLD = 0; CORONA_HOLD_ARM = 0;
         CORONA_COOLDOWN = 0; CORONA_OWN_LOST = 0;
+        CORONA_VITALITY_SEEN = false; CORONA_VITALITY_RECOVER = false;
         DELETED = [(0, 0); 4];
         region_storage::reset();
     }
+}
+
+#[test]
+fn vitality_return_fully_retires_before_recreating_blur_twice() {
+    reset();
+    with(|s| { s.enabled = true; s.top = fw_api::HOME_APP_ID; });
+    unsafe { assert!(corona_tick()); }
+    for _ in 0..2 {
+        with(|s| s.top = 0x36);
+        unsafe { assert!(corona_tick()); }
+        with(|s| { s.top = fw_api::HOME_APP_ID; s.cleanup_pending = true; });
+        unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 2); }
+        let count = with(|s| s.commits.len());
+        unsafe { assert!(corona_tick()); }
+        with(|s| { assert_eq!(s.commits.len(), count); s.cleanup_pending = false; });
+        unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 0); }
+        unsafe { assert!(corona_tick()); assert_eq!(CORONA_BG_ACTIVE, 1); }
+        with(|s| assert_eq!(&s.commits[s.commits.len()-2..], &[(false, 0), (true, 15)]));
+    }
+}
+
+#[test]
+fn other_apps_do_not_trigger_vitality_recovery() {
+    reset();
+    with(|s| { s.enabled = true; s.top = 0x35; });
+    unsafe { assert!(corona_tick()); }
+    with(|s| s.top = fw_api::HOME_APP_ID);
+    unsafe { assert!(corona_tick()); assert!(!CORONA_VITALITY_RECOVER); }
+    with(|s| assert_eq!(s.commits, [(true, 15)]));
 }
 struct Scene;
 impl Scene {

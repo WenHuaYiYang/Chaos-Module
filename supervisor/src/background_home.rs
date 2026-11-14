@@ -36,6 +36,8 @@ static mut CORONA_BG_ACTIVE: u32 = 0;
 // Last successfully committed shared region mask; a busy commit must not
 // consume a newer selection. Zero is valid: Corona owns no blurred regions.
 static mut CORONA_BG_MASK: u32 = 0;
+static mut CORONA_VITALITY_SEEN: bool = false;
+static mut CORONA_VITALITY_RECOVER: bool = false;
 // 所有权看门狗：连续几拍发现 corona 已经不再持有原生 owner（被 DELETE/手势
 // 摘掉但没人重新 commit）时，把状态归零让下一拍重新 commit。丢了所有权还继续
 // 认定 CORONA_BG_ACTIVE==1，表现就是"模糊不动了，换什么档位都是透明"。
@@ -523,12 +525,34 @@ unsafe fn corona_failure(step: u32) -> bool {
 }
 
 unsafe fn corona_tick() -> bool {
+    // .043 应用注册项 com.xiaomi.miwear.vitality 的 app_id 为0x36。
+    // 特定原生应用返回后需要完整资源重建，指针/订阅仍在并不足以证明图像可用。
+    let top = fw_api::top_app_id();
+    if top == 0x36 { CORONA_VITALITY_SEEN = true; }
+    if top == fw_api::HOME_APP_ID && CORONA_VITALITY_SEEN {
+        CORONA_VITALITY_SEEN = false;
+        CORONA_VITALITY_RECOVER = crate::corona_blur::active();
+        if !CORONA_VITALITY_RECOVER && st_rd!(MODE) != 0 {
+            // 旧版背景也重新挂载；静态模糊重新生成，图片模式保留用户资源。
+            remount();
+            if st_rd!(MODE) == 1 { st_wr!(GENERATE, 1); }
+        }
+    }
+    if CORONA_VITALITY_RECOVER {
+        if top != fw_api::HOME_APP_ID || !fw_api::screen_is_on() {
+            crate::corona_blur::backgrounds_poll();
+            return true;
+        }
+        if st_rd!(CORONA_BG_ACTIVE) == 0 {
+            CORONA_VITALITY_RECOVER = false;
+        }
+    }
     // 暂停期：corona 已完整下架，这段时间完全交给旧引擎；到点再试一次。
     if st_rd!(CORONA_HOLD) != 0 {
         st_wr!(CORONA_HOLD, st_rd!(CORONA_HOLD) - 1);
         if st_rd!(CORONA_HOLD) != 0 { return false; }
     }
-    let engine_active = crate::corona_blur::active();
+    let engine_active = crate::corona_blur::active() && !CORONA_VITALITY_RECOVER;
     let v2_active = crate::corona_blur::v2_enabled();
     if engine_active {
         let region_mask = crate::blur_zone::mask();
@@ -639,6 +663,8 @@ unsafe fn corona_tick() -> bool {
             st_wr!(CORONA_HOLD, CORONA_HOLD_TICKS);
         }
     }
+    // 完整下架后下一拍按原配置重建，期间不允许旧引擎短暂接管。
+    if CORONA_VITALITY_RECOVER { return true; }
     false
 }
 
