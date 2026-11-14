@@ -31,6 +31,43 @@ MAGIC = 0x5AA521E0
 RADIUS = 48
 ICON_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'chaos.png')
 
+# 预览块用字体: 手环系统字体就是 MiSans-Regular(小米官方免费商用)。字体本体
+# 7.9MB 且许可单独一份, 所以不入仓库, 只能按优先级在机器上找。CI 上没有任何
+# 中文字体时曾经直接 OSError: cannot open resource, 把整个安装包构建卡死 ——
+# 现在一个都找不到就退回 Pillow 内置位图字体: 缩略图上的字会难看, 但构建不该
+# 因为"这台机器没装中文字体"而失败。
+FONT_CANDIDATES = (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'MiSans-Regular.ttf'),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts', 'MiSans-Regular.ttf'),
+    r'C:/Windows/Fonts/msyh.ttc',
+    r'C:/Windows/Fonts/msyh.ttf',
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '/System/Library/Fonts/PingFang.ttc',
+)
+
+
+def preview_font(size):
+    """按优先级解析预览字体; 全都没有时退回内置位图字体并告警。"""
+    override = os.environ.get('CHAOS_PREVIEW_FONT')
+    for path in ((override,) if override else ()) + FONT_CANDIDATES:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    print('WARN: 预览块找不到中文字体(可用 CHAOS_PREVIEW_FONT 指定), 退回内置位图字体',
+          file=sys.stderr)
+    try:
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
+
 
 # 界面骨架的两套口径, 每个数字都取自创建那块界面的 Lua(不是设计稿):
 #   installer —— chaos_installer.lua 的运行界面:
@@ -74,13 +111,9 @@ def make_image(title='Chaos 安装器', status='准备就绪',
     # 页面底(圆角 = 屏幕圆角口径)
     d.rounded_rectangle([0, 0, W * ss - 1, H * ss - 1], radius=r, fill=page + (255,))
 
-    # 字体: 手环系统字体就是 MiSans-Regular(小米官方免费商用, 本地
-    # scripts/MiSans-Regular.ttf, 不入仓库; 缺失时回退微软雅黑近似)。
-    misans = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'MiSans-Regular.ttf')
-    font_path = misans if os.path.isfile(misans) else r'C:/Windows/Fonts/msyh.ttc'
-    font_title = ImageFont.truetype(font_path, s(L['title']))
-    font_status = ImageFont.truetype(font_path, s(22))
-    font_btn = ImageFont.truetype(font_path, s(24))
+    font_title = preview_font(s(L['title']))
+    font_status = preview_font(s(22))
+    font_btn = preview_font(s(24))
 
     def card(cx, cy, w, h, bg, line, rad=24):
         d.rounded_rectangle(

@@ -11,6 +11,9 @@
 - `chaos-fetch/build.py` 兼容新旧两代 clang：统计计数器需要 `-Wunused-but-set-global` 豁免，但 CI 的 NDK clang 还不认识这个告警组（未知 `-Wno-*` 在 `-Werror` 下同样报错），改成运行期探测本机是否接受该开关、接受才加；重定位表校验在缺 `llvm-readelf` 的环境退用 `llvm-objdump -r`（解析只认 R_ARM_ 前缀）。
 - 容器预览块改由 `tools/gen_preview.py` 自产（构建时不存在 `dist/preview.bin` 就现场渲染，
   与固件解压函数同格式 0x5AA521E0 RLE、336x480，与旧链预览块逐字节一致）；`--preview` 仍可显式指定其它块。
+  预览图字体按仓库内 MiSans → 系统中文（微软雅黑/Noto CJK/文泉驿/苹方）顺序解析，可用 `CHAOS_PREVIEW_FONT`
+  指定；一个都没有时退回 Pillow 内置位图字体并告警，不再因"这台机器没装中文字体"而构建失败。
+  CI 上额外装上 `fonts-noto-cjk`，缩略图保持中文字形。
 - CI（`.github/workflows/build.yml`）从"只编译模块"扩为完整安装包：`python3 tools/build.py --skip-ko` 出 `dist/chaos-installer-p67.bin` 并上传 artifact。
 
 ### 蜂窝交互
