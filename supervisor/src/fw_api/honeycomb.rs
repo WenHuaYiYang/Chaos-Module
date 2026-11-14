@@ -288,7 +288,35 @@ pub(crate) unsafe fn s541_anchor(grid: u32) -> Option<(u32, i32, i32)> {
     if button == 0 || word(grid, 0) != a::LAUNCHER_GRID_CLASS || word(grid, 0x89c) & 0x10000 != 0 { return None; }
     let root = parent(grid);
     let x = (word(button, 0x1c) as i32 + word(button, 0x24) as i32 + 1 - 288) / 2 - word(root, 0x1c) as i32;
-    let y = (word(button, 0x20) as i32 + word(button, 0x28) as i32 + 1 - 96) / 2 - word(root, 0x20) as i32;
+    let mut y = (word(button, 0x20) as i32 + word(button, 0x28) as i32 + 1 - 96) / 2 - word(root, 0x20) as i32;
+    // RW缩放表与列表的按钮占位不等于实际绘制内容的末端。
+    // 只收紧自有控制条的空白，不改原生按钮、应用坐标或滚动范围。
+    let compact = word(grid, 0x89c) == 3 || crate::desktop_scale::lens_on()
+        || crate::desktop_scale::pitch_on() || crate::desktop_scale::inset_on();
+    if compact {
+        let mut apps = [0; MAX_ICONS];
+        let count = icons(grid, &mut apps);
+        let mut bottom = None;
+        for &icon in &apps[..count] {
+            let Some(frame) = current_frame(icon) else { continue; };
+            if !frame.visible { continue; }
+            let mut edge = word(grid, 0x20) as i32 + frame.y + (frame.diameter + 1) / 2;
+            // 原生图标文字是图标的子对象，底部间距必须连名称一起计算。
+            let children = obj_child_count(icon);
+            if (0..=8).contains(&children) {
+                for i in 0..children as u32 {
+                    let child = obj_get_child(icon, i);
+                    if safe_ptr(child) && word(child, 0x2c) & 1 == 0 {
+                        let child_bottom = word(child, 0x28) as i32 + 1;
+                        if (child_bottom - edge).abs() < 480 { edge = edge.max(child_bottom); }
+                    }
+                }
+            }
+            let local = edge - word(root, 0x20) as i32;
+            bottom = Some(bottom.map_or(local, |old: i32| old.max(local)));
+        }
+        y = crate::honeycomb_layout::selector_anchor(y, bottom);
+    }
     Some((button, x, y))
 }
 

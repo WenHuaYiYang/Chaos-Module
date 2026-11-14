@@ -12,6 +12,11 @@ pub(crate) const SPACING_MIN: i32 = 224;
 pub(crate) const SPACING_MAX: i32 = 512;
 const EXIT_THRESHOLD: i32 = 24;
 
+/// 控制条渲染还会上移16px；这里为最后一个原生内容保留最终16px间距。
+pub(crate) fn selector_anchor(stock: i32, content_bottom: Option<i32>) -> i32 {
+    content_bottom.map_or(stock, |bottom| stock.min(bottom.saturating_add(32)))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct Point {
