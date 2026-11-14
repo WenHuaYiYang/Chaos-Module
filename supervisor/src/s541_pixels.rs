@@ -1,4 +1,17 @@
 //! 控制条局部背景：可分离模糊、双线性放大及预乘透明度。
+pub(crate) fn unpack(encoded: &[u8], pixels: &mut [u8]) -> bool {
+    if encoded.len() % 6 != 0 { return false; }
+    let mut at = 0usize;
+    for record in encoded.chunks_exact(6) {
+        let count = u16::from_le_bytes([record[0], record[1]]) as usize;
+        if count == 0 { return false; }
+        let Some(end) = at.checked_add(count * 4) else { return false; };
+        let Some(out) = pixels.get_mut(at..end) else { return false; };
+        for pixel in out.chunks_exact_mut(4) { pixel.copy_from_slice(&record[2..]); }
+        at = end;
+    }
+    at == pixels.len()
+}
 pub(crate) fn blur(rgb: &mut [u8; 5184], work: &mut [u8; 5184]) {
     for _ in 0..3 {
         for y in 0..24 { for x in 0..72 { for c in 0..3 {

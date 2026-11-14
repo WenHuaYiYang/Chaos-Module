@@ -70,7 +70,7 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 完整构建在编译模块前生成动态 GIF 的帧资源，统一为 **96×96**；安装包的
 `chaos_icon.bin` 和 `chaos_icon_settings.bin` 同为 96×96，默认图案来自原版 `tools/chaos.png`。
-只保留原版与动态，暂停和切回原版均复用已安装文件，模块不再内嵌静态像素。
+保留原版与动态，并加入暗色土豆、暗色图标；两张新增静态图按相同流程生成后嵌入模块。暂停和切回原版仍复用已安装文件。
 源文件、单独生成/校验方法与播放实现见 [应用图标](DYNAMIC-ICON.md)。
 
 ## 版本号规则
@@ -143,3 +143,16 @@ PATH=/tmp/bin:$PATH python3 tools/build.py --no-icons
 
 - 代码结构：[ARCHITECTURE.md](ARCHITECTURE.md)
 - 安装流程：[INSTALL.md](INSTALL.md)
+
+## 2026-11-14 完整构建与无损体积优化
+
+- `build.py` 输出完整安装包，`build_ko.sh` 输出主模块，Cargo的`.a`是中间静态库，三者范围不同，不能直接比较体积。
+- 旧`build_ko.ps1`仅链接Rust库，缺少现有Corona、network、bridge等C provider及`ko_slim`，已改为调用同一`build_ko.sh`。Windows需要Git Bash的sh和同样的Python3/clang/Node/Rust工具链；本次未在Windows执行。
+- 旧shell入口使用`lib*.a | head`，可能误选残留静态库；现固定取本模块`libchaos_sup.a`。
+- 完整构建仍包括fetch、capatch、CA证书、原图标、字体槽、网络许可证与安装Lua，不通过删除资源、关闭功能或抽帧缩包。`--skip-ko`会明确提示旧模块不会包含新源码或新内置图片。
+- `pack_embedded_assets.py`在统一模块入口执行：三个S541 BGRA素材从331,776字节无损压缩至91,920字节。记录为u16重复像素数+4字节原BGRA，运行时首次使用还原；颜色、alpha、尺寸和预乘格式逐字节不变。原始BGRA仍留在仓库供复验。
+- `build.py`新增两张暗色图的同流程生成、容器全部资源逐字节校验，以及`dist/build-report.json`文件大小/哈希/ELF节清单。原`.ko`保留全部重定位和导出符号，不对可加载模块盲目strip。
+
+本机修改前后（同一完整入口，已包含两张新增图）：安装包2,190,661 → 2,025,517字节，减少165,144字节，约7.54%。除主模块外的八项资源与修改前逐字节一致，完整193帧GIF保持原样。主模块约1.62 MB → 1.45 MB。
+
+这是安装文件体积优化，不等于降低运行内存：无损素材在首次使用时解压到常驻BSS，新静态图还需像素缓冲。本次静态加载内存较修改前约增加240 KB（含新功能），不能把压缩节省量算作可用RAM增加。实际GPU、低内存和Windows构建仍需对应环境验证。

@@ -30,12 +30,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime
 import json
 import os
 import shutil
 import subprocess
 import sys
+import struct
 from pathlib import Path
 
 from network_notices import network_notices
@@ -116,6 +118,47 @@ def build_icon(repo: Path, out: Path, size: int, python: str) -> None:
         raise RuntimeError(f"图标格式错误: {out}")
 
 
+def build_app_icons(repo: Path, python: str) -> None:
+    for name in ("dark-potato", "dark-icon"):
+        run([python, str(repo / "tools/gen_chaos_icon.py"),
+             str(repo / f"tools/app-icons/{name}.png"),
+             str(repo / f"supervisor/assets/app-icons/{name}.bin")], repo)
+
+
+def module_sections(path: Path) -> dict:
+    """区分加载内容、BSS和符号/重定位，避免把.a/.ko/容器大小混为一谈。"""
+    data = path.read_bytes()
+    if data[:5] != b"\x7fELF\x01":
+        raise RuntimeError(f"不是ELF32模块: {path}")
+    off = struct.unpack_from('<I', data, 32)[0]
+    size, count, names = struct.unpack_from('<HHH', data, 46)
+    headers = [struct.unpack_from('<10I', data, off + i * size) for i in range(count)]
+    table = headers[names]
+    strings = data[table[4]:table[4] + table[5]]
+    sections = {}
+    for h in headers:
+        name = strings[h[0]:].split(b'\0', 1)[0].decode('ascii')
+        if name:
+            sections[name] = {'bytes': h[5], 'stored_bytes': 0 if h[1] == 8 else h[5],
+                              'allocated': bool(h[2] & 2)}
+    return sections
+
+
+def write_build_report(dist: Path, ko: Path, assets: Path, container: Path | None) -> None:
+    paths = [ko, dist / 'fetch-module.ko', dist / 'capatch.elf',
+             dist / 'THIRD-PARTY-NETWORK.txt', *sorted(assets.iterdir())]
+    if container is not None:
+        paths.append(container)
+    report = {'module_sections': module_sections(ko), 'files': {}}
+    for path in paths:
+        if path.is_file():
+            data = path.read_bytes()
+            report['files'][str(path)] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+    (dist / 'build-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    print('模块节大小:', {k: v['stored_bytes'] for k, v in report['module_sections'].items() if v['stored_bytes']})
+    print(f'构建资源清单与SHA-256: {dist / "build-report.json"}')
+
+
 def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
     """把容器要带的文件按 _lua/<设备目录>/<名字> 收集到 dist/stage。"""
     font = assets / "lxgw.ttf"
@@ -169,6 +212,16 @@ def build_container(repo: Path, out: Path, preview: Path, stage: Path, assets: P
     w, h = check["preview"]
     if (w, h) != (336, 480):
         raise RuntimeError(f"预览图尺寸必须是 336x480，当前 {w}x{h}")
+    # 逐项验证容器仍完整携带全部资源，而非靠遗漏模块/图片缩包。
+    packed = out.read_bytes()
+    count, table = struct.unpack_from('<II', packed, p67_pack.PAIR_OFF + 6 * 8)
+    if count != len(files):
+        raise RuntimeError('容器资源数量不一致')
+    for i, item in enumerate(files):
+        offset = struct.unpack_from('<I', packed, table + i * p67_pack.DEF_SIZE + 8)[0]
+        block = p67_pack.read_block(packed, offset)
+        if block['name'] != item['name'] or block['data'] != Path(item['path']).read_bytes():
+            raise RuntimeError(f'容器资源完整性校验失败: {item["name"]}')
     return info
 
 
@@ -199,11 +252,16 @@ def main() -> int:
 
     ko = dist / "chaos_sup.ko"
     if not args.skip_ko:
+        if icon_python is not None:
+            build_app_icons(repo, icon_python)
+        # build_ko.sh统一执行无损素材预处理，直接编译也使用同一资源。
         if icon_python is not None and (repo / "tools/chaos.gif").is_file():
             run([icon_python, str(repo / "tools/build_gif_icon.py")], repo)
         build_ko(repo, ko, build_time)
     elif not ko.is_file():
         raise RuntimeError("--skip-ko 但 dist/chaos_sup.ko 不存在")
+    else:
+        print('注意: --skip-ko复用已有模块，不会把新增源码或内置图片编入旧模块。')
     shutil.copyfile(ko, assets / "chaos_sup.bin")
     print(f"ko: {ko} ({ko.stat().st_size} bytes)")
     (dist / "THIRD-PARTY-NETWORK.txt").write_text(network_notices(repo), encoding="utf-8")
@@ -233,6 +291,7 @@ def main() -> int:
                 shutil.copyfile(src, dst)
 
     if args.no_container:
+        write_build_report(dist, ko, assets, None)
         print(f"完成（未打容器）: {dist}")
         return 0
 
@@ -244,6 +303,7 @@ def main() -> int:
     print(f"容器: {out} ({info['size']} bytes)")
     for name, size in info["blocks"]:
         print(f"  {name}  {size}")
+    write_build_report(dist, ko, assets, out)
     print(f"完成: {out}")
     return 0
 

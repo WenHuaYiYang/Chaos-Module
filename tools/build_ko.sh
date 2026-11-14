@@ -31,6 +31,7 @@ case $out in
 esac
 
 cd "$src"
+python3 "$here/pack_embedded_assets.py" "$root"
 
 # 关于页的“编译时间”：以前没人设这个变量，option_env! 拿不到就显示 unknown。
 # 这里给本地构建兜底；CI 会显式传同一个变量，保证发布产物时间可追溯。
@@ -44,7 +45,9 @@ RUSTFLAGS="-C target-cpu=cortex-m33 -C target-feature=-fpregs" \
   cargo +nightly build --release --target thumbv8m.main-none-eabi \
     -Z build-std=core,compiler_builtins
 
-lib=$(ls target/thumbv8m.main-none-eabi/release/lib*.a | head -n 1)
+# 不能从旧输出目录随意取第一个.a，否则会混入其他模块/旧版本。
+lib=target/thumbv8m.main-none-eabi/release/libchaos_sup.a
+[ -s "$lib" ] || { echo "error: missing $lib" >&2; exit 1; }
 host=$(rustc +nightly -vV | sed -n 's/^host: //p')
 lld="$(rustc +nightly --print sysroot)/lib/rustlib/$host/bin/rust-lld"
 echo "rust-lld: $lld"

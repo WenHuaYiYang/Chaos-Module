@@ -12,6 +12,11 @@ from build import build_icon
 ROOT = Path(__file__).resolve().parents[1]
 
 class StaticIconTests(unittest.TestCase):
+    def test_dark_icons_use_the_existing_processing_without_pixel_loss(self):
+        for name in ('dark-potato', 'dark-icon'):
+            with Image.open(ROOT / f'tools/app-icons/{name}.png') as source:
+                expected = encode_icon(render_icon(source, 96))
+            self.assertEqual((ROOT / f'supervisor/assets/app-icons/{name}.bin').read_bytes(), expected)
     def test_both_installer_icons_match_the_original_source_at_96px(self):
         with Image.open(ROOT / 'tools/chaos.png') as source:
             expected = encode_icon(render_icon(source, 96))

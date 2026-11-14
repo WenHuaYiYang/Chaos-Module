@@ -5,7 +5,8 @@ use fw::dynamic_icon as port;
 
 pub const ORIGINAL: u8 = 0;
 pub const DYNAMIC: u8 = 1;
-pub const NAMES: [&[u8]; 2] = ["原版\0".as_bytes(), "动态\0".as_bytes()];
+pub const NAMES: [&[u8]; 4] = ["原版\0".as_bytes(), "动态\0".as_bytes(),
+    "暗色土豆\0".as_bytes(), "暗色图标\0".as_bytes()];
 const CONFIG: &[u8] = b"/data/chaos/app-icon.cfg\0";
 const TEMP: &[u8] = b"/data/chaos/app-icon.cfg.tmp\0";
 
@@ -124,6 +125,16 @@ unsafe fn drive() {
         }
         if PENDING { port::retire_frames(); }
         PENDING = false; FORCE = false; forget(); return;
+    }
+    if choice >= 2 {
+        port::animation_active(false, 20);
+        if OWNER != icon.object || LAST_SOURCE != icon.source || LAST_FRAME != choice as usize || PENDING {
+            if let Some(source) = port::show_static(icon, choice) {
+                OWNER = icon.object; LAST_SOURCE = source; LAST_FRAME = choice as usize;
+                PENDING = false; FORCE = false;
+            }
+        }
+        return;
     }
     let Some(asset) = animation() else { port::animation_active(false, 20); forget(); return; };
     if !port::animation_active(true, asset.period_ms) && !TIMER_WARNED {

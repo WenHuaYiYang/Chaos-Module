@@ -14,11 +14,39 @@ static mut FRAME_TIMER: u32 = 0;
 static mut FRAME_PERIOD: u32 = 1000;
 static mut OWN_PERIOD: u32 = 0;
 static mut PACK_PERIOD: u32 = 0;
+#[repr(align(64))]
+struct StaticPixels([u8; WIDTH * HEIGHT * 4]);
+static mut STATIC_PIXELS: [StaticPixels; 2] = [StaticPixels([0; WIDTH * HEIGHT * 4]), StaticPixels([0; WIDTH * HEIGHT * 4])];
+#[repr(align(64))]
+struct StaticDescriptor([u32; 7]);
+static mut STATIC_DESCRIPTORS: [StaticDescriptor; 2] = [StaticDescriptor([0; 7]), StaticDescriptor([0; 7])];
+static mut STATIC_READY: [bool; 2] = [false; 2];
+static STATIC_ASSETS: [&[u8]; 2] = [include_bytes!("../../assets/app-icons/dark-potato.bin"),
+    include_bytes!("../../assets/app-icons/dark-icon.bin")];
+
+unsafe fn static_descriptor(slot: usize) -> u32 { STATIC_DESCRIPTORS[slot].0.as_ptr() as u32 }
+
+pub(crate) unsafe fn show_static(icon: Icon, choice: u8) -> Option<u32> {
+    let asset = *STATIC_ASSETS.get(choice.checked_sub(2)? as usize)?;
+    if asset.len() != 12 + WIDTH * HEIGHT * 4 { return None; }
+    let slot = if icon.source == static_descriptor(0) { 1 } else { 0 };
+    let source = static_descriptor(slot);
+    if STATIC_READY[slot] { fw_img_free_by_path(source); }
+    STATIC_PIXELS[slot].0.copy_from_slice(&asset[12..]);
+    super::s541_clean_pixels(STATIC_PIXELS[slot].0.as_ptr(), (WIDTH * HEIGHT * 4) as u32);
+    STATIC_DESCRIPTORS[slot].0 = [0x1019, (HEIGHT as u32) << 16 | WIDTH as u32,
+        WIDTH as u32 * 4, (WIDTH * HEIGHT * 4) as u32, STATIC_PIXELS[slot].0.as_ptr() as u32, 0, 0];
+    super::s541_clean_pixels(STATIC_DESCRIPTORS[slot].0.as_ptr().cast(), 64);
+    STATIC_READY[slot] = true;
+    publish(icon, source);
+    Some(source)
+}
 
 unsafe fn descriptor(slot: usize) -> u32 { core::ptr::addr_of!(DESCRIPTORS[slot]) as u32 }
 
 pub(crate) unsafe fn owns(source: u32) -> bool {
-    (0..2).any(|slot| READY[slot] && descriptor(slot) == source)
+    (0..2).any(|slot| (READY[slot] && descriptor(slot) == source)
+        || (STATIC_READY[slot] && static_descriptor(slot) == source))
 }
 
 unsafe fn prepare(slot: usize, asset: &Animation<'_>, frame: usize) -> Option<u32> {
@@ -61,6 +89,7 @@ pub(crate) unsafe fn restore_original(icon: Icon) {
 pub(crate) unsafe fn retire_frames() {
     for slot in 0..2 {
         if READY[slot] { fw_img_free_by_path(descriptor(slot)); }
+        if STATIC_READY[slot] { fw_img_free_by_path(static_descriptor(slot)); }
     }
 }
 
@@ -105,7 +134,7 @@ unsafe fn original_path(source: u32) -> bool {
 pub(crate) unsafe fn launcher_active() -> bool {
     if top_app_id() != HOME_APP_ID || watchface_is_on() != 0 { return false; }
     let grid = honeycomb::launcher();
-    grid != 0 && honeycomb::supported(grid) && honeycomb::visible(grid)
+    grid != 0 && (honeycomb::supported(grid) || honeycomb::s541_supported(grid)) && honeycomb::visible(grid)
         && rd32((grid + 0x2C) as *const u32) & 1 == 0
         && rd8(a::LAUNCHER_TRANSITION_SLOT as *const u8) == 0
         && rd32(a::LAUNCHER_SNAPSHOT_SLOT as *const u32) == 0

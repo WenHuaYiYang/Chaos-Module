@@ -21,11 +21,10 @@ static mut GLASS_INDEX: usize = 0;
 static mut LAST_PAN: Point = Point { x: i32::MAX, y: i32::MAX };
 #[repr(align(64))]
 struct Pixels([u8; 110592]);
-static PIXELS: [Pixels; 3] = [
-    Pixels(*include_bytes!("../assets/s541/selector-0.bgra")),
-    Pixels(*include_bytes!("../assets/s541/selector-2.bgra")),
-    Pixels(*include_bytes!("../assets/s541/selector-1.bgra")),
-];
+static COMPRESSED: [&[u8]; 3] = [include_bytes!("../assets/s541/selector-0.rle"),
+    include_bytes!("../assets/s541/selector-2.rle"), include_bytes!("../assets/s541/selector-1.rle")];
+static mut PIXELS: [Pixels; 3] = [Pixels([0; 110592]), Pixels([0; 110592]), Pixels([0; 110592])];
+static mut PIXELS_READY: [bool; 3] = [false; 3];
 // 描述符独占缓存行，避免同步一个图像时影响另一个仍被GPU使用的描述符。
 #[repr(align(64))]
 struct ImageDescriptor([u32; 7]);
@@ -104,6 +103,10 @@ unsafe fn hide(o: u32, hidden: bool) {
     else if !hidden && old { fw::obj_clear_flag(o, 1); }
 }
 unsafe fn create(grid: u32, button: u32) -> bool {
+    if !PIXELS_READY[MODE] {
+        if !crate::s541_pixels::unpack(COMPRESSED[MODE], &mut PIXELS[MODE].0) { return false; }
+        PIXELS_READY[MODE] = true;
+    }
     OWNER = grid; ROOT = native::parent(grid); SHOWN_MODE = MODE;
     BUTTON = button; BUTTON_ALPHA = fw::fw_style_get_prop(button, 0, 95);
     BUTTON_CLICKABLE = rd32((button + 0x2c) as *const u32) & fw::LV_OBJ_FLAG_CLICKABLE != 0;

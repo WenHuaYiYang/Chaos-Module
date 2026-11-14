@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import build
+import p67_pack
 
 
 class IconPythonTests(unittest.TestCase):
@@ -98,6 +99,25 @@ class BuildPreflightTests(unittest.TestCase):
                 ])
                 self.assertEqual(cwd, repo)
                 self.assertEqual(env["CHAOS_ICON_SIZE"], "64")
+
+
+class ContainerIntegrityTests(unittest.TestCase):
+    def test_container_preserves_every_payload_byte_including_fetch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory); assets = repo / 'dist/assets'; stage = repo / 'dist/stage'
+            assets.mkdir(parents=True); stage.mkdir(); (repo / 'installer').mkdir()
+            (repo / 'installer/chaos_installer.lua').write_text('return true')
+            names = ('chaos_sup.bin', 'fetch-module.bin', 'capatch.bin', 'ca.pem',
+                     'chaos_icon.bin', 'chaos_icon_settings.bin', 'lxgw.ttf')
+            for i, name in enumerate(names): (assets / name).write_bytes(bytes([i]) * (10 + i))
+            (assets.parent / 'THIRD-PARTY-NETWORK.txt').write_text('license')
+            preview = build.DEFAULT_ROOT / 'tools/p67-preview.block'
+            out = repo / 'installer.bin'
+            build.build_container(repo, out, preview, stage, assets, '979820260926', 'Test', 'Test')
+            self.assertEqual(len(p67_pack.inspect(out)['files']), 9)
+            (assets / 'fetch-module.bin').unlink()
+            with self.assertRaisesRegex(RuntimeError, 'fetch-module'):
+                build.build_container(repo, out, preview, stage, assets, '979820260926', 'Test', 'Test')
 
 
 if __name__ == "__main__":

@@ -1,5 +1,17 @@
 use super::*;
 #[test]
+fn embedded_control_pixels_round_trip_exactly() {
+    let originals: [&[u8];3] = [include_bytes!("../assets/s541/selector-0.bgra"),
+        include_bytes!("../assets/s541/selector-2.bgra"), include_bytes!("../assets/s541/selector-1.bgra")];
+    for (packed, original) in COMPRESSED.iter().zip(originals) {
+        let mut out=vec![0;original.len()];
+        assert!(crate::s541_pixels::unpack(packed,&mut out));
+        assert_eq!(out, original);
+        assert!(!crate::s541_pixels::unpack(&packed[..packed.len()-1],&mut out));
+    }
+    assert!(!crate::s541_pixels::unpack(&[0;6],&mut [0;4]));
+}
+#[test]
 fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
     unsafe {
         crate::state(|s|{s.objects.insert(20,10);s.objects.insert(30,10);});

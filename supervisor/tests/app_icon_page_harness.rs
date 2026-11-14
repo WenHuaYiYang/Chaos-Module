@@ -2,17 +2,18 @@
 #![allow(dead_code, static_mut_refs)]
 use std::sync::Mutex;
 #[derive(Default)]
-struct Ui { selected: u8, names: Vec<String>, checked: [bool; 2], radios: Vec<(u32,u32,u32)>, selections: Vec<u8>, fail: Option<usize> }
+struct Ui { selected: u8, names: Vec<String>, checked: [bool; 4], radios: Vec<(u32,u32,u32)>, selections: Vec<u8>, fail: Option<usize> }
 static UI: Mutex<Option<Ui>> = Mutex::new(None);
 fn with<T>(f: impl FnOnce(&mut Ui) -> T) -> T { f(UI.lock().unwrap().as_mut().unwrap()) }
 mod dynamic_icon {
-    pub const NAMES: [&[u8]; 2] = ["原版\0".as_bytes(), "动态\0".as_bytes()];
+    pub const NAMES: [&[u8]; 4] = ["原版\0".as_bytes(), "动态\0".as_bytes(), "暗色土豆\0".as_bytes(), "暗色图标\0".as_bytes()];
+    pub fn name(i:u8)-> &'static [u8] {NAMES[i as usize]}
     pub unsafe fn selected() -> u8 { super::with(|u| u.selected) }
     pub unsafe fn select(style: u8) -> bool { super::with(|u| { u.selected = style; u.selections.push(style); }); true }
 }
 pub mod fw_api {
     pub const NONE_PTR: *const u8 = core::ptr::null();
-    pub mod trailing { pub const RADIO: u32 = 6; }
+    pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX:u32=2; }
     pub unsafe fn row_trailing(row: u32) -> u32 { row + 100 }
     pub unsafe fn obj_add_event(row: u32, callback: u32, code: u32, _: u32) -> u32 {
         super::with(|u| u.radios.push((row, callback, code))); 1
@@ -23,6 +24,8 @@ pub mod fw_api {
     }
 }
 mod page {
+    pub mod kit {pub use crate::checklist;}
+    pub enum Pid {AppIcon=43}
     pub use crate::fw_api;
     pub use core::ptr::read_volatile;
     #[derive(Debug, PartialEq)] pub enum PageError { RowFailed(usize) }
@@ -47,6 +50,11 @@ mod page {
         ctx.rows.add(index).write(row); row
     }
 }
+#[path = "../src/page/kit/checklist.rs"] pub mod checklist;
+use page::*;
+const MAX_PID:usize=43;
+fn row_cb()->u32{2000}
+unsafe fn cstr_len(p:*const u8)->usize{std::ffi::CStr::from_ptr(p.cast()).to_bytes().len()}
 #[path = "../src/page/app_icon.rs"] mod app_icon;
 use page::Page;
 fn setup(selected: u8) -> page::PageCtx {
@@ -56,28 +64,30 @@ fn setup(selected: u8) -> page::PageCtx {
     page::PageCtx { content: 100, title: 200, rows }
 }
 #[test]
-fn renders_only_original_and_dynamic_radio_rows() {
+fn renders_all_four_radio_rows() {
     let ctx = setup(1); app_icon::PAGE_APP_ICON.render(&ctx).unwrap();
     with(|u| {
-        assert_eq!(u.names, ["原版", "动态"]);
-        assert_eq!(u.checked, [false,true]);
-        assert_eq!(u.radios.len(), 2);
+        assert_eq!(u.names, ["原版", "动态", "暗色土豆", "暗色图标"]);
+        assert_eq!(u.checked, [false,true,false,false]);
+        assert_eq!(u.radios.len(), 4);
         for (index, &(target, callback, code)) in u.radios.iter().enumerate() {
-            assert_eq!((target,callback,code),(1100+index as u32,2000+index as u32,7));
+            assert_eq!((target,callback,code),(1100+index as u32,2000,7));
         }
     });
 }
 #[test]
 fn selection_updates_radios_in_place_without_rebuilding() {
     let ctx = setup(0); app_icon::PAGE_APP_ICON.render(&ctx).unwrap(); app_icon::PAGE_APP_ICON.on_click(1);
-    with(|u| { assert_eq!(u.selected,1); assert_eq!(u.checked,[false,true]); assert_eq!(u.names.len(),2); });
+    with(|u| { assert_eq!(u.selected,1); assert_eq!(u.checked,[false,true,false,false]); assert_eq!(u.names.len(),4); });
     app_icon::PAGE_APP_ICON.on_click(0);
-    with(|u| { assert_eq!(u.selected,0); assert_eq!(u.checked,[true,false]); });
-    app_icon::PAGE_APP_ICON.on_click(2); with(|u| assert_eq!(u.selections,[1,0]));
+    with(|u| { assert_eq!(u.selected,0); assert_eq!(u.checked,[true,false,false,false]); });
+    app_icon::PAGE_APP_ICON.on_click(2); app_icon::PAGE_APP_ICON.on_click(3);
+    with(|u| {assert_eq!(u.selections,[1,0,2,3]);assert_eq!(u.checked,[false,false,false,true]);});
+    app_icon::PAGE_APP_ICON.on_click(4); with(|u| assert_eq!(u.selections,[1,0,2,3]));
 }
 #[test]
 fn independent_page_title_and_id_match_the_third_level_route() {
-    setup(0); assert_eq!(app_icon::APP_ICON_PID,43);
+    setup(0); assert_eq!(page::Pid::AppIcon as u32,43);
     let mut title = [0u8;48]; app_icon::PAGE_APP_ICON.fill_title(title.as_mut_ptr());
     assert_eq!(&title[..13],"应用图标\0".as_bytes());
 }

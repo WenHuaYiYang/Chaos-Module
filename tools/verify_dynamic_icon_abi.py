@@ -61,7 +61,7 @@ def probe(image):
         host = next(line.split(': ', 1)[1] for line in subprocess.check_output(['rustc', '-vV'], text=True).splitlines() if line.startswith('host:'))
         linker = sysroot / 'lib/rustlib' / host / 'bin/rust-lld'
         subprocess.run([str(linker), '-flavor', 'gnu', '-Ttext=0x10000000', '--gc-sections',
-                        '--entry=test_frame', '-u', 'test_original', '-u', 'test_retire', '-u', 'test_timer', '-u', 'test_pack_timer', str(archive), '-o', str(executable)], check=True)
+                        '--entry=test_frame', '-u', 'test_static', '-u', 'test_original', '-u', 'test_retire', '-u', 'test_timer', '-u', 'test_pack_timer', str(archive), '-o', str(executable)], check=True)
         m = Machine(image)
         with executable.open('rb') as file:
             elf = ELFFile(file); pages = set()
@@ -175,6 +175,23 @@ def probe(image):
         require(dropped, 'bounded playback cache retirement did not run')
         delete[0] = True; invalidations[0] = 0
         require(call(symbols['test_original'], object, source) == 1 and not alive[0], 'DELETE during file setter')
+        alive[0] = True; delete[0] = False
+        m.u.mem_map(object, 4096)
+        for offset, value in held.items(): m.put(object + offset, value)
+        m.put(object + 0x34, path, 0, 0, 0, 96, 96, 0, 176, 176)
+        m.u.mem_write(object + 0x60, bytes((65, 9)))
+        m.hooks[0x0C588F88] = lambda u: 0
+        for choice, name in ((2, 'dark-potato'), (3, 'dark-icon')):
+            source = call(symbols['test_static'], object, word(object + 0x34), choice)
+            require(source != 0 and word(object + 0x34) == source, 'static icon bound by real firmware setter')
+            header = bytes(m.u.mem_read(source, 28))
+            require(header[:12] == ORIGINAL_HEADER, 'static BGRA header unchanged')
+            size, pointer = struct.unpack_from('<II', header, 12)
+            require(size == 36864 and pointer & 63 == 0, 'static pixels aligned')
+            expected = (ROOT / f'supervisor/assets/app-icons/{name}.bin').read_bytes()[12:]
+            require(bytes(m.u.mem_read(pointer, size)) == expected, 'static icon pixels preserved exactly')
+            require(all(word(object + offset) == value for offset, value in held.items()), 'static icon changed geometry or click data')
+        print('PASS two dark icons: production ARM port, real source setter and exact BGRA pixels')
         print('PASS production ARM port + real setter: GIF pixels, original file restore/resume, OOM preserves current source and cache')
         print('PASS native-owned path lifetime, two aligned playback buffers and one 20ms/1000ms timer')
         print('PASS source swap preserves geometry/zoom/click data; no instance access after setter DELETE')

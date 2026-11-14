@@ -83,7 +83,15 @@ mod fw_api {
         use crate::dynamic_icon_frames::{Animation, PIXELS};
         pub unsafe fn launcher_active() -> bool { with(|u| u.active) }
         pub unsafe fn current(app_id: u32) -> Option<Icon> { assert_eq!(app_id, 200); with(|u| { u.reads += 1; u.icon }) }
-        pub unsafe fn owns(source: u32) -> bool { PLAYBACK.contains(&source) }
+        pub unsafe fn owns(source: u32) -> bool { PLAYBACK.contains(&source) || [0xBB00,0xBB80].contains(&source) }
+        pub unsafe fn show_static(icon: Icon, choice: u8) -> Option<u32> {
+            assert!((2..=3).contains(&choice));
+            if with(|u|u.fail_image) { return None; }
+            let source=if icon.source==0xBB00{0xBB80}else{0xBB00};
+            with(|u| {let current=u.icon.as_mut().unwrap();current.source=source;current.original=false;
+                u.frame=None;u.writes.push((icon.object,choice,0));});
+            Some(source)
+        }
         pub unsafe fn animation_active(active: bool, period: u32) -> bool {
             with(|u| { u.timer = active; u.period = if active { period } else { 1000 }; }); true
         }
@@ -122,8 +130,8 @@ fn fresh_install_automatically_selects_plays_and_saves_dynamic() {
     with(|u| { assert_eq!(u.frame, Some(0)); assert!(u.timer); assert_eq!(u.files[FILE], b"AIC2\x01"); });
 }
 #[test]
-fn picker_contains_only_original_and_dynamic() {
-    assert_eq!(dynamic_icon::NAMES, ["原版\0".as_bytes(), "动态\0".as_bytes()]);
+fn picker_contains_original_dynamic_and_two_dark_icons() {
+    assert_eq!(dynamic_icon::NAMES, ["原版\0".as_bytes(), "动态\0".as_bytes(), "暗色土豆\0".as_bytes(), "暗色图标\0".as_bytes()]);
 }
 #[test]
 fn every_old_choice_and_legacy_switch_upgrade_to_dynamic_once() {
@@ -138,7 +146,7 @@ fn every_old_choice_and_legacy_switch_upgrade_to_dynamic_once() {
 }
 #[test]
 fn both_choices_persist_after_upgrade_and_reload() {
-    for style in 0..2 {
+    for style in 0..4 {
         setup(None); tick(0); choose(style); tick(50);
         let saved = with(|u| u.files[FILE].clone());
         assert_eq!(saved, [b'A',b'I',b'C',b'2',style]); setup(Some(&saved));
@@ -148,9 +156,21 @@ fn both_choices_persist_after_upgrade_and_reload() {
 }
 #[test]
 fn invalid_records_default_to_dynamic_and_removed_choices_are_rejected() {
-    for bytes in [b"AIC2".as_slice(), b"AIC2\x00x", b"BAD!\x00", b"AIC2\x02"] {
+    for bytes in [b"AIC2".as_slice(), b"AIC2\x00x", b"BAD!\x00", b"AIC2\x04"] {
         setup(Some(bytes)); assert_eq!(unsafe { dynamic_icon::selected() }, 1);
-        for index in 2..5 { assert!(!unsafe { dynamic_icon::select(index) }); }
+        for index in 4..6 { assert!(!unsafe { dynamic_icon::select(index) }); }
+    }
+}
+#[test]
+fn dark_icons_do_not_animate_and_can_switch_back_to_gif_and_original() {
+    for style in 2..4 {
+        setup(None); choose(style); tick(0);
+        let writes=with(|u|{assert!(!u.timer);assert_eq!(u.writes.last().unwrap().1,style);u.writes.len()});
+        tick(100);tick(200);
+        with(|u|assert_eq!(u.writes.len(),writes));
+        choose(1);tick(300);with(|u|assert!(u.timer));
+        choose(0);tick(400);tick(500);
+        with(|u|{assert!(u.icon.unwrap().original);assert!(!u.timer);});
     }
 }
 #[test]

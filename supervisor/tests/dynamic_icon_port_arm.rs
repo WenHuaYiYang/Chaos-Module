@@ -27,6 +27,7 @@ mod fw_api {
     pub mod honeycomb {
         pub unsafe fn launcher() -> u32 { 0 }
         pub unsafe fn supported(_: u32) -> bool { false }
+        pub unsafe fn s541_supported(_: u32) -> bool { false }
         pub unsafe fn visible(_: u32) -> bool { false }
     }
     // Same ABI shims as fw_api/glass.rs and sys.rs. Python intercepts display
@@ -34,6 +35,10 @@ mod fw_api {
     pub unsafe fn background_image_set_source(object: u32, source: u32) {
         let f: unsafe extern "C" fn(u32, u32) = core::mem::transmute(0x0C587FA1usize);
         f(object, source);
+    }
+    pub unsafe fn s541_clean_pixels(p:*const u8,size:u32) {
+        let f:unsafe extern "C" fn(u32,u32,u32)->i32=core::mem::transmute(0x0C588F89usize);
+        f(1,p as u32,size);
     }
     pub unsafe fn fw_img_free_by_path(source: u32) {
         let f: unsafe extern "C" fn(u32) = core::mem::transmute(0x0C5890D1usize);
@@ -53,6 +58,10 @@ pub unsafe extern "C" fn test_frame(object: u32, source: u32, index: u32) -> u32
     let icon = dynamic_icon::Icon { object, source, original: true, visible: true };
     let animation = dynamic_icon_frames::Animation::parse(dynamic_icon_frames::PACKAGED).unwrap();
     production_port::show_frame(icon, &animation, index as usize).unwrap_or(0)
+}
+#[no_mangle]
+pub unsafe extern "C" fn test_static(object:u32,source:u32,choice:u32)->u32 {
+    production_port::show_static(dynamic_icon::Icon{object,source,original:false,visible:true},choice as u8).unwrap_or(0)
 }
 #[no_mangle]
 pub unsafe extern "C" fn test_original(object: u32, source: u32) -> u32 {
