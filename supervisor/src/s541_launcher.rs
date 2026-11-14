@@ -118,6 +118,8 @@ unsafe fn create(grid: u32, button: u32) -> bool {
     let mask = fw::background_image_create(VIEW);
     if GLASS == 0 || mask == 0 { return false; }
     IMAGES[MODE] = [0x11019, 288 | (96 << 16), 1152, 110592, PIXELS[MODE].0.as_ptr() as u32, 0, 0];
+    // 模块中的只读素材同样经过CPU装载；交给GPU前必须同步缓存。
+    fw::s541_clean_pixels(PIXELS[MODE].0.as_ptr(), 110592);
     fw::background_image_set_source(mask, IMAGES[MODE].as_ptr() as u32);
     fw::obj_clear_flag(mask, fw::LV_OBJ_FLAG_CLICKABLE);
     fw::obj_clear_flag(GLASS, fw::LV_OBJ_FLAG_CLICKABLE);
@@ -134,7 +136,7 @@ pub(crate) unsafe fn render(grid: u32) {
     if !enabled() || fw::top_app_id() != fw::HOME_APP_ID { return; }
     let Some((button, x, y)) = native::s541_anchor(grid) else { clear(); return; };
     // 仅上移自有控制条，不改变官方按钮占位和应用布局。
-    let y = y - 32;
+    let y = y - 16;
     let preference = native::s541_preference();
     MODE = match preference { 0 => 0, 2 => 1, 1 => 2, _ => { clear(); return; } };
     let valid = VIEW != 0 && LAYER != 0 && ROOT == native::parent(grid) && fw::obj_is_child_of(ROOT, LAYER);
@@ -146,7 +148,15 @@ pub(crate) unsafe fn render(grid: u32) {
     fw::obj_clear_flag(button, fw::LV_OBJ_FLAG_CLICKABLE);
     if rd32((button + 0x2c) as *const u32) & 1 != 0 { hide(VIEW, true); return; }
     let pos = Point { x, y };
-    if LAST_PAN != pos { fw::obj_align(VIEW, fw::align::TOP_LEFT, x, y); LAST_PAN = pos; }
+    if LAST_PAN != pos {
+        // 滚动时不能继续携带旧位置的背景快照，也不能在移动中的帧逐行取样。
+        fw::obj_invalidate(VIEW);
+        hide(VIEW, true);
+        fw::obj_align(VIEW, fw::align::TOP_LEFT, x, y);
+        LAST_PAN = pos;
+        GLASS_VALID = false; GLASS_WAIT = 2; GLASS_FAILURES = 0;
+        fw::obj_invalidate(LAYER);
+    }
     NEEDS_GLASS = !GLASS_VALID && x >= 0 && x <= 48 && y >= 0 && y + 96 <= 480;
     if !NEEDS_GLASS && !GLASS_VALID { hide(VIEW, true); return; }
     if !GLASS_VALID {
@@ -161,6 +171,8 @@ pub(crate) unsafe fn render(grid: u32) {
             }
             return;
         }
+        // 捕获期间若GPU开始下一帧，舍弃跨帧样本，不能发布撕裂背景。
+        if !fw::s541_frame_idle() { return; }
         crate::s541_pixels::blur(&mut SAMPLE, &mut WORK);
         let next = GLASS_INDEX ^ 1;
         if GLASS_IMAGES[next][0] != 0 { fw::fw_img_free_by_path(GLASS_IMAGES[next].as_ptr() as u32); }
@@ -182,7 +194,8 @@ pub(crate) unsafe fn tick() {
     render(grid);
 }
 pub(crate) unsafe fn pending() -> bool {
-    ENABLED && NEEDS_GLASS && OWNER != 0 && native::launcher() == OWNER
+    // 控制条跟随滚动也需要快拍，不能在捕获完成后降到200ms。
+    ENABLED && OWNER != 0 && native::launcher() == OWNER
         && fw::screen_is_on() && fw::top_app_id() == fw::HOME_APP_ID && native::visible(OWNER)
 }
 

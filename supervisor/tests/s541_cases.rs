@@ -16,7 +16,7 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
                 for &icon in &icons {assert!(!s.flags.contains_key(&icon));}
                 assert!(!s.events.iter().any(|&(_,_,id)|id>=0x10000));
                 assert!(s.labels.is_empty());
-                assert!(s.positions.contains(&(VIEW,24,328)));
+                assert!(s.positions.contains(&(VIEW,24,344)));
                 assert_eq!(s.honeycomb_writes,0);assert_eq!(s.desktop_writes,0);
             });
         }
@@ -24,6 +24,16 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
         assert_eq!(p[3],0); assert!(p.chunks_exact(4).any(|px|px[3]>0&&px[3]<255));
         assert!(p.chunks_exact(4).all(|px|px[..3].iter().all(|&c|c<=px[3])));
         crate::state(|s|assert_eq!(s.selections,vec![2,1]));
+        assert!(pending()); // 捕获完成仍需快速跟随官方滚动位置。
+        let samples = crate::state(|s|s.samples);
+        for y in [350,340,330] {
+            crate::state(|s|s.anchor_y=Some(y)); tick();
+            assert!(!GLASS_VALID);
+            crate::state(|s|assert_eq!(s.samples,samples));
+        }
+        for _ in 0..3 { tick(); }
+        assert!(GLASS_VALID);
+        crate::state(|s| {assert_eq!(s.samples,samples+1);assert!(s.cleans>=7);});
         toggle(); tick(); assert_eq!(VIEW,0);
         LOADED=false; assert!(!enabled());
     }
