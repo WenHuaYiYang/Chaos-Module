@@ -239,6 +239,29 @@ pub(crate) unsafe fn icons(grid: u32, out: &mut [u32; MAX_ICONS]) -> usize {
     used
 }
 
+/// .043 原生 SHORT_CLICKED 回调的 userdata 是 app_id，源图像在 image+0x34。
+/// 应用名按 launcher_data_reload_app_name (0x0C514284) 调 registry+0x1C。
+pub(crate) unsafe fn s541_icon(icon: u32) -> Option<(u32, u32, *const u8)> {
+    let d = descriptor(icon, a::LAUNCHER_ICON_CLICK);
+    if d == 0 { return None; }
+    let id = word(d, 4);
+    let lookup: unsafe extern "C" fn(u32) -> u32 = transmute(0x0CA69935usize);
+    let node = lookup(id);
+    if !safe_ptr(node) { return None; }
+    let callback = word(node, 0x1c);
+    // 用户安装的原生模块（包括Chaos）的回调位于0x3xxxxxxx RAM，不能只认固件flash。
+    if callback & 1 == 0 || !crate::mem::plausible_ptr(callback) { return None; }
+    let name: unsafe extern "C" fn() -> *const u8 = transmute(callback as usize);
+    let source = word(icon, 0x34);
+    if source == 0 { return None; }
+    Some((id, source, name()))
+}
+
+pub(crate) unsafe fn s541_button(grid: u32) -> u32 {
+    let button = word(grid, 0x5c);
+    if safe_ptr(button) && obj_is_child_of(parent(grid), button) { button } else { 0 }
+}
+
 pub(crate) unsafe fn attach(grid: u32, icons: &[u32]) -> bool {
     if LAYOUT_ID == 0 {
         let register: unsafe extern "C" fn(u32, u32) -> u32 =

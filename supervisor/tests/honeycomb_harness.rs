@@ -1,5 +1,6 @@
 //! Exercise the complete production controller with an isolated firmware port.
 #![allow(dead_code, static_mut_refs)]
+mod s541_launcher { pub unsafe fn disable() {} }
 #[path = "../src/desktop_scale.rs"]
 mod desktop_scale;
 #[path = "../src/honeycomb.rs"]
@@ -81,6 +82,7 @@ mod log {
     pub fn kv(_: &str, _: u32) {}
 }
 mod fw_api {
+    pub unsafe fn screen_is_on() -> bool { super::with(|u| u.visible) }
     use super::*;
     pub mod oflag {
         pub const RDONLY: u32 = 0;

@@ -45,6 +45,8 @@ unsafe fn restore_blur_status() -> *const u8 { crate::res_hook::status() }
 
 static RESTORE_FONT_DEF: ToggleDef = ToggleDef {
     get: restore_font_get, toggle: restore_font_toggle, status: Some(restore_font_status) };
+static S541_DEF: ToggleDef = ToggleDef {
+    get: crate::s541_launcher::enabled, toggle: crate::s541_launcher::toggle, status: None };
 static RESTORE_BLUR_DEF: ToggleDef = ToggleDef {
     get: restore_blur_get, toggle: restore_blur_toggle, status: Some(restore_blur_status) };
 
@@ -57,6 +59,7 @@ static BEAUTIFY_ROWS: &[RowModel] = &[
     RowModel::nav("更换字体\0".as_bytes(), Pid::FontList as u32),
     RowModel::nav("桌面图标\0".as_bytes(), Pid::IconSub as u32),
     RowModel::nav("应用列表设置\0".as_bytes(), Pid::AppList as u32),
+    RowModel::toggle("s541控制按钮\0".as_bytes(), &S541_DEF),
     RowModel::section("模糊与背景\0".as_bytes()),
     RowModel::nav("系统模糊\0".as_bytes(), Pid::Blur as u32),
     RowModel::nav("模糊区域\0".as_bytes(), Pid::BlurZone as u32),

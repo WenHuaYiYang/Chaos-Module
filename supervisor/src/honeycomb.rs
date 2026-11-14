@@ -85,6 +85,7 @@ pub(crate) unsafe fn toggle() {
 pub(crate) unsafe fn set_enabled(on: bool) {
     load();
     if on {
+        crate::s541_launcher::disable();
         crate::desktop_scale::disable_for_honeycomb();
     }
     if ENABLED != on {

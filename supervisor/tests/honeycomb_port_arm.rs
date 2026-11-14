@@ -3,6 +3,7 @@
 #![no_std]
 #![no_main]
 #![allow(dead_code, static_mut_refs)]
+mod s541_launcher { pub unsafe fn disable() {} }
 #[path = "../src/fw_api/fwaddr.rs"]
 pub mod addresses;
 #[path = "../src/desktop_scale.rs"]

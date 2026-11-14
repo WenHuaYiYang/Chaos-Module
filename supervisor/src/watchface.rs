@@ -499,6 +499,7 @@ unsafe fn tick_pages(lite: bool) {
     if !lite {
         crate::desktop_scale::tick();
         crate::honeycomb::tick();
+        crate::s541_launcher::tick();
     }
 }
 
