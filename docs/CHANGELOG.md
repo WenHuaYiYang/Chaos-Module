@@ -2,7 +2,14 @@
 
 版本号与容器头、关于页、`Cargo.toml` 同步；格式见 [BUILD.md](BUILD.md#版本号规则)。
 
-## v1.1.9（待发布）— 蜂窝交互、应用图标与截屏录屏
+## v1.1.20（待发布）— 蜂窝交互、应用图标与截屏录屏
+
+### 构建与安装包
+
+- 安装器脚本打包时瘦身（`tools/minify_lua.py`：去注释/缩进/空行，token 序列逐字比对断言），容器内 main.lua 约 46.5KB→32.9KB。
+- 容器内的模块副本在打包时 `--strip-unneeded`（`tools/build.py`，llvm/ rust-objcopy 优先，失败自动回退未 strip），副本约 1.45MB→1.40MB；构建产物 `supervisor/chaos_sup.ko` 本身不 strip。
+- `chaos-fetch/build.py` 兼容更严的 clang：统计计数器豁免 `-Wunused-but-set-global`；重定位表校验在缺 `llvm-readelf` 的环境退用 `llvm-objdump -r`（解析只认 R_ARM_ 前缀）。
+- CI（`.github/workflows/build.yml`）从"只编译模块"扩为完整安装包：`python3 tools/build.py --skip-ko` 出 `dist/chaos-installer-p67.bin` 并上传 artifact。
 
 ### 蜂窝交互
 

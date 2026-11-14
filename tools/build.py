@@ -159,6 +159,47 @@ def write_build_report(dist: Path, ko: Path, assets: Path, container: Path | Non
     print(f'构建资源清单与SHA-256: {dist / "build-report.json"}')
 
 
+def find_objcopy() -> str | None:
+    # llvm/rust 的 objcopy 优先: mingw 的 GNU objcopy 不认 ARM ELF, 会整份失败。
+    candidates = []
+    for extra in ("C:/Program Files/LLVM/bin/llvm-objcopy.exe",
+                  os.path.expanduser("~/.cargo/bin/rust-objcopy.exe")):
+        if os.path.isfile(extra):
+            candidates.append(extra)
+    for name in ("llvm-objcopy", "rust-objcopy", "objcopy"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    return candidates[0] if candidates else None
+
+
+def strip_ko_file(path: Path) -> None:
+    """容器内的 ko 副本就地 --strip-unneeded（旧链 2026-10-24 起的默认口径）。
+
+    局部符号表对固件加载器无用（重定位只认 symtab 下标），strip 只省体积；
+    构建产物 supervisor/chaos_sup.ko 本身不 strip，调试与 verify_chaos_ko.py
+    要看符号。找不到 objcopy 或 strip 失败都保持原样并告警（不算构建失败）。
+    """
+    oc = find_objcopy()
+    if oc is None:
+        print("WARN: 找不到 objcopy, chaos_sup.bin 未 strip (容器会大 ~50KB)")
+        return
+    before = path.stat().st_size
+    tmp = path.parent / (path.name + ".tmp")
+    try:
+        r = subprocess.run([oc, "--strip-unneeded", str(path), str(tmp)],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip()[:200] or f"exit {r.returncode}")
+    except BaseException as exc:
+        if tmp.is_file():
+            tmp.unlink()
+        print(f"WARN: strip 失败({exc}), chaos_sup.bin 按未 strip 打包")
+        return
+    os.replace(tmp, path)
+    print(f"ko strip (容器内副本): {before} -> {path.stat().st_size} bytes")
+
+
 def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
     """把容器要带的文件按 _lua/<设备目录>/<名字> 收集到 dist/stage。"""
     font = assets / "lxgw.ttf"
@@ -166,8 +207,23 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
         # 与旧包一致：字体槽只放占位说明，安装器按内容判断后跳过。
         font.write_bytes("Chaos 字体占位：字体由独立投递包安装，不是 TTF。\n".encode("utf-8"))
 
+    # 安装器脚本打包时瘦身（旧链 minify_lua 逻辑）：只去注释/行首缩进/空行，
+    # token 序列逐字不变（下面用 tokens() 对比断言）。源文件保持可读。
+    sys.path.insert(0, str(repo / "tools"))
+    import minify_lua  # noqa: PLC0415
+    text = (repo / "installer" / "chaos_installer.lua").read_text(encoding="utf-8")
+    slim = minify_lua.strip_source(text)
+    if minify_lua.tokens(text) != minify_lua.tokens(slim):
+        raise RuntimeError("安装器瘦身改变了 token 序列, 中止打包")
+    main_min = assets / "main.min.lua"
+    main_min.write_text(slim, encoding="utf-8", newline="\n")
+    print(f"安装器 lua: {len(text.encode('utf-8'))} -> {len(slim.encode('utf-8'))} bytes (去注释/缩进/空行)")
+
+    # ko 副本按旧链口径 strip：直接覆盖 assets 里的容器副本（旧链同款）。
+    strip_ko_file(assets / "chaos_sup.bin")
+
     sources = [
-        ("main.lua", repo / "installer" / "chaos_installer.lua"),
+        ("main.lua", main_min),
         ("chaos_sup.bin", assets / "chaos_sup.bin"),
         ("fetch-module.bin", assets / "fetch-module.bin"),
         ("capatch.bin", assets / "capatch.bin"),

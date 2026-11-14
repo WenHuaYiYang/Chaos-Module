@@ -61,12 +61,20 @@ ko_slim.js              清空局部符号名 → 文件 251KB→195KB（CHAOS_N
         ↓
 verify_chaos_ko.py      打印节区/重定位/未定义符号
         ↓
+stage_installer         main.lua 瘦身 (minify_lua, token 序列逐字比对)
+                        容器内 ko 副本 strip --strip-unneeded (llvm-objcopy
+                        优先, mingw GNU objcopy 不认 ARM ELF; 失败回退未 strip)
+        ↓
 p67_pack.py             ko + 图标 + main.lua → p67 容器
                         （无 python3 时用 tools/p67_pack.js：
                          inspect/build/repack，repack 可直接换容器里的单个资源）
 ```
 
 `tools/build_ko.sh` 负责前两步，`tools/build.py` 串起全流程。
+
+> 旧版工作区还有一道 `verify_bt_addresses.py` 蓝牙地址审批门（构建前对照
+> `docs/fw_address_table_043.csv` 核每个可调用地址），那份 CSV 不在本仓库，
+> 这道门未随迁；地址安全由 `src/fw_api/fwaddr.rs` 的编译期断言承担。
 
 完整构建在编译模块前生成动态 GIF 的帧资源，统一为 **96×96**；安装包的
 `chaos_icon.bin` 和 `chaos_icon_settings.bin` 同为 96×96，默认图案来自原版 `tools/chaos.png`。
@@ -79,7 +87,7 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 | 位置 | 形式 | 说明 |
 |---|---|---|
-| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010109` = **v1.1.9**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
+| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010114` = **v1.1.20**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
 | `supervisor/Cargo.toml` 的 `version` | `X.Y.Z` | 关于页通过 `env!("CARGO_PKG_VERSION")` 自动读取，无需手改 |
 | `supervisor/Cargo.lock` 的 `chaos_sup` 版本 | `X.Y.Z` | 与模块清单保持一致 |
 | `README.md` / `README.en.md` 的版本徽章 | `vX.Y.Z` | 中英文项目入口保持一致 |
@@ -106,8 +114,10 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 3. 执行两项图标单选、默认动态/配置升级、193 帧 GIF 及 96×96 原版图标回归；
    图标投递回归执行 `tools/test_icon_pack.py`，需要 `tools/requirements-test.txt` 中的 Lupa，验证真实 Lua 脚本与流式播放器；
 4. 执行截图/录屏回归与 `CC=cc python3 tools/test_corona_blur.py` 背景协作回归；
-5. 执行 `sh tools/build_ko.sh`（只编译模块，不打包容器）；
-6. 上传 `supervisor/chaos_sup.ko` 作为 artifact。
+5. 执行 `sh tools/build_ko.sh` 编译模块，并上传 `supervisor/chaos_sup.ko` 作为 artifact；
+6. 执行 `python3 tools/build.py --skip-ko`（`apt-get install llvm` 补 objcopy，
+   `pip install pillow` 供图标生成）产出完整安装包；
+7. 上传 `dist/chaos-installer-p67.bin` 作为 artifact。
 
 CI 运行上述主机测试，不打容器、不校验 `dist/` 可复现性——发布前请在本地跑一次完整构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
 
