@@ -1,6 +1,23 @@
 use super::*;
 use crate::mock;
 
+#[test]
+fn dimmer_keyboard_only_exposes_digits_and_edit_actions() {
+    let _lock = mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        mock::reset();
+        open(b"15\0".as_ptr(), Completion::DimmerTimeout);
+        let parent = fw_api::obj_create(0, 0);
+        assert!(render(parent));
+        let codes: Vec<u32> = mock::with(|ui| ui.objects.iter().filter_map(|o| o.code).collect());
+        assert_eq!(codes.len(), 13);
+        for c in b'0'..=b'9' { assert!(codes.contains(&(c as u32))); }
+        for c in [KEY_BACKSPACE, KEY_CLEAR, KEY_DONE] { assert!(codes.contains(&c)); }
+        assert!(!chinese_capable());
+        assert!(!symbols_enabled());
+    }
+}
+
 // 横滑键盘：parent -> viewport -> board(640 宽)。setup 返回 (parent, board)。
 // 中文页候选条固定在 parent 上（y=56），不在 viewport 里。
 unsafe fn setup(completion: Completion) -> (u32, u32) {

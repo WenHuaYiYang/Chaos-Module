@@ -134,6 +134,7 @@ pub(crate) enum Completion {
     DeviceModel,
     NshCommand,
     WebPassword,
+    DimmerTimeout,
 }
 
 static mut TEXT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
@@ -165,8 +166,9 @@ const SYMBOL_ROWS: [&[u8]; 4] = [b"!@#$%^&*()", b"_-+=[]{}\\|", b";:'\",.<>/?", 
 
 fn nsh_mode() -> bool { unsafe { COMPLETION == Completion::NshCommand as u32 } }
 fn password_mode() -> bool { unsafe { COMPLETION == Completion::WebPassword as u32 } }
+fn numeric_mode() -> bool { unsafe { COMPLETION == Completion::DimmerTimeout as u32 } }
 fn symbols_enabled() -> bool { nsh_mode() || password_mode() }
-fn chinese_capable() -> bool { !symbols_enabled() }
+fn chinese_capable() -> bool { !symbols_enabled() && !numeric_mode() }
 fn capacity() -> usize { if nsh_mode() { NSH_CAPACITY } else { CAPACITY } }
 /// 中文模式里 UPPERCASE 复用为「英文/数字页」开关；false 才是拼音输入页。
 fn pinyin_active() -> bool { unsafe { CHINESE && !UPPERCASE } }
@@ -419,6 +421,7 @@ unsafe fn save_nsh_draft() {
 
 pub(crate) unsafe fn title() -> &'static [u8] {
     match COMPLETION {
+        x if x == Completion::DimmerTimeout as u32 => "自动熄屏秒数\0".as_bytes(),
         x if x == Completion::NshCommand as u32 => "NSH命令输入\0".as_bytes(),
         x if x == Completion::WebPassword as u32 => "网页服务器密码\0".as_bytes(),
         x if x == Completion::SystemText as u32 => "自定义手环系统文本\0".as_bytes(),
@@ -672,6 +675,19 @@ pub(crate) unsafe fn render(parent: u32) -> bool {
     fw_api::obj_set_size_wh(INPUT_LABEL, 320, INPUT_HEIGHT);
     fw_api::obj_align(INPUT_LABEL, fw_api::align::TOP_LEFT, 8, INPUT_TOP);
 
+    if numeric_mode() {
+        let mut ok = true;
+        for i in 0..9 {
+            ok &= create_key(parent, b'1' as u32 + i, 8 + (i % 3) as i32 * 108,
+                64 + (i / 3) as i32 * 62, 104, 56, 0x303030);
+        }
+        for (code, x) in [(KEY_CLEAR, 8), (b'0' as u32, 116), (KEY_BACKSPACE, 224)] {
+            ok &= create_key(parent, code, x, 250, 104, 56, 0x303030);
+        }
+        ok &= create_key(parent, KEY_DONE, 8, 320, 320, 52, 0x007AFF);
+        return ok;
+    }
+
     let mut ok = true;
     let bar = pinyin_active();
     if bar {
@@ -794,6 +810,8 @@ unsafe extern "C" fn key_event(event: u32) {
         return;
     }
     let code = fw_api::event_user_data(event);
+    if numeric_mode() && !((b'0' as u32..=b'9' as u32).contains(&code)
+        || code == KEY_CLEAR || code == KEY_BACKSPACE || code == KEY_DONE) { return; }
     match code {
         KEY_SYMBOLS if symbols_enabled() => {
             SYMBOL_MODE = !SYMBOL_MODE;
@@ -873,6 +891,9 @@ unsafe extern "C" fn key_event(event: u32) {
                 return;
             }
             let saved = match COMPLETION {
+                x if x == Completion::DimmerTimeout as u32 => {
+                    crate::dimmer_timeout::save(core::ptr::addr_of!(TEXT) as *const u8)
+                }
                 x if x == Completion::SystemVersion as u32 => {
                     crate::system_version::save_custom(core::ptr::addr_of!(TEXT) as *const u8)
                 }
@@ -897,6 +918,8 @@ unsafe extern "C" fn key_event(event: u32) {
                 SUBMITTED = true;
                 if nsh_mode() { NSH_DRAFT[0] = 0; }
                 nav_back();
+            } else if numeric_mode() && safe_ptr(INPUT_LABEL) {
+                fw_api::label_set_text(INPUT_LABEL, "请输入1～2147483秒\0".as_ptr());
             } else if nsh_mode() && safe_ptr(INPUT_LABEL) {
                 // Keep the buffer unchanged; the next key restores the tail.
                 fw_api::label_set_text(INPUT_LABEL, "发送失败，请重试\0".as_ptr());

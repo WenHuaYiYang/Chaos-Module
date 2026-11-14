@@ -43,6 +43,12 @@ mod btpan {
         })
     }
 }
+mod dimmer_timeout {
+    pub unsafe fn save(text: *const u8) -> bool {
+        let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| { ui.saves.push((6, bytes)); ui.save_ok })
+    }
+}
 
 macro_rules! completion_mock {
     ($name:ident, $index:expr) => {
