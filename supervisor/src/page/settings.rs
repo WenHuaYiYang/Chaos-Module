@@ -33,16 +33,16 @@ unsafe fn log_only_emerg() {
 }
 
 static LOG_LEVEL_ROWS: &[RowModel] = &[
-    RowModel::toggle("紧急 EMERG（r）\0".as_bytes(), &LOG_EMERG),
-    RowModel::toggle("警报 ALERT（a）\0".as_bytes(), &LOG_ALERT),
-    RowModel::toggle("严重 CRITICAL（c）\0".as_bytes(), &LOG_CRIT),
-    RowModel::toggle("错误 ERROR（e）\0".as_bytes(), &LOG_ERROR),
-    RowModel::toggle("警告 WARNING（w）\0".as_bytes(), &LOG_WARN),
-    RowModel::toggle("通知 NOTICE（n）\0".as_bytes(), &LOG_NOTICE),
-    RowModel::toggle("信息 INFO（i）\0".as_bytes(), &LOG_INFO),
-    RowModel::toggle("调试 DEBUG（d）\0".as_bytes(), &LOG_DEBUG),
-    RowModel::action("一键改为仅EMERG\0".as_bytes(), log_only_emerg, 0, None),
-    RowModel::note("说明：防止系统狂写日志导致存储芯片受损（阻止米米的傲娇行为）\n支持多选，仅记录开启的等级，立即生效；重启后恢复系统默认。全部关闭时掩码为0。\n命令 setlogmask 会同时开启所选等级及更严重等级；本页按各等级独立选择。\0".as_bytes()),
+    RowModel::toggle(b"EMERG\0", &LOG_EMERG),
+    RowModel::toggle(b"ALERT\0", &LOG_ALERT),
+    RowModel::toggle(b"CRITICAL\0", &LOG_CRIT),
+    RowModel::toggle(b"ERROR\0", &LOG_ERROR),
+    RowModel::toggle(b"WARNING\0", &LOG_WARN),
+    RowModel::toggle(b"NOTICE\0", &LOG_NOTICE),
+    RowModel::toggle(b"INFO\0", &LOG_INFO),
+    RowModel::toggle(b"DEBUG\0", &LOG_DEBUG),
+    RowModel::action("仅开启EMERG\0".as_bytes(), log_only_emerg, 0, None),
+    RowModel::note("说明：防止系统狂写日志导致存储芯片受损（阻止米米的傲娇行为）\n支持多选，仅记录开启的等级，立即生效；重启后恢复系统默认。全部关闭时掩码为0。\n命令 setlogmask 会同时开启所选等级及更严重等级；本页按各等级独立选择。\n\nEMERG：紧急\nALERT：警报\nCRITICAL：严重\nERROR：错误\nWARNING：警告\nNOTICE：通知\nINFO：信息\nDEBUG：调试\0".as_bytes()),
 ];
 
 impl MenuSpec for LogLevelPage {
