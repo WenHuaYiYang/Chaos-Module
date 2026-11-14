@@ -49,6 +49,7 @@ def main():
         m.hooks[0xca6c65c]=lambda u:0 # native launch-mode state setup
         m.hooks[0xca6c678]=lambda u:0 # native post-launch notification
         m.hooks[0xca45c6c]=lambda u:animations.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        m.hooks[0xca69934]=lambda u:0 # no splash icon in the initial forwarding cases
         original_table=bytes(m.u.mem_read(0x2cde7d18,60))
         assert struct.unpack_from('<I',original_table,0x18)[0]==0xca6cc99
         # Actual interface holds a pointer to FLASH vtable, not an inline callback.
@@ -82,6 +83,48 @@ def main():
         m.put(0x20046000+0x18,0x0dff0001) # third-party hook must remain installed
         m.call(syms['test_toggle']);assert word(0x200eb688)==0x20046000
         m.call(syms['test_toggle']);assert word(0x200eb688)==0x20046000
+        # Cold launch: actual production cover code must animate before invoking the engine.
+        m.put(0x200eb688,0x2cde7d18)
+        m.put(0x20046000+0x2c8,0x20049000)
+        m.put(node+0xc,0x20048000);m.u.mem_write(0x20048000,b'/data/quickapp/icon.bin\0')
+        m.hooks[0xca69934]=lambda u:node
+        m.u.mem_map(0x0dfe0000,4096)
+        cover=0x20047000;icon_image=0x20047100
+        def create_object(u):
+            parent=u.reg_read(UC_ARM_REG_R0);object=cover if parent==0x20049000 else icon_image
+            m.put(object+4,parent);m.put(object+0x2c,0);return object
+        m.hooks[0x0dfe0000]=create_object
+        m.put(0x20050000,16);m.put(0x20050004,0)
+        m.call(syms['test_toggle'])
+        direct=word(word(0x200eb688)+0x18)
+        before=len(calls)
+        assert m.call(direct,0x123,0x20048000,0,0)==7
+        assert len(calls)==before+1 # deep-link arguments remain synchronous and unretained
+        before=len(calls);anim_before=len(animations)
+        launch(0x123)
+        assert len(calls)==before and animations[anim_before:]==[cover]
+        m.put(0x20050004,300);m.call(syms['test_tick'])
+        assert len(calls)==before # time alone cannot submit before first cover draw
+        ev=0x2004a000;m.put(ev,cover,cover,25,0,0,0,0)
+        m.call(word(0x20050010),ev)
+        m.call(syms['test_tick']);assert len(calls)==before+1 and calls[-1]==('show',0x123)
+        assert word(cover+4)==0x20049000 # opaque cover held across stock engine construction
+        m.put(0x20050000,0x29);m.put(0x20050008,0x2004b000)
+        m.put(0x2004b000+0x30,0x2004c000);m.put(root+4,0x2004c000)
+        m.put(root+0x10,0)
+        m.put(0x20050004,350);m.call(syms['test_tick']);assert word(cover+4)!=0
+        m.put(root+0x10,1)
+        for now in [400,450,500,550]:m.put(0x20050004,now);m.call(syms['test_tick'])
+        assert 0<word(cover+0x14)<255
+        m.put(0x20050004,700);m.call(syms['test_tick']);assert word(cover+4)==0
+        assert len(calls)==before+1 # cold launch submitted exactly once
+        m.call(syms['test_toggle'])
+        m.put(0x20050000,16);m.put(0x20050004,1000);m.call(syms['test_toggle'])
+        before=len(calls);launch(0x123)
+        m.put(0x20050004,3100);m.call(syms['test_tick'])
+        assert len(calls)==before+1 and word(cover+4)==0 # missing draw ack falls back to normal launch
+        m.call(syms['test_toggle'])
         print('PASS real launch request vtable dispatch, native constructor, cold/warm forwarding, animation builder, restore and foreign-hook rejection')
+        print('PASS cold launch: native cover animation -> first draw -> stock engine once -> content gate -> fade/remove')
         print('HOST ONLY: actual engine timing and visible cold launch require device testing')
 if __name__=='__main__':main()

@@ -17,6 +17,9 @@ static mut TABLE:[u32;TABLE_WORDS]=[0;TABLE_WORDS];
 static mut PENDING_ID:u32=0;
 static mut RETRIES:u8=0;
 static mut CONTEXT:[u32;14]=[0;14];
+static mut DEFERRED_ID:u32=0;
+static mut DESC_IN:[u32;2]=[0;2];
+static mut DESC_OUT:[u32;2]=[0;2];
 pub(crate) unsafe fn enabled()->bool {
     if !LOADED {LOADED=true;let fd=fw::open(CONFIG.as_ptr(),fw::oflag::RDONLY,0);
         if fd>=0 {let mut v=0;ENABLED=fw::read(fd,&mut v,1)==1&&v==1;fw::close(fd);}}
@@ -58,6 +61,7 @@ unsafe extern "C" fn foreground(app:u32){
     f(app);queue(record(id));
 }
 unsafe extern "C" fn show(id:u32,arg:u32,input:u32,output:u32)->u32{
+    if enabled()&&crate::quickapp_splash::owns(id){return 0;}
     if enabled()&&id>255 {
         let app=record(id);
         if app!=0&&(word(app,0x4c)==CREATE_STOCK||word(app,0x4c)==create as *const ()as u32) {
@@ -70,12 +74,21 @@ unsafe extern "C" fn show(id:u32,arg:u32,input:u32,output:u32)->u32{
             }
             if word(app,0x4c)==CREATE_STOCK {write_volatile((app+0x4c)as *mut u32,create as *const ()as u32);}
             if word(app,0x50)==FOREGROUND_STOCK {write_volatile((app+0x50)as *mut u32,foreground as *const ()as u32);}
+            // 原生桌面传入空启动参数；只延后我们能完整持有的描述符。
+            // 路径/深链接等未知参数仍按原始同步调用传递。
+            let valid_in=input==0||(safe_ptr(input)&&(word(input,0)==0||word(input,0)==0x0ca46249));
+            let valid_out=output==0||(safe_ptr(output)&&(word(output,0)==0||word(output,0)==0x0ca462d9)&&word(output,4)==0);
+            if arg==0&&valid_in&&valid_out&&crate::quickapp_splash::start(id,core::ptr::addr_of!(CONTEXT).cast()) {
+                DESC_IN=[0x0ca46249,core::ptr::addr_of!(CONTEXT)as u32];
+                DESC_OUT=[0x0ca462d9,0];DEFERRED_ID=id;
+                return 0;
+            }
         }
     }
     let f:unsafe extern "C" fn(u32,u32,u32,u32)->u32=transmute(SHOW_STOCK as usize);
     f(id,arg,input,output)
 }
-pub(crate) unsafe fn pending()->bool{ENABLED&&PENDING_ID!=0}
+pub(crate) unsafe fn pending()->bool{ENABLED&&(PENDING_ID!=0||crate::quickapp_splash::active())}
 unsafe fn install()->bool {
     let current=word(TABLE_SLOT,0);
     let ours=core::ptr::addr_of!(TABLE) as u32;
@@ -116,17 +129,39 @@ pub(crate) unsafe fn tick(){
     let on=enabled();let ours=core::ptr::addr_of!(TABLE) as u32;
     if on {let _=install();}
     if !on {
+        // 已接受的点击不能因用户关闭开关而丢失。
+        if DEFERRED_ID!=0{let id=DEFERRED_ID;DEFERRED_ID=0;
+            let f:unsafe extern "C" fn(u32,u32,u32,u32)->u32=transmute(SHOW_STOCK as usize);
+            f(id,0,DESC_IN.as_ptr()as u32,DESC_OUT.as_ptr()as u32);}
+        crate::quickapp_splash::cancel();
         if INSTALLED{restore_callbacks();}
         if INSTALLED&&word(TABLE_SLOT,0)==ours{write_volatile(TABLE_SLOT as *mut u32,ORIGINAL_TABLE);}
         INSTALLED=false;PENDING_ID=0;return;
     }
+    if DEFERRED_ID!=0 {
+        if crate::quickapp_splash::launch_ready(){
+            let id=DEFERRED_ID;DEFERRED_ID=0;
+            let f:unsafe extern "C" fn(u32,u32,u32,u32)->u32=transmute(SHOW_STOCK as usize);
+            f(id,0,DESC_IN.as_ptr()as u32,DESC_OUT.as_ptr()as u32);
+            PENDING_ID=id;RETRIES=200;
+        }else if !crate::quickapp_splash::active(){DEFERRED_ID=0;}
+    }
+    if crate::quickapp_splash::active(){
+        let id=crate::quickapp_splash::app();let app=record(id);
+        let proxy=if app!=0{word(app,4)}else{0};
+        let root=if safe_ptr(proxy){word(proxy,0x2c)}else{0};
+        crate::quickapp_splash::tick(id,root);
+        if crate::quickapp_splash::active(){return;}
+        PENDING_ID=0;
+    }
     if PENDING_ID==0{return;}
     if RETRIES==0{PENDING_ID=0;return;}RETRIES-=1;
-    if !fw::screen_is_on()||fw::top_app_id()!=PENDING_ID{return;}
+    if !fw::screen_is_on(){return;}
     let app=record(PENDING_ID);if app==0{PENDING_ID=0;return;}
     let proxy=word(app,4);if !safe_ptr(proxy){return;}
     let root=word(proxy,0x2c);
     if !safe_ptr(root)||word(root,0x2c)&1!=0{return;}
+    if !crate::quickapp_splash::front(root,PENDING_ID){return;}
     PENDING_ID=0;
     let animate:unsafe extern "C" fn(u32,u32,*const u32)=transmute(0x0ca46249usize);
     animate(root,0,core::ptr::addr_of!(CONTEXT).cast());
