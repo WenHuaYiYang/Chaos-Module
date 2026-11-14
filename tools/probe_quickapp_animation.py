@@ -51,12 +51,17 @@ def main():
         m.hooks[0xca6c65c]=lambda u:0 # native launch-mode state setup
         m.hooks[0xca6c678]=lambda u:0 # native post-launch notification
         m.hooks[0xca45c6c]=lambda u:animations.append(u.reg_read(UC_ARM_REG_R0)) or 0
-        exits=[]
+        exits=[];out_callbacks=[]
         def out_animation(u):
             assert (u.reg_read(UC_ARM_REG_R1),u.reg_read(UC_ARM_REG_R2),u.reg_read(UC_ARM_REG_R3))==(255,0,256)
             assert word(u.reg_read(UC_ARM_REG_SP))==204
             assert word(u.reg_read(UC_ARM_REG_SP)+4)==200
-            exits.append(u.reg_read(UC_ARM_REG_R0));return 0
+            source=u.reg_read(UC_ARM_REG_R0)
+            out_callbacks.append(word(u.reg_read(UC_ARM_REG_SP)+12))
+            assert out_callbacks[-1]!=0
+            # Native driver creates a sibling snapshot, then hides the source.
+            m.put(source+0x2c,word(source+0x2c)|1)
+            exits.append(source);return 0
         m.hooks[0xca45db0]=out_animation
         m.hooks[0xca69934]=lambda u:0 # no splash icon in the initial forwarding cases
         original_table=bytes(m.u.mem_read(0x2cde7d18,60))
@@ -150,26 +155,61 @@ def main():
         m.hooks[0xc587f38]=allocate;m.hooks[0xcac0878]=snapshot_root
         m.hooks[0xcac0db8]=lambda u:freed.append(u.reg_read(UC_ARM_REG_R0)) or 0
         m.hooks[0xc5890d0]=lambda u:cache_drops.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        def stock_hide(u):
+            # No HOME frame can be exposed before the next maintenance tick:
+            # the exact captured image is already covering the outgoing app.
+            assert word(cover+4)==0x20049000 and word(icon_image+0x18)==snapshot
+            assert not exits and word(cover+0x2c)&1==0
+            calls.append(('hide',u.reg_read(UC_ARM_REG_R0)));return 0
+        m.hooks[0xc5475f8]=stock_hide
         m.call(hide,app);assert captures==[root] and calls[-1]==('hide',app)
         m.call(destroy,app);assert len(captures)==1 and calls[-1]==('destroy',app)
         m.call(syms['test_tick']);assert not exits # No close animation over another foreground app.
         m.put(0x20050000,16);m.put(0x20050004,4100);m.call(syms['test_tick'])
         assert exits==[cover] and allocations==[(336,480,15)]
         assert word(cover+4)==0x20049000 and not freed
-        m.put(ev,cover,cover,25,0,0,0,0);m.call(word(0x20050010),ev)
-        m.put(0x20050004,4400);m.call(syms['test_tick']);assert word(cover+4)==0
+        m.put(0x20050004,4400);m.call(syms['test_tick'])
+        assert word(cover+4)!=0 and word(cover+0x2c)&1 # no guessed 240ms teardown
+        # Run the REAL native OUT completion aggregator for both animation tracks.
+        # It deletes its transition image before invoking our callback with lv_anim_t*.
+        a1=0x2004f000;a2=0x2004f060;shared=0x2004f100;helper=0x2004f200
+        cleaned=[];state_freed=[]
+        m.hooks[0xca455e4]=lambda u:cleaned.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        m.hooks[0xcac08d0]=lambda u:state_freed.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        m.put(shared,out_callbacks[-1],helper,2,0)
+        for a in (a1,a2):m.put(a,cover);m.put(a+0x1c,shared)
+        m.call(0xca45c21,a1);m.call(syms['test_tick']);assert word(cover+4)!=0 and not cleaned
+        m.call(0xca45c21,a2);assert cleaned==[cover] and state_freed==[shared]
+        m.call(syms['test_tick']);assert word(cover+4)==0
         m.put(0x2005001c,0);m.call(syms['test_tick']);assert not freed
         m.put(0x2005001c,1);m.call(syms['test_tick']);assert freed==[snapshot] and cache_drops==[snapshot]
         m.call(syms['test_close_toggle'])
         assert word(app+0x5c)==0xc5475f9 and word(app+0x64)==0xc54751d
-        # Busy renderer must avoid snapshot APIs but still forward close and allow icon fallback.
+        # If no faithful image is available, do not flash a black/icon fallback.
+        m.hooks[0xc5475f8]=lambda u:calls.append(('hide',u.reg_read(UC_ARM_REG_R0))) or 0
         m.call(syms['test_close_toggle']);m.put(0x20050000,16);launch(0x123)
         m.put(0x20050000,0x29);m.put(0x2005001c,0);m.call(word(app+0x5c),app)
         assert allocations==[(336,480,15)] and calls[-1]==('hide',app)
-        m.put(0x20050000,16);m.call(syms['test_tick']);assert exits==[cover,cover]
+        m.put(0x20050000,16);m.call(syms['test_tick']);assert exits==[cover] and word(cover+4)==0
         m.call(syms['test_close_toggle']);assert word(cover+4)==0 and freed==[snapshot]
+        # Synchronous HOME return starts OUT in the original callback's turn,
+        # and switching elsewhere cancels a prepared cover without playing it.
+        m.call(syms['test_close_toggle']);m.put(0x2005001c,1);launch(0x123)
+        m.put(0x20050000,0x29)
+        m.hooks[0xcac0878]=lambda u:captures.append(u.reg_read(UC_ARM_REG_R0)) or 1
+        def return_home(u):
+            assert word(cover+4)!=0 and word(cover+0x2c)&1==0
+            calls.append(('hide',u.reg_read(UC_ARM_REG_R0)));m.put(0x20050000,16);return 0
+        m.hooks[0xc5475f8]=return_home
+        m.call(word(app+0x5c),app);assert exits==[cover,cover] # no timer advance
+        m.call(syms['test_close_toggle']);m.call(syms['test_tick'])
+        m.call(syms['test_close_toggle']);launch(0x123);m.put(0x20050000,0x29)
+        def switch_other(u):m.put(0x20050000,32);return 0
+        m.hooks[0xc5475f8]=switch_other
+        m.call(word(app+0x5c),app);assert word(cover+4)==0 and exits==[cover,cover]
+        m.call(syms['test_close_toggle']);m.call(syms['test_tick'])
         print('PASS real launch request vtable dispatch, native constructor, cold/warm forwarding, animation builder, restore and foreign-hook rejection')
         print('PASS cold launch: native cover animation -> first draw -> stock engine once -> content gate -> fade/remove')
-        print('PASS independent close toggle, capture before hide/destroy, home-only native OUT and GPU-idle resource retirement')
+        print('PASS close: cover before stock hide, immediate HOME handoff, real dual-track completion, no icon flash, cancellation and GPU-idle retirement')
         print('HOST ONLY: actual engine timing and visible cold launch require device testing')
 if __name__=='__main__':main()

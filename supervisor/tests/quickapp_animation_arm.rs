@@ -37,7 +37,7 @@ mod fw_api {
     pub unsafe fn background_set_opa(_:u32,_:u32){}
     pub unsafe fn obj_add_event(_:u32,callback:u32,_:u32,_:u32)->u32{core::ptr::write_volatile(0x20050010 as *mut u32,callback);1}
     pub unsafe fn event_get_code(e:u32)->u32{core::ptr::read_volatile((e+8)as *const u32)}
-    pub unsafe fn background_image_set_source(_:u32,_:u32){}
+    pub unsafe fn background_image_set_source(o:u32,source:u32){core::ptr::write_volatile((o+0x18)as *mut u32,source);}
     pub unsafe fn obj_child_count(o:u32)->i32{core::ptr::read_volatile((o+0x10)as *const i32)}
     pub unsafe fn obj_invalidate(_:u32){}
     pub unsafe fn s541_frame_idle()->bool{core::ptr::read_volatile(0x2005001c as *const u32)!=0}

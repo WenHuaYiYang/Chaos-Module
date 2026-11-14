@@ -87,8 +87,8 @@ unsafe fn closing(app:u32){
     let id=rd16((app+0x16)as *const u16)as u32;
     crate::quickapp_exit::capture(id,word(proxy,0x2c),core::ptr::addr_of!(CONTEXT).cast());
 }
-unsafe extern "C" fn hide(app:u32){closing(app);let f:unsafe extern "C" fn(u32)=transmute(HIDE_STOCK as usize);f(app);}
-unsafe extern "C" fn destroy(app:u32){closing(app);let f:unsafe extern "C" fn(u32)=transmute(DESTROY_STOCK as usize);f(app);}
+unsafe extern "C" fn hide(app:u32){closing(app);let f:unsafe extern "C" fn(u32)=transmute(HIDE_STOCK as usize);f(app);crate::quickapp_exit::after_close();}
+unsafe extern "C" fn destroy(app:u32){closing(app);let f:unsafe extern "C" fn(u32)=transmute(DESTROY_STOCK as usize);f(app);crate::quickapp_exit::after_close();}
 unsafe extern "C" fn show(id:u32,arg:u32,input:u32,output:u32)->u32{
     if enabled()&&crate::quickapp_splash::owns(id){return 0;}
     if (enabled()||close_enabled())&&id>255 {
