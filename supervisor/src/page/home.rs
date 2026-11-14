@@ -10,6 +10,28 @@ use crate::page::kit::{menu_click, MenuSpec, RowModel};
 
 pub(crate) struct InfoPage;
 
+static mut CHARGE_TEXT: [u8; 80] = [0; 80];
+unsafe fn charge_text() -> *const u8 {
+    let p = core::ptr::addr_of_mut!(CHARGE_TEXT) as *mut u8;
+    let timestamp = fw_api::last_charge_timestamp();
+    let mut w = W::new(p, 80);
+    if timestamp > 0 {
+        if let Some((tm, now)) = fw_api::charge_time_local(timestamp as i64) {
+            fn two(w: &mut W, n: u32) { unsafe { if n < 10 { w.c(b'0'); } w.n(n); } }
+            w.n((tm[5] + 1900) as u32).c(b'-');
+            two(&mut w, (tm[4] + 1) as u32); w.c(b'-');
+            two(&mut w, tm[3] as u32); w.c(b' ');
+            two(&mut w, tm[2] as u32); w.c(b':'); two(&mut w, tm[1] as u32);
+            if now >= timestamp as i64 {
+                w.s("（".as_bytes()).n(((now - timestamp as i64) / 86400) as u32).s("天前）".as_bytes());
+            } else { w.s("（系统时间异常）".as_bytes()); }
+            w.end();
+            return p;
+        }
+    }
+    w.s("暂无记录".as_bytes()); w.end(); p
+}
+
 /// 菜单区行模型。槽位从 3 起: 0/1 留给数据行、2 是 CPU 行 —— tick 按槽号原地刷,
 /// 槽位布局不动, 只重排入口顺序与分组。
 static HOME_ROWS: &[RowModel] = &[
@@ -82,7 +104,10 @@ impl Page for InfoPage {
             write_volatile(hp.add(5), d1.bar);
             // 菜单区: 常用/工具/信息 三组(行链锚在内存数据行下面)
             let menu_anchor = if d1.row != 0 { d1.row } else { ctx.title };
-            frame::build(self, ctx, menu_anchor)?;
+            let charge = build_row(ctx, menu_anchor, 11,
+                &RowSpec::display("上次充电时间\0".as_bytes(), charge_text()));
+            if charge == 0 { return Err(PageError::RowFailed(11)); }
+            frame::build(self, ctx, charge)?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
             // 会和它打架(实测: 主页导航行 28px 观感正常, 但同一规则套到列表行就偏大)。
@@ -136,6 +161,13 @@ impl Page for InfoPage {
                 diff
             }
             let rows = page_rows_ptr(0);
+            if tk % 1200 == 0 {
+                let charge = read_volatile(rows.add(11));
+                if charge != 0 {
+                    fw_api::row_update(charge, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                        charge_text(), 0, 0);
+                }
+            }
             let upd: unsafe extern "C" fn(u32, *const u8, *const u8, *const u8, i32, u8) -> i32 =
                 fw_api::row_update;
             // 行2(CPU): 数值只写值标签, 不走 row_update。row_update 每次都会把

@@ -533,3 +533,22 @@ pub unsafe fn system_log_mask_set(mask: u8) {
     let f: unsafe extern "C" fn(u32) -> u32 = core::mem::transmute(0x0C1F0CE1usize);
     f(mask as u32);
 }
+
+/// p67 3.101.043 的 property_get_int32；充电事件 0x0C5D887E 取得
+/// CLOCK_REALTIME 秒数后经 0x0C3DAF80 写入 persist.charge_timestamp。
+pub unsafe fn last_charge_timestamp() -> i32 {
+    let get: unsafe extern "C" fn(*const u8, i32) -> i32 =
+        transmute(0x0C3DAFE1usize);
+    get(b"persist.charge_timestamp\0".as_ptr(), 0)
+}
+
+pub unsafe fn charge_time_local(timestamp: i64) -> Option<([i32; 11], i64)> {
+    let mut now = [0u64; 2];
+    let clock: unsafe extern "C" fn(u32, *mut u64) -> i32 = transmute(0x0C201FE1usize);
+    if clock(0, now.as_mut_ptr()) != 0 { return None; }
+    let mut tm = [0i32; 11];
+    let local: unsafe extern "C" fn(*const i64, *mut i32) -> *mut i32 =
+        transmute(0x0C1F49ADusize);
+    if local(&timestamp, tm.as_mut_ptr()).is_null() { return None; }
+    Some((tm, now[0] as i64))
+}
