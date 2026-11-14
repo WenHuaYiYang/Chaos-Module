@@ -33,8 +33,10 @@ def main():
         assert word(app+0x4c)==0xc547699 and word(app+0x50)==0xc547765
         m.put(app+4,proxy);m.put(proxy+0x2c,root);m.put(root+0x2c,0)
         m.put(0x200eb640,head);m.put(0x200eb658,vt);m.put(vt+0x4c,0x0dff0001)
+        m.put(vt+8,0x0dff0005)
         m.put(head+4,node);m.put(node+4,head);m.u.mem_write(node+0x10,struct.pack('<H',0x123))
         m.hooks[0x0dff0000]=lambda u:app if u.reg_read(UC_ARM_REG_R0)==0x123 else 0
+        m.hooks[0x0dff0004]=lambda u:0 # registry startup-domain lookup seam
         m.u.mem_map(0x0dff0000,4096)
         calls=[];animations=[]
         m.hooks[0xca6cc98]=lambda u:calls.append(('show',u.reg_read(UC_ARM_REG_R0))) or 7
@@ -44,12 +46,27 @@ def main():
         def memset(u):
             dst=u.reg_read(UC_ARM_REG_R0);m.u.mem_write(dst,bytes([u.reg_read(UC_ARM_REG_R1)&255])*u.reg_read(UC_ARM_REG_R2));return dst
         m.hooks[0xcac0c40]=memset
+        m.hooks[0xca6c65c]=lambda u:0 # native launch-mode state setup
+        m.hooks[0xca6c678]=lambda u:0 # native post-launch notification
         m.hooks[0xca45c6c]=lambda u:animations.append(u.reg_read(UC_ARM_REG_R0)) or 0
-        m.put(0x200eb6f8,0xca6cc99);m.call(syms['test_toggle'])
-        hook=word(0x200eb6f8);assert hook!=0xca6cc99
-        assert m.call(hook,0x10,0,0,0)==7
+        original_table=bytes(m.u.mem_read(0x2cde7d18,60))
+        assert struct.unpack_from('<I',original_table,0x18)[0]==0xca6cc99
+        # Actual interface holds a pointer to FLASH vtable, not an inline callback.
+        m.put(0x200eb688,0x2cde7d18);m.put(0x200eb6f8,0xdeadbeef)
+        m.call(syms['test_toggle'])
+        table=word(0x200eb688);assert table!=0x2cde7d18
+        hook=word(table+0x18);assert hook!=0xca6cc99
+        assert word(0x200eb6f8)==0xdeadbeef
+        for offset in range(0,60,4):
+            if offset!=0x18:assert word(table+offset)==word(0x2cde7d18+offset)
+        request=0x20045000
+        def launch(app_id):
+            m.u.mem_write(request,bytes(44));m.u.mem_write(request+6,struct.pack('<H',app_id))
+            # Execute the REAL launch request -> interface+4 -> vtable+0x18 chain.
+            assert m.call(0xca6d4b5,request)==1
+        launch(0x10)
         assert word(app+0x4c)==0xc547699 and word(app+0x50)==0xc547765
-        assert m.call(hook,0x123,0,0,0)==7
+        launch(0x123)
         create=word(app+0x4c);show=word(app+0x50)
         assert create!=0xc547699 and show!=0xc547765
         m.call(create,app,0,0);m.put(0x20050000,0x123);m.call(syms['test_tick']);assert animations==[root]
@@ -57,12 +74,14 @@ def main():
         m.call(syms['test_tick']);assert len(animations)==2
         m.call(show,app);m.put(root+0x2c,1);m.call(syms['test_tick']);assert len(animations)==2
         m.put(root+0x2c,0);m.call(syms['test_tick']);assert len(animations)==3
-        m.call(syms['test_toggle']);assert word(0x200eb6f8)==0xca6cc99
+        m.call(syms['test_toggle']);assert word(0x200eb688)==0x2cde7d18
+        assert bytes(m.u.mem_read(0x2cde7d18,60))==original_table
         assert word(app+0x4c)==0xc547699 and word(app+0x50)==0xc547765
         assert [c[0] for c in calls]==['show','show','create','foreground','foreground']
-        m.put(0x200eb6f8,0x0dff0001)
-        m.call(syms['test_toggle']);assert word(0x200eb6f8)==0x0dff0001
-        m.call(syms['test_toggle']);assert word(0x200eb6f8)==0x0dff0001
-        print('PASS native constructor, production launch hook, cold/warm callback forwarding, native animation builder, once-only and restore')
+        m.put(0x200eb688,0x20046000);m.u.mem_write(0x20046000,original_table)
+        m.put(0x20046000+0x18,0x0dff0001) # third-party hook must remain installed
+        m.call(syms['test_toggle']);assert word(0x200eb688)==0x20046000
+        m.call(syms['test_toggle']);assert word(0x200eb688)==0x20046000
+        print('PASS real launch request vtable dispatch, native constructor, cold/warm forwarding, animation builder, restore and foreign-hook rejection')
         print('HOST ONLY: actual engine timing and visible cold launch require device testing')
 if __name__=='__main__':main()

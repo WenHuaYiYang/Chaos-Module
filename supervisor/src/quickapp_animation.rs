@@ -2,13 +2,18 @@
 use crate::{fw_api as fw, mem::{rd16,rd32,safe_ptr}};
 use core::{mem::transmute,ptr::write_volatile};
 const CONFIG:&[u8]=b"/data/chaos/quickapp-animation.cfg\0";
-const SHOW_SLOT:u32=0x200eb6f8;
+// 0x0CA6D518读取接口+4的vtable，再从表+0x18取show_app。
+const TABLE_SLOT:u32=0x200eb688;
+const STOCK_TABLE:u32=0x2cde7d18;
+const TABLE_WORDS:usize=15;
 const SHOW_STOCK:u32=0x0ca6cc99;
 const CREATE_STOCK:u32=0x0c547699;
 const FOREGROUND_STOCK:u32=0x0c547765;
 static mut LOADED:bool=false;
 static mut ENABLED:bool=false;
 static mut INSTALLED:bool=false;
+static mut ORIGINAL_TABLE:u32=0;
+static mut TABLE:[u32;TABLE_WORDS]=[0;TABLE_WORDS];
 static mut PENDING_ID:u32=0;
 static mut RETRIES:u8=0;
 static mut CONTEXT:[u32;14]=[0;14];
@@ -25,7 +30,9 @@ pub(crate) unsafe fn toggle(){
 }
 pub(crate) unsafe fn status()->*const u8 {
     if !enabled(){return "已关闭\0".as_ptr();}
-    if INSTALLED{"已开启\0".as_ptr()}else{"固件入口未匹配\0".as_ptr()}
+    if INSTALLED&&word(TABLE_SLOT,0)==core::ptr::addr_of!(TABLE)as u32{
+        "已开启\0".as_ptr()
+    }else{"固件入口未匹配\0".as_ptr()}
 }
 unsafe fn word(p:u32,off:u32)->u32{rd32((p+off)as *const u32)}
 unsafe fn record(id:u32)->u32{
@@ -69,6 +76,25 @@ unsafe extern "C" fn show(id:u32,arg:u32,input:u32,output:u32)->u32{
     f(id,arg,input,output)
 }
 pub(crate) unsafe fn pending()->bool{ENABLED&&PENDING_ID!=0}
+unsafe fn install()->bool {
+    let current=word(TABLE_SLOT,0);
+    let ours=core::ptr::addr_of!(TABLE) as u32;
+    if INSTALLED {return current==ours;}
+    if current&3!=0||!crate::mem::plausible_ptr(current){return false;}
+    // Flash表或兼容RAM表均需逐项匹配，不能丢弃其他模块的回调。
+    for i in 0..TABLE_WORDS {
+        let original=word(STOCK_TABLE,i as u32*4);
+        if word(current,i as u32*4)!=original{return false;}
+        TABLE[i]=original;
+    }
+    if TABLE[6]!=SHOW_STOCK{return false;}
+    TABLE[6]=show as *const () as u32;
+    ORIGINAL_TABLE=current;
+    core::arch::asm!("dmb",options(nostack,preserves_flags));
+    write_volatile(TABLE_SLOT as *mut u32,ours);
+    INSTALLED=word(TABLE_SLOT,0)==ours;
+    INSTALLED
+}
 unsafe fn restore_callbacks(){
     // 仅枚举当前注册表，不持有已删除应用的旧实例指针。
     let head=word(fw::APP_REGISTRY,0);if !safe_ptr(head){return;}
@@ -87,11 +113,11 @@ unsafe fn restore_callbacks(){
     }
 }
 pub(crate) unsafe fn tick(){
-    let on=enabled();let ours=show as *const ()as u32;
-    if on&&!INSTALLED&&word(SHOW_SLOT,0)==SHOW_STOCK {write_volatile(SHOW_SLOT as *mut u32,ours);INSTALLED=true;}
+    let on=enabled();let ours=core::ptr::addr_of!(TABLE) as u32;
+    if on {let _=install();}
     if !on {
         if INSTALLED{restore_callbacks();}
-        if INSTALLED&&word(SHOW_SLOT,0)==ours{write_volatile(SHOW_SLOT as *mut u32,SHOW_STOCK);}
+        if INSTALLED&&word(TABLE_SLOT,0)==ours{write_volatile(TABLE_SLOT as *mut u32,ORIGINAL_TABLE);}
         INSTALLED=false;PENDING_ID=0;return;
     }
     if PENDING_ID==0{return;}
