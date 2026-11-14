@@ -147,14 +147,15 @@ fn settings_pages_expose_both_formats_and_independent_storage_choices() {
     ui(|u| {
         assert_eq!(u.rows[0].1, "GIF · 15 fps"); assert_eq!(u.rows[1].1, "APNG · 60 fps");
         assert!(u.selected[&0] && u.selected[&3]);
-        assert_eq!(u.events, [(101, 1000, 7), (102, 1001, 7), (103, 1002, 7), (104, 1003, 7)]);
+        // 单选圈由 kit/checklist 统一补挂: 回调恒为 row_cb(), 行号走 user_data。
+        assert_eq!(u.events, [(101, 2000, 7), (102, 2000, 7), (103, 2000, 7), (104, 2000, 7)]);
     });
     PAGE_RECORDSET.on_click(1); PAGE_RECORDSET.on_click(2); PAGE_SHOTSET.on_click(0);
     assert_eq!(capture_settings::get(), Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::Media });
     PAGE_SHOTSET.on_click(1); capture_settings::reset_for_test();
     assert_eq!(capture_settings::get(), Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog });
     ui(|u| *u = Default::default()); PAGE_SHOTSET.render(&ctx).unwrap();
-    ui(|u| assert_eq!(u.events, [(101, 1000, 7), (102, 1001, 7)]));
+    ui(|u| assert_eq!(u.events, [(101, 2000, 7), (102, 2000, 7)]));
     PAGE_CAPTURE.on_click(4); PAGE_CAPTURE.on_click(5); ui(|u| assert_eq!(u.navigations, [41, 42])); check_clean();
 }
 
