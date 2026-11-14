@@ -139,9 +139,7 @@ impl Page for AppListPage {
 //
 // 背景档位与状态文案都在 background_home(0 关 / 1 复用静态背景 / 3 完全透明),
 // 这里只建行与派发点击。返回固定走行 11 —— 与"更换字体""桌面图标"两页同一套。
-// 旧版静态背景/实时截取设置移到页7，主页面保留系统背景、模糊v2、
-// 旧版选项和模糊区域。corona模糊那一行（行1）已按要求注释停用，行号留空位。
-// 行号固定为 0=系统 / (1=corona 停用) / 2=v2 / 3=状态 / 4=旧版 / 5=区域 / 11=返回。
+// 两种算法供对照：Corona原滤波和SysPatch IIR(V2)，四区适配暂时共用。
 pub(crate) struct BlurPage;
 
 pub(crate) const BLUR_LEGACY_PID: u32 = 7;
@@ -163,17 +161,27 @@ unsafe fn blur_bg_refresh(slot: usize) {
     }
 }
 unsafe fn blur_v2_get() -> bool { crate::corona_blur::v2_enabled() }
-unsafe fn blur_v2_toggle() { crate::corona_blur::set_v2_enabled(!crate::corona_blur::v2_enabled()); }
+unsafe fn blur_corona_get() -> bool { crate::corona_blur::enabled() }
+unsafe fn blur_choices_refresh() {
+    let pid = st_rd!(FG_PAGE) as usize;
+    if pid != Pid::Blur as usize { return; }
+    for (slot, on) in [(1, crate::corona_blur::enabled()), (2, crate::corona_blur::v2_enabled())] {
+        let row = read_volatile(page_rows_ptr(pid).add(slot));
+        if row != 0 { fw_api::row_update(row, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, on as u8); }
+    }
+    blur_bg_refresh(0);
+}
+unsafe fn blur_corona_toggle() { crate::corona_blur::toggle_corona(); blur_choices_refresh(); }
+static BLUR_CORONA_DEF: ToggleDef = ToggleDef { get: blur_corona_get, toggle: blur_corona_toggle, status: None };
+unsafe fn blur_v2_toggle() { crate::corona_blur::toggle_v2(); blur_choices_refresh(); }
 unsafe fn blur_status_ptr() -> *const u8 { crate::background_home::status().as_ptr() }
 static BLUR_V2_DEF: ToggleDef = ToggleDef { get: blur_v2_get, toggle: blur_v2_toggle, status: None };
 
 /// 页4 行模型(菜单骨架; 返回靠标题栏返回键):
-///   0 系统背景勾选(点一下切回官方背景并关两开关) / 1 模糊v2 / 2 状态行 /
-///   3 旧版选项 / 4 模糊区域 / corona 长说明。
-/// (corona模糊那一行已按要求停用: 引擎没删, v2 是同一套引擎, 旧配置若还是 1,
-///  点一下"系统背景"即可关掉它。)
+///   0 系统背景 / 1 Corona / 2 V2 / 3 状态 / 4 旧版 / 5 区域。
 static BLUR_ROWS: &[RowModel] = &[
     RowModel::action("系统背景\0".as_bytes(), blur_bg_off, fw_api::trailing::CHECKBOX, Some(blur_bg_refresh)),
+    RowModel::toggle("Corona模糊\0".as_bytes(), &BLUR_CORONA_DEF),
     RowModel::toggle("模糊v2\0".as_bytes(), &BLUR_V2_DEF),
     RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(blur_status_ptr),
                kind: RowKind::Display, trailing: 0, refresh: None },
@@ -231,7 +239,7 @@ static LEGACY_STATUS_ROWS: &[RowModel] = &[
     RowModel::toggle("完全透明背景（实验性）\0".as_bytes(), &LEGACY_CLEAR_DEF),
     RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(blur_status_ptr),
                kind: RowKind::Display, trailing: 0, refresh: None },
-    RowModel::display("关闭 corona模糊后生效\0".as_bytes()),
+    RowModel::display("关闭两种模糊后生效\0".as_bytes()),
 ];
 
 unsafe fn legacy_generate() { crate::background_home::generate(); }
@@ -437,7 +445,7 @@ unsafe fn zone3_toggle() {
 static ZONE3_DEF: ToggleDef = ToggleDef { get: zone3_get, toggle: zone3_toggle, status: None };
 
 static ZONE_ROWS: &[RowModel] = &[
-    RowModel { label: "适用于 Corona 模糊\0".as_bytes(), sub: RowSub::Static("包括通知图标去黑底\0".as_bytes()),
+    RowModel { label: "适用于两种模糊\0".as_bytes(), sub: RowSub::Static("包括通知图标去黑底\0".as_bytes()),
                kind: RowKind::Display, trailing: 0, refresh: None },
     RowModel::toggle("启动器\0".as_bytes(), &ZONE0_DEF),
     RowModel::toggle("控制中心\0".as_bytes(), &ZONE1_DEF),

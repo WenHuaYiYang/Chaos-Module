@@ -10,6 +10,8 @@ use std::process::Command;
 
 const CORONA: &str = "/data/chaos/corona_blur.cfg";
 const V2: &str = "/data/chaos/blur_v2.cfg";
+#[no_mangle]
+pub extern "C" fn chaos_blur_select_algorithm(_:u32)->i32 {0}
 
 #[path = "../src/corona_blur.rs"]
 mod corona_blur;
@@ -332,7 +334,7 @@ fn main() {
                 assert!(!corona_blur::backgrounds_pending()); assert!(!corona_blur::backgrounds_idle());
                 with(|s| { s.pending = 3; s.idle = 1; });
                 assert!(corona_blur::backgrounds_pending()); assert!(corona_blur::backgrounds_idle());
-                with(|s| { assert_eq!(s.polls, 1); assert!(s.opens.is_empty()); assert_eq!(s.remounts, 0); });
+                with(|s| { assert_eq!(s.polls, 1); assert_eq!(s.opens, [(V2.to_owned(),fw_api::oflag::RDONLY)]); assert_eq!(s.remounts, 0); });
             }
             _ => panic!("unknown scenario: {case}"),
         }

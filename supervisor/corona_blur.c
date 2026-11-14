@@ -5,11 +5,14 @@
  *
  * Adapted for Chaos on 2026-11-03. The six upstream p67 implementations are
  * included verbatim, including all four draw/scroll/delete hooks and the
- * control-center battery/edit-container handling. Only the host services and
- * the Rust ABI below are Chaos code. Exact target: p67 / 3.101.043.
+ * control-center battery/edit-container handling. Host integration also routes
+ * the filter call to SysPatch IIR when V2 is selected; vendor files stay intact.
+ * Exact target: p67 / 3.101.043.
  */
 #include <stdint.h>
 #include <stddef.h>
+#include "syspatch_blur/chaos_filter.h"
+#define rh_blur_filter_rgb565 chaos_blur_filter
 
 #define RH_TARGET_1043 1
 #include "corona_vendor/include/resource_hook_target.h"
@@ -154,6 +157,16 @@ int chaos_corona_backgrounds_idle(void) {
     return 1;
 }
 
+int chaos_blur_select_algorithm(unsigned v2) {
+    v2=!!v2;
+    if (chaos_v2_algorithm==v2) return 0;
+    if (!chaos_corona_backgrounds_idle()) return -2145;
+    chaos_v2_algorithm=v2;
+    p67_blur_drop();
+    p67_blur_reset();
+    return 0;
+}
+
 /* Local launcher glass needs only renderer quiescence, not a Corona region
  * configuration or panel ownership. Reuse the audited balanced GPU fence. */
 uint32_t chaos_s541_frame_idle(void) {
@@ -287,6 +300,7 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     unsigned i, surfaces = 0;
     if (!out || capacity < 2u) return 0u;
     chaos_text_kv(&w, "enabled", chaos_corona_enabled);
+    chaos_text_kv(&w, "algorithm", chaos_v2_algorithm);
     chaos_text_kv(&w, "owned", chaos_corona_backgrounds_owned());
     chaos_text_kv(&w, "owner", p67_owner);
     chaos_text_kv(&w, "draw", p67_draw_owner == load32(P67_ROOT_SLOT) ? 1u : 0u);

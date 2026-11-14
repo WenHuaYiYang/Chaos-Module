@@ -11,6 +11,7 @@ const CONFIG: &[u8] = b"/data/chaos/corona_blur.cfg\0";
 const V2_CONFIG: &[u8] = b"/data/chaos/blur_v2.cfg\0";
 
 extern "C" {
+    fn chaos_blur_select_algorithm(v2: u32) -> i32;
     fn chaos_corona_backgrounds_commit(enabled: u32, region_mask: u32) -> i32;
     fn chaos_corona_backgrounds_poll();
     fn chaos_corona_backgrounds_pending() -> u32;
@@ -100,10 +101,21 @@ pub(crate) unsafe fn set_v2_enabled(on: bool) {
     if changed { crate::background_home::remount(); }
 }
 
-/// Either switch owns the same Corona p67 background engine. The v2 switch
-/// additionally enables the legacy notification-image replacement hook.
+/// Both algorithms temporarily share the audited p67 lifecycle. V2 uses the
+/// SysPatch IIR filter and retains notification-image transparency handling.
 pub(crate) unsafe fn active() -> bool {
     enabled() || v2_enabled()
+}
+
+pub(crate) unsafe fn toggle_corona() {
+    let on = !enabled();
+    if on { set_v2_enabled(false); }
+    set_enabled(on);
+}
+pub(crate) unsafe fn toggle_v2() {
+    let on = !v2_enabled();
+    if on { set_enabled(false); }
+    set_v2_enabled(on);
 }
 
 /// Commit Corona's background configuration using the shared region mask:
@@ -113,10 +125,13 @@ pub(crate) unsafe fn active() -> bool {
 /// a non-zero return means it is still busy with a native scroll/delete and
 /// must be retried on a later UI-owner tick.
 pub(crate) unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 {
+    let rc = chaos_blur_select_algorithm(v2_enabled() as u32);
+    if rc != 0 { return rc; }
     chaos_corona_backgrounds_commit(enabled as u32, region_mask & 0x0F)
 }
 
 pub(crate) unsafe fn backgrounds_poll() {
+    let _ = chaos_blur_select_algorithm(v2_enabled() as u32);
     chaos_corona_backgrounds_poll();
 }
 
