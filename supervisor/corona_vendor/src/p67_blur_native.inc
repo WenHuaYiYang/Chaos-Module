@@ -246,6 +246,9 @@ static int p67_blur_native_copy(uint16_t *plane, uint32_t *identity) {
     p67_blur_native_clean();
     p67_blur_native_invalidate(P67_U32(descriptor + 16u), (uint32_t)view.size);
     if (!p67_blur_downsample_bgr888(&view, plane, P67_BLUR_PIXELS)) { p67_blur_native_error=12; goto done; }
+#ifdef CHAOS_BLUR_V2_COLOR
+    if(chaos_v2_algorithm) chaos_v2_snapshot(view.pixels,(unsigned)view.stride);
+#endif
     p67_blur_native_nonzero=0;
     for (unsigned i=0;i<P67_BLUR_PIXELS;++i) p67_blur_native_nonzero += plane[i] != 0;
     if (root != p67_blur_native_watchface()) { p67_blur_native_error=10; goto done; }
@@ -300,15 +303,26 @@ static uintptr_t p67_blur_native_publish(const uint16_t *plane, uint32_t epoch) 
         out = &p67_blur_native_outputs[i]; break;
     }
     if (!out) { p67_blur_native_error=13; return 0; }
+    unsigned width=P67_BLUR_WIDTH,height=P67_BLUR_HEIGHT,format=18u;
+#ifdef CHAOS_BLUR_V2_COLOR
+    if(chaos_v2_algorithm){width=336u;height=480u;format=15u;}
+#endif
     descriptor = ((uint32_t (*)(uint32_t, uint32_t, uint32_t, uint32_t))(uintptr_t)
-        P67_NATIVE(0x0c587f39u))(P67_BLUR_WIDTH, P67_BLUR_HEIGHT, 18u, 0u);
+        P67_NATIVE(0x0c587f39u))(width,height,format,0u);
     if (!descriptor) { p67_blur_native_error=14; return 0; }
     ++p67_blur_native_output_allocs;
     out->descriptor = descriptor; out->retired = 0;
-    if (!p67_blur_native_output_descriptor(descriptor, &view)) {
+    if (!(format==18u?p67_blur_native_output_descriptor(descriptor, &view):
+            p67_blur_native_descriptor_for(descriptor,format,width,height,&view))) {
         p67_blur_native_error=15; out->retired=1; return 0;
     }
-    if (!p67_blur_store_rgb565(plane, (void *)(uintptr_t)view.pixels, view.stride, view.size)) {
+    int stored;
+#ifdef CHAOS_BLUR_V2_COLOR
+    if(chaos_v2_algorithm) stored=chaos_v2_store_full((void *)(uintptr_t)view.pixels,(unsigned)view.stride,(unsigned)view.size);
+    else
+#endif
+    stored=p67_blur_store_rgb565(plane, (void *)(uintptr_t)view.pixels, view.stride, view.size);
+    if (!stored) {
         p67_blur_native_error=16; out->retired=1; return 0;
     }
     p67_blur_native_clean();

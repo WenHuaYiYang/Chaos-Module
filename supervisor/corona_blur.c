@@ -6,12 +6,14 @@
  * Adapted for Chaos on 2026-11-03. The six upstream p67 implementations are
  * included verbatim, including all four draw/scroll/delete hooks and the
  * control-center battery/edit-container handling. Host integration also routes
- * the filter call to SysPatch IIR when V2 is selected; vendor files stay intact.
+ * the filter call to SysPatch IIR when V2 is selected. Two provider/draw files
+ * have gated V2 8-bit color/full-resolution output extensions.
  * Exact target: p67 / 3.101.043.
  */
 #include <stdint.h>
 #include <stddef.h>
 #include "syspatch_blur/chaos_filter.h"
+#define CHAOS_BLUR_V2_COLOR 1
 #define rh_blur_filter_rgb565 chaos_blur_filter
 
 #define RH_TARGET_1043 1

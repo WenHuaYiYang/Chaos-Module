@@ -70,10 +70,17 @@ static void p67_draw_background(uint32_t layer, const char *path, const int32_t 
     if (!source) return;
     if (rh_background_is_blur(path)) {
         uint32_t descriptor[28];
-        const int32_t source_area[4] = {0, 0, P67_BLUR_WIDTH - 1u, P67_BLUR_HEIGHT - 1u};
+        int32_t source_area[4] = {0, 0, P67_BLUR_WIDTH - 1u, P67_BLUR_HEIGHT - 1u};
         ((void (*)(void *))(uintptr_t)P67_NATIVE(0x0c5882b9u))(descriptor);
         descriptor[7] = source;
         descriptor[12] = descriptor[13] = 4u * 256u;
+#ifdef CHAOS_BLUR_V2_COLOR
+        /* Select by immutable source header, including during algorithm changes. */
+        if(P67_U32(source+4u)==(336u|(480u<<16)) && ((P67_U32(source)>>8)&255u)==15u) {
+            descriptor[12]=descriptor[13]=256u;
+            source_area[2]=335;source_area[3]=479;
+        }
+#endif
         descriptor[16] = descriptor[17] = 0;
         p67_blur_draw_seen();
         ((void (*)(uint32_t, const void *, const int32_t *))(uintptr_t)

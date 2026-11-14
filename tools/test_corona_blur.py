@@ -35,6 +35,10 @@ HARNESSES = (
     "p67_blur_harness.c", "p67_blur_provider_harness.c",
     "p67_battery_harness.c", "test_p67_battery_pixels.c",
 )
+ADAPTED = {
+    'src/p67_blur_native.inc': '57118c0874dc4773185a77902f02e2ff1d886c62ff52b58d3e992e644329c031',
+    'src/p67_launcher.inc': '34b660d317cbc63c9e910976209d39873b1be96a3f3b227eec19d2fc9a5a40a9',
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -50,7 +54,8 @@ def verify_sources(upstream: Path | None) -> None:
         if upstream:
             expected = upstream / relative
             require(expected.is_file(), f"missing upstream file: {expected}")
-            require(relative == "tests/p67_launcher_harness.c" or actual.read_bytes() == expected.read_bytes(),
+            require((relative in ADAPTED and hashlib.sha256(expected.read_bytes()).hexdigest()==ADAPTED[relative])
+                    or relative == "tests/p67_launcher_harness.c" or actual.read_bytes() == expected.read_bytes(),
                     f"vendored file differs from Corona: {relative}")
     pinned = {}
     for line in (TESTS / "upstream.sha256").read_text().splitlines():
@@ -63,7 +68,7 @@ def verify_sources(upstream: Path | None) -> None:
     for relative, digest in pinned.items():
         require(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == digest,
                 f"pinned upstream checksum mismatch: {relative}")
-    print(f"verbatim provenance: {len(entries)} files OK", flush=True)
+    print(f"pinned provenance: {len(entries)} files OK (two adapters have gated V2 color extensions)", flush=True)
 
 
 def rust_function(source: str, name: str) -> str:
