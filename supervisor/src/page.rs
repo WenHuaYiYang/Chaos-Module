@@ -104,8 +104,8 @@ impl<'a> RowSpec<'a> {
 pub(crate) const ROW_SUB_LB: u32 = 0x40;
 
 /// 按 RowSpec 建一行 + 挂事件 + 对齐。返回行句柄, 0=失败。
-/// 重要: slot 必须在 MAX_ROWS_PER_PAGE(=12) 之内 —— ctx.rows 只有 12 个元素,
-/// 越界写会破坏相邻静态量, 实测表现为 slot 用到 12/13/14 时点任意一行都崩。
+/// 重要: slot 必须在 MAX_ROWS_PER_PAGE 之内，ctx.rows 按同一常量分配。
+/// 越界写会破坏相邻静态量，因此创建前必须检查上界。
 pub(crate) unsafe fn build_row(ctx: &PageCtx, prev: u32, slot: usize, spec: &RowSpec) -> u32 {
     if slot >= fw_api::MAX_ROWS_PER_PAGE { return 0; }
     let r = fw_api::row_create(ctx.content, spec.text.as_ptr(), spec.sub, spec.trailing);

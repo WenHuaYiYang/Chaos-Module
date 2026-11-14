@@ -523,3 +523,13 @@ pub unsafe fn quickapp_resync_missing() -> (u32, u32) {
     }
     (total, rebuilt)
 }
+/// p67 3.101.043: setlogmask 命令 0x0C6EE840 调用的全局掩码 setter。
+/// 0x0C1F0CE0 读写 0x200C8958 的单字节掩码并返回旧值，位0..7对应 EMERG..DEBUG。
+pub unsafe fn system_log_mask() -> u8 {
+    core::ptr::read_volatile(0x200C8958 as *const u8)
+}
+
+pub unsafe fn system_log_mask_set(mask: u8) {
+    let f: unsafe extern "C" fn(u32) -> u32 = core::mem::transmute(0x0C1F0CE1usize);
+    f(mask as u32);
+}

@@ -70,6 +70,7 @@ pub(crate) enum Pid {
     RecordSet = 41,
     ShotSet = 42,
     AppIcon = 43,
+    LogLevel = 44,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -158,4 +159,5 @@ pages! {
     RecordSet  = 41, PAGE_RECORDSET, capture::PAGE_RECORDSET;
     ShotSet    = 42, PAGE_SHOTSET,  capture::PAGE_SHOTSET;
     AppIcon    = 43, PAGE_APP_ICON, app_icon::PAGE_APP_ICON;
+    LogLevel   = 44, PAGE_LOG_LEVEL, settings::PAGE_LOG_LEVEL;
 }

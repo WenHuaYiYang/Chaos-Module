@@ -20,7 +20,7 @@ pub const FW_INIT_BUFFER: u32 = 0x0C51_3A45;       // app_launcher_add(app_id) (
 pub const FW_NOTIFY: u32 = 0x0CA9_A899;            // lvx_notification_insert_message(notif*) 固件完整链(拷贝/登记由它内部自处理; 自己手写那条手动链里的段B memset 实测必崩)
 
 // VFS (symbols: nuttx)
-pub const MAX_ROWS_PER_PAGE: usize = 12;
+pub const MAX_ROWS_PER_PAGE: usize = 16;
 
 // 信息页三行实时数值(存储/内存/CPU), 每格 STAT_STRIDE 字节
 pub const STAT_STRIDE: usize = 32;
@@ -194,10 +194,11 @@ pub static PAGE_SCREENSHOTS: [u8; 12] = *b"screenshots\0";
 pub static PAGE_RECORDSET: [u8; 10] = *b"recordset\0";
 pub static PAGE_SHOTSET: [u8; 8] = *b"shotset\0";
 pub static PAGE_APP_ICON: [u8; 8] = *b"appicon\0";
+pub static PAGE_LOG_LEVEL: [u8; 9] = *b"loglevel\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 44;                   // 注册页数(页0..页43)
+pub const PAGE_COUNT: usize = 45;                   // 注册页数(页0..页44)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

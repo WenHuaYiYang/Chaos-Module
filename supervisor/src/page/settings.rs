@@ -6,6 +6,54 @@ use crate::page::kit::{MenuSpec, RowKind, RowModel, RowSub, ToggleDef};
 
 pub(crate) struct SettingsPage;
 
+pub(crate) struct LogLevelPage;
+pub(super) static PAGE_LOG_LEVEL: LogLevelPage = LogLevelPage;
+
+macro_rules! log_level_toggle {
+    ($get:ident, $toggle:ident, $def:ident, $bit:expr) => {
+        unsafe fn $get() -> bool { fw_api::system_log_mask() & (1 << $bit) != 0 }
+        unsafe fn $toggle() {
+            fw_api::system_log_mask_set(fw_api::system_log_mask() ^ (1 << $bit));
+        }
+        static $def: ToggleDef = ToggleDef { get: $get, toggle: $toggle, status: None };
+    };
+}
+log_level_toggle!(log_emerg_get, log_emerg_toggle, LOG_EMERG, 0);
+log_level_toggle!(log_alert_get, log_alert_toggle, LOG_ALERT, 1);
+log_level_toggle!(log_crit_get, log_crit_toggle, LOG_CRIT, 2);
+log_level_toggle!(log_error_get, log_error_toggle, LOG_ERROR, 3);
+log_level_toggle!(log_warn_get, log_warn_toggle, LOG_WARN, 4);
+log_level_toggle!(log_notice_get, log_notice_toggle, LOG_NOTICE, 5);
+log_level_toggle!(log_info_get, log_info_toggle, LOG_INFO, 6);
+log_level_toggle!(log_debug_get, log_debug_toggle, LOG_DEBUG, 7);
+
+static LOG_LEVEL_ROWS: &[RowModel] = &[
+    RowModel::toggle("紧急 EMERG（r）\0".as_bytes(), &LOG_EMERG),
+    RowModel::toggle("警报 ALERT（a）\0".as_bytes(), &LOG_ALERT),
+    RowModel::toggle("严重 CRITICAL（c）\0".as_bytes(), &LOG_CRIT),
+    RowModel::toggle("错误 ERROR（e）\0".as_bytes(), &LOG_ERROR),
+    RowModel::toggle("警告 WARNING（w）\0".as_bytes(), &LOG_WARN),
+    RowModel::toggle("通知 NOTICE（n）\0".as_bytes(), &LOG_NOTICE),
+    RowModel::toggle("信息 INFO（i）\0".as_bytes(), &LOG_INFO),
+    RowModel::toggle("调试 DEBUG（d）\0".as_bytes(), &LOG_DEBUG),
+    RowModel::note("说明：防止系统狂写日志导致存储芯片受损（阻止米米的傲娇行为）\n支持多选，仅记录开启的等级，立即生效；重启后恢复系统默认。全部关闭时掩码为0。\n命令 setlogmask 会同时开启所选等级及更严重等级；本页按各等级独立选择。\0".as_bytes()),
+];
+
+impl MenuSpec for LogLevelPage {
+    fn rows(&self) -> &'static [RowModel] { LOG_LEVEL_ROWS }
+}
+impl Page for LogLevelPage {
+    fn fill_title(&self, buf: *mut u8) {
+        unsafe { put_str(buf, "日志级别设置\0".as_bytes()); }
+    }
+    fn render(&self, ctx: &PageCtx) -> PageResult {
+        unsafe { frame::build(self, ctx, ctx.title) }
+    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
+}
+
 // ===== 页11: 亮度 =====
 
 pub(crate) struct BrightnessPage;
@@ -272,6 +320,7 @@ static SETTINGS_ROWS: &[RowModel] = &[
     RowModel::section("存储与维护\0".as_bytes()),
     RowModel::nav("缓存清理\0".as_bytes(), Pid::Cache as u32),
     RowModel::nav("运行日志\0".as_bytes(), Pid::Log as u32),
+    RowModel::nav("日志级别设置\0".as_bytes(), Pid::LogLevel as u32),
     RowModel::nav("恢复fetch支持\0".as_bytes(), Pid::Fetch as u32),
     RowModel { label: "文件桥\0".as_bytes(), sub: RowSub::None,
                kind: RowKind::Toggle(&BRIDGE_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
