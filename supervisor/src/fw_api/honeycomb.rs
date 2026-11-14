@@ -60,6 +60,15 @@ pub(crate) unsafe fn supported(grid: u32) -> bool {
         && word(a::LAUNCHER_GRID_CLASS, 12) == a::LAUNCHER_GRID_EVENT
 }
 
+/// 控制条也支持官方列表模式3；蜂窝的模式限制保持1/2不变。
+pub(crate) unsafe fn s541_supported(grid: u32) -> bool {
+    matches!(word(grid, 0x89c), 1 | 2 | 3)
+        && word(grid, 0) == a::LAUNCHER_GRID_CLASS
+        && word(a::LAUNCHER_GRID_CLASS, 4) == a::LAUNCHER_GRID_CTOR
+        && word(a::LAUNCHER_GRID_CLASS, 8) == a::LAUNCHER_GRID_DTOR
+        && word(a::LAUNCHER_GRID_CLASS, 12) == a::LAUNCHER_GRID_EVENT
+}
+
 pub(crate) unsafe fn visible(grid: u32) -> bool {
     // Stock root_pos_change_cb reads the launcher's absolute top at +0x20:
     // 0 is the open launcher, 480 is the watch-face/off-screen position.

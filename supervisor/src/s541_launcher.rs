@@ -133,6 +133,8 @@ unsafe fn create(grid: u32, button: u32) -> bool {
 pub(crate) unsafe fn render(grid: u32) {
     if !enabled() || fw::top_app_id() != fw::HOME_APP_ID { return; }
     let Some((button, x, y)) = native::s541_anchor(grid) else { clear(); return; };
+    // 仅上移自有控制条，不改变官方按钮占位和应用布局。
+    let y = y - 32;
     let preference = native::s541_preference();
     MODE = match preference { 0 => 0, 2 => 1, 1 => 2, _ => { clear(); return; } };
     let valid = VIEW != 0 && LAYER != 0 && ROOT == native::parent(grid) && fw::obj_is_child_of(ROOT, LAYER);
@@ -174,7 +176,7 @@ pub(crate) unsafe fn tick() {
     if !enabled() { if ROOT != 0 { clear(); } return; }
     if crate::honeycomb::enabled() { clear(); return; }
     let grid = native::launcher();
-    if grid == 0 || !native::supported(grid) { clear(); return; }
+    if grid == 0 || !native::s541_supported(grid) { clear(); return; }
     if fw::top_app_id() != fw::HOME_APP_ID { GLASS_VALID = false; GLASS_WAIT = 2; GLASS_FAILURES = 0; return; }
     if !native::visible(grid) { if VIEW != 0 { hide(VIEW, true); } return; }
     render(grid);

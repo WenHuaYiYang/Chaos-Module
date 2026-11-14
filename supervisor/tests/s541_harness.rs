@@ -4,7 +4,8 @@ use std::collections::HashMap;
 #[derive(Default)]
 struct State { next: u32, objects: HashMap<u32, u32>, flags: HashMap<u32, u32>,
     events: Vec<(u32,u32,u32)>, labels: Vec<Vec<u8>>, file: Vec<u8>, fail: bool, launches: u32, event_code: u32,
-    preference: u32, selections: Vec<u32>, honeycomb_writes: u32, desktop_writes: u32 }
+    preference: u32, selections: Vec<u32>, honeycomb_writes: u32, desktop_writes: u32,
+    positions: Vec<(u32,i32,i32)> }
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
 fn state<T>(f: impl FnOnce(&mut State)->T)->T { STATE.with(|s| f(&mut s.borrow_mut())) }
 const FW_STYLE_HR_NAME: u32 = 1;
@@ -53,7 +54,7 @@ mod fw_api {
     pub unsafe fn background_set_opa(_:u32,_:u32){}
     pub unsafe fn obj_clear_scrollable(_:u32){}
     pub unsafe fn obj_set_size_wh(_:u32,_:u32,_:u32){}
-    pub unsafe fn obj_align(_:u32,_:u32,_:i32,_:i32){}
+    pub unsafe fn obj_align(o:u32,_:u32,x:i32,y:i32){crate::state(|s|s.positions.push((o,x,y)));}
     pub unsafe fn obj_set_scroll_dir(_:u32,_:u32){}
     pub unsafe fn obj_add_event(o:u32,_:u32,c:u32,d:u32)->u32{crate::state(|s|s.events.push((o,c,d)));1}
     pub unsafe fn event_get_code(_:u32)->u32{crate::state(|s|if s.event_code==0{4}else{s.event_code})}
@@ -81,7 +82,8 @@ mod fw_api {
         pub unsafe fn launcher()->u32{20}
         pub unsafe fn parent(_:u32)->u32{10}
         pub unsafe fn s541_button(_:u32)->u32{30}
-        pub unsafe fn supported(_:u32)->bool{true}
+        pub unsafe fn supported(_:u32)->bool{crate::state(|s|s.preference!=1)}
+        pub unsafe fn s541_supported(_:u32)->bool{true}
         pub unsafe fn visible(_:u32)->bool{true}
         pub unsafe fn icons(_:u32,o:&mut [u32;crate::honeycomb_layout::MAX_ICONS])->usize{o[..3].copy_from_slice(&[0x10000,0x10100,0x10200]);3}
         pub unsafe fn s541_icon(i:u32)->Option<(u32,u32,*const u8)>{Some((i,0x1234,"应用\0".as_ptr()))}

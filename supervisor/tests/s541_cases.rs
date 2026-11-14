@@ -7,7 +7,7 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
         let icons = [0x10000,0x10100,0x10200];
         for visual in [0,1,2] {
             if visual != 0 { select(visual); }
-            for _ in 0..4 { render(20); }
+            for _ in 0..4 { tick(); }
             assert_eq!(MODE,visual as usize);
             assert!(GLASS_VALID);
             crate::state(|s| {
@@ -16,6 +16,7 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
                 for &icon in &icons {assert!(!s.flags.contains_key(&icon));}
                 assert!(!s.events.iter().any(|&(_,_,id)|id>=0x10000));
                 assert!(s.labels.is_empty());
+                assert!(s.positions.contains(&(VIEW,24,328)));
                 assert_eq!(s.honeycomb_writes,0);assert_eq!(s.desktop_writes,0);
             });
         }
