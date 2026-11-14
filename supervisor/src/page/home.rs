@@ -1,7 +1,7 @@
 //! 页0：主页与实时状态（CPU / 存储 / 内存）。
 //!
 //! 信息架构(只重排, 不增删入口): 状态区(CPU/存储/内存, 自绘) ->
-//! 「常用」应用管理/表盘管理/设置 ->「工具」系统美化/截屏录屏/NSH/实验性 ->「信息」关于。
+//! 「常用」应用管理/表盘管理/设置 ->「工具」系统美化/快应用动画/截屏录屏/NSH/实验性 ->「信息」关于。
 
 use crate::page::*;
 use crate::page::Page;
@@ -41,11 +41,11 @@ static HOME_ROWS: &[RowModel] = &[
     RowModel::nav(b"\xe8\xae\xbe\xe7\xbd\xae\x00", Pid::Settings as u32),                            // 设置
     RowModel::section(b"\xe5\xb7\xa5\xe5\x85\xb7\x00"),          // 工具
     RowModel::nav(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\x00", Pid::Beautify as u32),    // 系统美化
+    RowModel::nav("快应用动画\0".as_bytes(),Pid::QuickappAnimation as u32),
     RowModel::nav(b"\xe6\x88\xaa\xe5\xb1\x8f\xe4\xb8\x8e\xe5\xbd\x95\xe5\xb1\x8f\x00", Pid::Capture as u32), // 截屏与录屏
     RowModel::nav(b"NSH\xe7\xbb\x88\xe7\xab\xaf\x00", Pid::Nsh as u32),                              // NSH终端
     RowModel::nav(b"\xe5\xae\x9e\xe9\xaa\x8c\xe6\x80\xa7\xe5\x8a\x9f\xe8\x83\xbd\x00", Pid::Exp as u32), // 实验性功能
     RowModel::section(b"\xe4\xbf\xa1\xe6\x81\xaf\x00"),          // 信息
-    RowModel::nav("快应用动画\0".as_bytes(),Pid::QuickappAnimation as u32),
     RowModel::nav(b"\xe5\x85\xb3\xe4\xba\x8e\x00", Pid::About as u32),                               // 关于
 ];
 

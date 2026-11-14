@@ -1,6 +1,6 @@
 # 快应用动画（10 Pro试验适配）
 
-主页“快应用动画”为设置入口，进入后显示“快应用开启动画”和“快应用关闭动画”两个独立开关，默认关闭，分别保存在`/data/chaos/quickapp-animation.cfg`与`/data/chaos/quickapp-close-animation.cfg`。界面使用功能名称，不显示参考项目名称。页面注册号46，沿用既有开启配置，新增关闭开关不会重置原设置。
+主页“工具”分组中的“快应用动画”为设置入口，位于“系统美化”下方。进入后显示“快应用开启动画”和“快应用关闭动画”两个独立开关，默认关闭，分别保存在`/data/chaos/quickapp-animation.cfg`与`/data/chaos/quickapp-close-animation.cfg`。界面使用功能名称，不显示参考项目名称。页面注册号46，沿用既有开启配置，新增关闭开关不会重置原设置。
 
 参考用户提供的`~/Downloads/Vela_NativeApp-syspatch 4/ELF/src/syspatch_qa_anim_page.c`的启动入口、创建/前台回调与原生动画调用逻辑，重新核对p67/3.101.043，不复制其他机型的地址、页码或线程机制。当前为Rust适配，已加入点击时的原生图标启动遮罩和退出过渡；暂不拆分固件引擎线程等待。
 
