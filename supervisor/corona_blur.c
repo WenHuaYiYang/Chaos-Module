@@ -298,6 +298,10 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     chaos_text_kv(&w, "cfail", chaos_corona_commit_fails);
     chaos_text_kv(&w, "latchclr", chaos_corona_latch_clears);
     chaos_text_kv(&w, "natidle", (uint32_t)p67_blur_native_idle());
+    chaos_text_kv(&w, "idle_error", p67_blur_native_idle_error);
+    chaos_text_kv(&w, "native_error", p67_blur_native_error);
+    chaos_text_kv(&w, "render_bits", p67_blur_native_render_bits);
+    chaos_text_kv(&w, "wf_slot", p67_blur_native_root_seen);
     if (w.failed) return 0u;
     out[w.used] = 0;
     return w.used;

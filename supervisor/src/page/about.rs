@@ -155,6 +155,7 @@ impl Page for AboutPage {
                     nav_goto(Pid::Debug as u32, 0);
                     return;
                 }
+                if idx == 3 { nav_goto(Pid::BlurDebug as u32, 0); return; }
                 crate::ui::render_req(Pid::About as u32);
                 return;
             }
@@ -205,12 +206,13 @@ unsafe fn dbg_render(ctx: &PageCtx) -> PageResult {
         (0, RowSpec::tap("① 重绘四个对比环\0".as_bytes(), core::ptr::null())),
         (1, RowSpec::tap("② 导出 LVGL dump\0".as_bytes(), core::ptr::null())),
         (2, RowSpec::tap("③ 调试信息\0".as_bytes(), core::ptr::null())),
+        (3, RowSpec::tap("④ 模糊调试\0".as_bytes(), core::ptr::null())),
     ]);
     let msg = fw_api::label_create(ctx.content);
     if msg != 0 {
         fw_api::style_apply(msg, crate::FW_STYLE_HR_NAME, 255, 0);
         fw_api::label_set_text(msg, core::ptr::addr_of!(DBG_DUMP_MSG) as *const u8);
-        fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 420);
+        fw_api::obj_align(msg, fw_api::align::TOP_MID, 0, 500);
     }
     Ok(())
 }

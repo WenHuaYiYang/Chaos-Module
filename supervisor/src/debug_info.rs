@@ -8,7 +8,22 @@
 use crate::*;
 
 /// 整页文本缓冲。按 24 行 × 48 字节估算，超出会被 W 截断。
-static mut TEXT: [u8; 1536] = [0; 1536];
+static mut TEXT: [u8; 4096] = [0; 4096];
+static mut BLUR_TEXT: [u8; 2048] = [0; 2048];
+
+pub(crate) unsafe fn blur_refresh() -> *const u8 {
+    let p = core::ptr::addr_of_mut!(BLUR_TEXT) as *mut u8;
+    let mut w = crate::text::W::new(p, 2048);
+    w.s(b"-- blur --\n");
+    let (active, mask, hold, fail, lost) = crate::background_home::corona_debug();
+    w.s(b"mode=").n(crate::background_home::mode()).c(b'\n');
+    w.s(b"cov=").n(active).s(b" mask=").n(mask).c(b'\n');
+    w.s(b"hold=").n(hold).s(b" fail=").n(fail).s(b" lost=").n(lost).c(b'\n');
+    let mut diag = [0u8; 1536];
+    let n = crate::corona_blur::diagnostics(&mut diag);
+    if n != 0 { w.s(&diag[..n]); } else { w.s(b"diagnostics unavailable\n"); }
+    w.s("\n返回再进入可刷新数据。\0".as_bytes()); w.end(); p
+}
 
 /// 十六进制打印一个字节（两位，大写）。
 unsafe fn hex_byte(w: &mut crate::text::W, value: u8) {
@@ -77,7 +92,7 @@ pub(crate) unsafe fn refresh() -> *const u8 {
     w.s(b"cov ").n(active).s(b" mask ").n(mask)
         .s(b" reg ").n(crate::blur_zone::mask()).c(b'\n');
     w.s(b"hold ").n(hold).s(b" fail ").n(fail).s(b" lost ").n(lost).c(b'\n');
-    let mut diag = [0u8; 320];
+    let mut diag = [0u8; 1536];
     let n = crate::corona_blur::diagnostics(&mut diag);
     if n > 0 {
         w.s(&diag[..n]);

@@ -195,10 +195,11 @@ pub static PAGE_RECORDSET: [u8; 10] = *b"recordset\0";
 pub static PAGE_SHOTSET: [u8; 8] = *b"shotset\0";
 pub static PAGE_APP_ICON: [u8; 8] = *b"appicon\0";
 pub static PAGE_LOG_LEVEL: [u8; 9] = *b"loglevel\0";
+pub static PAGE_BLUR_DEBUG: [u8; 10] = *b"blurdebug\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 45;                   // 注册页数(页0..页44)
+pub const PAGE_COUNT: usize = 46;                   // 注册页数(页0..页45)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 
