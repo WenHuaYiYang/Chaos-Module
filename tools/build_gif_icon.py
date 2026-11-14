@@ -65,13 +65,34 @@ def quantize(frames):
     indexed = atlas.quantize(colors=256, method=Image.Quantize.FASTOCTREE,
                              dither=Image.Dither.NONE)
     rgba = bytes(indexed.getpalette("RGBA"))
-    palette = bytearray()
-    for at in range(0, len(rgba), 4):
-        r, g, b, a = rgba[at:at + 4]
-        palette.extend((b, g, r, a))
+    entries = [rgba[at:at + 4] for at in range(0, len(rgba), 4)]
     pixels = [indexed.crop((0, n * SIZE, SIZE, (n + 1) * SIZE)).tobytes()
               for n in range(len(frames))]
-    return bytes(palette), pixels
+    return canonicalize(entries, pixels)
+
+def canonicalize(entries, pixels):
+    """Rewrite the octree palette into a platform-independent one.
+
+    Pillow's octree quantiser returns the same colours everywhere, but which slot
+    each colour lands in (and how the 214 unused slots are duplicated) depends on
+    the platform's container/hash ordering, so byte-comparing the committed asset
+    from a Windows checkout with a Linux rebuild never matched. Collapsing the
+    duplicates and sorting the survivors by colour makes the encoding a pure
+    function of the source animation; unused slots are padded with transparent
+    black. Pixel indices are remapped so every pixel keeps its exact colour.
+    """
+    unique = sorted({bytes(entry) for entry in entries},
+                    key=lambda colour: (colour[0], colour[1], colour[2], colour[3]))
+    slot = {colour: index for index, colour in enumerate(unique)}
+    remap = bytearray(slot[bytes(entry)] for entry in entries)
+    palette = bytearray()
+    for r, g, b, a in unique:
+        # Native format is indexed BGRA, matching the on-device 0x0A decoder.
+        palette.extend((b, g, r, a))
+    palette.extend(bytes(4 * (256 - len(unique))))
+    assert len(palette) == 1024
+    remapped = [bytes(remap[value] for value in frame) for frame in pixels]
+    return bytes(palette), remapped
 
 def convert(source: Path) -> bytes:
     frames, durations, plays = load(source)
