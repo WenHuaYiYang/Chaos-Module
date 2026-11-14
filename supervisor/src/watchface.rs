@@ -381,6 +381,7 @@ unsafe fn tick_busy() -> bool {
     || confirm_pop::pending()
     || background_home::pending()
     || crate::s541_launcher::pending()
+    || crate::quickapp_animation::pending()
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()
     || crate::honeycomb::busy()
@@ -501,6 +502,7 @@ unsafe fn tick_pages(lite: bool) {
         crate::desktop_scale::tick();
         crate::honeycomb::tick();
         crate::s541_launcher::tick();
+        crate::quickapp_animation::tick();
     }
 }
 
