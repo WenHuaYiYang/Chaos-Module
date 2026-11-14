@@ -244,12 +244,17 @@ unsafe fn appicon_sub() -> *const u8 {
 }
 
 static ROT_DEF: ToggleDef = ToggleDef { get: rot_get, toggle: rot_toggle, status: None };
+static PALM_DEF: ToggleDef = ToggleDef {
+    get: crate::touch_palm::enabled, toggle: crate::touch_palm::toggle, status: None,
+};
 static BRIDGE_DEF: ToggleDef = ToggleDef { get: bridge_get, toggle: bridge_toggle, status: None };
 
 static SETTINGS_ROWS: &[RowModel] = &[
     RowModel::section("显示与交互\0".as_bytes()),
     RowModel::nav("亮度\0".as_bytes(), Pid::Bright as u32),
     RowModel::nav("震动\0".as_bytes(), Pid::Vibrate as u32),
+    RowModel { label: "遮盖熄屏\0".as_bytes(), sub: RowSub::None,
+               kind: RowKind::Toggle(&PALM_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
     RowModel { label: "屏幕翻转\0".as_bytes(), sub: RowSub::None,
                kind: RowKind::Toggle(&ROT_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
     RowModel { label: "应用图标\0".as_bytes(),

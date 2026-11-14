@@ -90,6 +90,7 @@ impl Page for InfoPage {
             st_wr!(STAT_TICK, 19);
             // 开机/重启后进主页即恢复上次的屏幕方向（display 未就绪时留到下次）。
             crate::screen_rotation::ensure_applied();
+            crate::touch_palm::ensure_applied();
             let _ = cpu;
             Ok(())
         }

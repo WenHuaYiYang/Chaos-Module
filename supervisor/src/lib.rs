@@ -53,6 +53,7 @@ mod ui;
 mod ipc;
 mod bridge_cfg;
 mod screen_rotation;
+mod touch_palm;
 mod dynamic_icon;
 mod dynamic_icon_frames;
 mod icon_pack_animation;

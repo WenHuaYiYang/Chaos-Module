@@ -398,6 +398,26 @@ unsafe fn cstr_static(p: *const u8) -> &'static [u8] {
 pub(crate) struct AppDetailPage;
 pub(super) static PAGE_DETAILP: AppDetailPage = AppDetailPage;
 
+unsafe extern "C" fn uninstall_cancel(event: u32) {
+    if crate::confirm_pop::click(crate::confirm_pop::SLOT_APP, event) != 0 {
+        render_req(Pid::Detail as u32);
+    }
+}
+
+unsafe extern "C" fn uninstall_confirm(event: u32) {
+    if crate::confirm_pop::click(crate::confirm_pop::SLOT_APP, event) == 0 { return; }
+    if crate::appmgr::detail_valid() {
+        // 既有入口保留二次确认状态机，此处已由弹窗取得确认。
+        if !crate::appmgr::detail_confirm() { crate::appmgr::detail_uninstall_click(); }
+        if crate::appmgr::detail_uninstall_click() {
+            nav_back();
+            render_req(Pid::AppMgr as u32);
+            return;
+        }
+    }
+    render_req(Pid::Detail as u32);
+}
+
 static mut DT_LBL_SHOW: [u8; 24] = [0; 24];
 static mut DT_LBL_HIDE: [u8; 24] = [0; 24];
 static mut DT_LBL_UN: [u8; 32] = [0; 32];
@@ -410,6 +430,7 @@ impl Page for AppDetailPage {
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
+            crate::confirm_pop::reset(crate::confirm_pop::SLOT_APP);
             if !crate::appmgr::detail_valid() {
                 let r = build_row(ctx, ctx.title, 0,
                     &RowSpec::tap("应用不存在, 返回\0".as_bytes(), core::ptr::null()));
@@ -472,12 +493,10 @@ impl Page for AppDetailPage {
             } else if idx == 4 {
                 crate::appmgr::detail_launch();
             } else if idx == 5 {
-                if crate::appmgr::detail_uninstall_click() {
-                    // 已卸载: 回到应用管理列表
-                    nav_back();
-                    render_req(Pid::AppMgr as u32);
-                } else {
-                    render_req(Pid::Detail as u32);
+                if !crate::confirm_pop::shown(crate::confirm_pop::SLOT_APP) {
+                    crate::confirm_pop::build(crate::confirm_pop::SLOT_APP, 0,
+                        core::ptr::null(), 0, uninstall_cancel as *const () as u32,
+                        uninstall_confirm as *const () as u32);
                 }
             }
         }
