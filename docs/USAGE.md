@@ -40,6 +40,8 @@ Chaos 打开后是主页（信息页），可进入应用管理、表盘、系�
 | 42 | 截图设置 | 截屏与录屏 → 截图设置 |
 | 43 | 应用图标 | 设置 → 应用图标 |
 | 47 | ChaosConnect | 设置 → ChaosConnect |
+| 48 | 权限设置 | 设置 → ChaosConnect → 权限设置 |
+| 49 | 允许开发者模式 | 权限设置 → 允许开发者模式 |
 
 > 页号上限由 `state.rs` 的 `PAGE_COUNT` 决定，`PAGE_TABLE` 必须与之一致；新增页面要同时改这两处。
 
@@ -131,7 +133,7 @@ Q W E R T Y U I O P
 
 ## ChaosConnect
 
-在“设置 → ChaosConnect”中打开“启用”，通过配套插件连接；旧“文件桥”的开关配置保留，默认关闭。下方“ChaosConnect日志”显示设备实际收到的连接、目录浏览、文件读取/写入、复制、移动、删除、CRC提交、失败原因与传输进度。无需修改插件；日志不包含文件内容，同一读取命令无法区分预览和下载。
+在“设置 → ChaosConnect”中打开“启用”，通过配套插件连接；旧“文件桥”的开关配置保留，默认关闭。开关下方显示连接、开发者模式和授权状态，状态下面为“权限设置”。允许开发者模式可选开启/关闭/询问，默认询问：插件请求后在手环弹窗确认；请点亮屏幕，60秒内未确认自动拒绝，断连后授权失效。日志上方的权限入口可随时关闭并撤销开发者模式。下方“ChaosConnect日志”显示设备实际收到的连接、目录浏览、文件读取/写入、复制、移动、删除、CRC提交、失败原因与传输进度。无需修改插件；日志不包含文件内容，同一读取命令无法区分预览和下载。
 
 原运行日志及闪存写入已移除。新日志只保留最近32KiB内存内容，重启后清空；每页12条，支持刷新、翻页、长文滚动及两次点击确认清空。
 
@@ -158,6 +160,7 @@ Q W E R T Y U I O P
 | `/data/chaos/appmgr_excl.bin`、`appmgr_keep.bin`、`appmgr_apply.cfg` | 应用管理名单与配置 |
 | `/data/chaos/font/` | 字体槽位与 `index.txt` 清单 |
 | `/data/chaos/bridge.cfg` | ChaosConnect启用状态（BRG1；默认关闭） |
+| `/data/chaos/connect-permissions.cfg` | 开发者模式权限策略（默认询问） |
 | `/data/chaos/capture.cfg` | 录屏格式、录屏和截图的独立储存路径 |
 | `/data/chaos/media/`、`/data/offlinelog/` | Chaos 录屏、截图（由用户选择；缓存清理保留 Chaos 媒体文件） |
 | `/data/chaos/shake.cfg`、`shake-wfaces.cfg` | 摇一摇轮换配置 |

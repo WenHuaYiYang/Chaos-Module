@@ -48,6 +48,14 @@
 
 #define CCF_FLAG_DEV_MODE 1u
 #define CCF_FLAG_RMDIR 2u
+#define CCF_ST_PENDING 14u
+#define CCF_POLICY_ALLOW 0u
+#define CCF_POLICY_DENY 1u
+#define CCF_POLICY_ASK 2u
+extern uint32_t chaos_connect_now_ms(void);
+extern uint32_t chaos_connect_policy(void);
+extern uint32_t chaos_connect_take_decision(uint32_t token);
+extern void chaos_connect_state(uint32_t flags,uint32_t token);
 
 /* No libc imports. Keep all helpers internal; the stock modlib loader only
  * has to apply ABS32/TARGET1 data relocations, not intra-module Thumb calls. */
@@ -66,6 +74,9 @@ static int ccf_strcmp(const char *a, const char *b)
 
 static uint16_t g_chunk=CC_CHUNK;
 static uint8_t g_dev_mode;
+static uint8_t g_connected,auth_state;
+static uint32_t auth_token,auth_serial,auth_started,last_seen;
+static void publish_state(void){chaos_connect_state(g_connected|(uint32_t)g_dev_mode<<1|(uint32_t)auth_state<<2,auth_token);}
 
 static int32_t g_read_fd = -1;
 static uint32_t g_read_size;
@@ -211,7 +222,11 @@ static uint8_t ccf_status_from_err(int32_t err)
 
 static int ccf_write_allowed(const char *path)
 {
-    if (ccf_protected(path)) return 0;
+    if (ccf_protected(path)||path[1]=='\0') return 0;
+    /* The peer cannot edit the watch's own consent policy or rename its ancestors. */
+    if(ccf_under(path,"/data/chaos/connect-permissions.cfg")||
+       ccf_under(path,"/data/chaos/connect-permissions.tmp")||
+       ccf_under("/data/chaos/connect-permissions.cfg",path))return 0;
     if (g_dev_mode) return 1;
     return ccf_under(path, "/data");
 }
@@ -272,12 +287,13 @@ static void ccf_send(uint8_t op,uint16_t req,uint8_t status,const uint8_t *paylo
  if(op==CCF_OP_READ&&status==0)g_read_transferred+=plen;
  if(op==0x31&&status==0)benchmark_bytes+=plen;
  if(status==0&&queued>=0){
+  if(op==CCF_OP_PING)return; /* Polling is presence, not a user file operation. */
   if(op==CCF_OP_READ&&audit_offset!=0&&audit_offset/65536==(audit_offset+plen)/65536&&audit_offset+plen<g_read_size&&plen==audit_length)return;
   if(op==CCF_OP_WRITE&&audit_offset!=0&&audit_offset/65536==(audit_offset+audit_length)/65536&&g_write_written<g_write_expected)return;
   if(op==0x31&&benchmark_bytes!=plen&&(benchmark_bytes-plen)/262144==benchmark_bytes/262144)return;
  }
- static const char *const result[]={"成功","参数错误","不存在","没有权限","目标已存在","不是目录","目标是目录","空间不足","设备忙/目录非空","读写失败","CRC校验失败","传输顺序错误","不支持","超出大小限制"};
- audit_text(" | ");audit_text(status<14?result[status]:"未知状态");audit_text(" status=");audit_number(status);
+ static const char *const result[]={"成功","参数错误","不存在","没有权限","目标已存在","不是目录","目标是目录","空间不足","设备忙/目录非空","读写失败","CRC校验失败","传输顺序错误","不支持","超出大小限制","等待手环授权"};
+ audit_text(" | ");audit_text(status<15?result[status]:"未知状态");audit_text(" status=");audit_number(status);
  if(queued<0)audit_text(" 应答入队失败");
  if(status==0){
   if(op==CCF_OP_LIST&&plen>=6){audit_text(" total=");audit_number(ccf_get_u16(payload));audit_text(" returned=");audit_number(ccf_get_u16(payload+4));}
@@ -303,6 +319,26 @@ void cc_files_reset(void){
  if(g_read_fd>=0){audit_used=0;audit_text("会话结束/重置：关闭读取文件");audit_path(g_read_target);chaos_connect_log(audit_context);}
  if(g_write_fd>=0){audit_used=0;audit_text("会话结束/重置：取消未提交写入并清理临时文件");audit_path(g_write_target);chaos_connect_log(audit_context);}
  ccf_close_read();ccf_discard_write();g_dev_mode=0;benchmark_bytes=0;
+ g_connected=0;auth_state=0;auth_token=0;publish_state();
+}
+int cc_files_tick(uint32_t now){
+ if(!g_connected)return 0;
+ if((uint32_t)(now-last_seen)>=15000u){chaos_connect_log("插件心跳超时：断开ChaosConnect并撤销开发者模式和待定授权");cc_files_reset();return 1;}
+ uint32_t policy=chaos_connect_policy();
+ if(policy==CCF_POLICY_DENY){
+  if(g_dev_mode){g_dev_mode=0;if(auth_token)auth_state=3;
+   if(g_write_fd>=0&&!ccf_under(g_write_target,"/data")){ccf_discard_write();chaos_connect_log("手环权限关闭：取消系统区域的未提交写入");}
+   chaos_connect_log("手环权限设为关闭：撤销开发者模式");}
+  if(auth_state==1){auth_state=3;chaos_connect_log("手环权限设为关闭：拒绝待定的开发者模式请求");}
+ }
+ if(auth_state==1){
+  if((uint32_t)(now-auth_started)>=60000u){auth_state=4;chaos_connect_log("开发者模式授权超时，未启用");}
+  else{uint32_t decision=chaos_connect_take_decision(auth_token);
+   if(decision){auth_state=decision==1?2:3;g_dev_mode=decision==1;
+    chaos_connect_log(decision==1?"用户在手环允许插件启用开发者模式":"用户在手环拒绝插件启用开发者模式");}
+  }
+ }
+ publish_state();return 0;
 }
 void cc_files_set_chunk(uint16_t chunk){g_chunk=chunk>0&&chunk<=CC_CHUNK?chunk:CC_CHUNK;}
 static uint32_t ccf_crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
@@ -360,7 +396,7 @@ static void ccf_handle_hello(uint16_t req)
     uint32_t n = 0;
     out[n++] = CCF_PROTO_VERSION;
     ccf_put_u16(&out[n], g_chunk); n += 2u;
-    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR);
+    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u); /* status/authorization support */
     out[n++] = g_dev_mode;
     ccf_put_u16(&out[n], (uint16_t)CCF_MAX_PATH); n += 2u;
     ccf_put_u32(&out[n], CC_WINDOW); n += 4u;
@@ -842,8 +878,15 @@ static void ccf_handle_set_dev(uint16_t req,
         ccf_send(CCF_OP_SET_DEV, req, CCF_ST_BAD, 0, 0);
         return;
     }
-    g_dev_mode = p[0] ? 1u : 0u;
-    ccf_send(CCF_OP_SET_DEV, req, CCF_ST_OK, 0, 0);
+    if(!p[0]){
+     if(g_write_fd>=0&&!ccf_under(g_write_target,"/data"))ccf_discard_write();
+     g_dev_mode=0;auth_state=0;auth_token=0;publish_state();ccf_send(CCF_OP_SET_DEV,req,CCF_ST_OK,0,0);return;
+    }
+    uint32_t policy=chaos_connect_policy();
+    if(policy==CCF_POLICY_DENY){ccf_send(CCF_OP_SET_DEV,req,CCF_ST_ACCESS,0,0);return;}
+    if(g_dev_mode||policy==CCF_POLICY_ALLOW){g_dev_mode=1;auth_state=0;auth_token=0;publish_state();ccf_send(CCF_OP_SET_DEV,req,CCF_ST_OK,0,0);return;}
+    if(auth_state!=1){auth_serial=(auth_serial+1)&0x3fffffffu;if(!auth_serial)auth_serial++;auth_token=auth_serial;auth_state=1;auth_started=chaos_connect_now_ms();}
+    publish_state();uint8_t out[4];ccf_put_u32(out,auth_token);ccf_send(CCF_OP_SET_DEV,req,CCF_ST_PENDING,out,4);
 }
 
 void cc_files_dispatch(const struct cc_frame *frame)
@@ -853,7 +896,10 @@ void cc_files_dispatch(const struct cc_frame *frame)
  if(frame->flags!=0||frame->status!=0)return;
     /* HELLO resets active transfers before its own audit context is constructed. */
     if(op==CCF_OP_HELLO)cc_files_reset();
+    last_seen=chaos_connect_now_ms();
+    if(op==CCF_OP_HELLO){g_connected=1;publish_state();}
     audit_begin(frame);
+    if(!g_connected){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
     switch (op) {
     case CCF_OP_HELLO: ccf_handle_hello(req); break;
     case CCF_OP_LIST: ccf_handle_list(req, p, plen); break;
@@ -877,8 +923,9 @@ void cc_files_dispatch(const struct cc_frame *frame)
         ccf_send(op, req, CCF_ST_OK, 0, 0);
         break;
     case CCF_OP_PING: {
-        uint8_t one = 1u;
-        ccf_send(op, req, CCF_ST_OK, &one, 1u);
+        uint8_t out[8]={g_connected,g_dev_mode,(uint8_t)chaos_connect_policy(),auth_state};
+        ccf_put_u32(out+4,auth_token);
+        ccf_send(op, req, CCF_ST_OK, out, sizeof(out));
         break;
     }
     case 0x31: /* Link benchmark: echo actual bytes through the full encrypted carrier. */

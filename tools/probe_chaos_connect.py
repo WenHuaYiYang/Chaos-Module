@@ -103,6 +103,19 @@ def main():
         call(syms['chaos_bridge_stop'])
         # A third-party handler is never overwritten.
         m.put(conn+12,0x10070001);call(syms['chaos_bridge_start']);call(syms['owner_tick']);assert word(conn+12)==0x10070001
+        # Execute the actual .043 msgbox factory/constructor used by the consent
+        # overlay. Only lower LVGL allocation/style/list primitives are seams.
+        # mode=0 must skip page lifecycle attachment (0xc4c9eb4's null branch),
+        # so a display-top container is not interpreted as a page descriptor.
+        parent,modal,holder=0x20065000,0x20066000,0x20067000
+        canary=bytes(range(128));m.u.mem_write(parent,canary)
+        m.hooks[0xc5891f8]=lambda u:modal
+        m.hooks[0xc587d40]=lambda u:0
+        m.hooks[0xc5891a8]=lambda u:holder
+        for a in [0xc588cb8,0xc5883f8,0xc589448]:m.hooks[a]=lambda u:0
+        assert call(0xc4ca0d8,parent,0)==modal
+        assert word(holder)==modal and bytes(m.u.mem_read(parent,128))==canary
+        print('PASS real .043 system msgbox mode-0 constructor without page descriptor mutation; LVGL allocation/style primitives are seams')
         print('PASS production ARM hook/codec, ordinary encrypted/OTHER namespace passthrough, corrupt-private rejection, real stateless crypto wrapper, 8-frame window, immutable retry, epoch cancellation and foreign-hook preservation')
         print('HOST ONLY: AES/radio/timers/file engine are explicit seams; actual Bluetooth throughput requires hardware')
 if __name__=='__main__':main()

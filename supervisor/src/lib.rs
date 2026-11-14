@@ -31,6 +31,8 @@ mod terminal_ui;
 mod appmgr;
 mod connect_log;
 mod connect_log_buffer;
+mod connect_permission;
+mod connect_prompt;
 mod cacheclean;
 mod confirm_pop;
 #[allow(dead_code)]

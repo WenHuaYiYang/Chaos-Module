@@ -12,6 +12,16 @@
 #include <errno.h>
 static uint8_t replies[32][CC_MAX_FRAME];static unsigned lengths[32],used;
 static char logs[256][1024];static unsigned log_count;
+static uint32_t policy,now_ms=100,decision_token,decision,state_flags,state_token;
+uint32_t chaos_connect_policy(void){return policy;}
+uint32_t chaos_connect_now_ms(void){return now_ms;}
+uint32_t chaos_connect_take_decision(uint32_t token){uint32_t d=decision;decision=0;return token==decision_token?d:0;}
+void chaos_connect_state(uint32_t flags,uint32_t token){state_flags=flags;state_token=token;}
+void cc_test_policy(uint32_t value){policy=value;}
+void cc_test_decide(uint32_t token,uint32_t value){decision_token=token;decision=value;}
+void cc_test_time(uint32_t value){now_ms=value;}
+uint32_t cc_test_state(void){return state_flags;}
+uint32_t cc_test_token(void){return state_token;}
 void chaos_connect_log(const char *message){if(log_count<256)snprintf(logs[log_count++],sizeof(logs[0]),"%s",message);}
 void cc_test_clear_logs(void){log_count=0;}
 int cc_test_log(unsigned i,char *out){if(i>=log_count)return 0;strcpy(out,logs[i]);return (int)strlen(out);}

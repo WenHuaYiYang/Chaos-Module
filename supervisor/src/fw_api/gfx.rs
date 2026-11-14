@@ -713,6 +713,13 @@ pub unsafe fn display_default() -> u32 {
     f()
 }
 
+/// p67 .043 miwear display get_layer_top thunk, also used by quickapp_splash.
+/// 0x0CAC0218 = ldr.w pc,[pc]; target 0x1C02FB35 (display + 0x2C8 layer).
+pub unsafe fn display_top_layer(display: u32) -> u32 {
+    let f: unsafe extern "C" fn(u32)->u32=transmute(0x0CAC0219usize);
+    f(display)
+}
+
 /// `lv_display_set_rotation(disp, rotation)`：0=0°、1=90°、2=180°、3=270°。
 /// LVGL 内部会同步 hor/ver 分辨率与输入设备的坐标映射，所以触摸跟着一起转。
 pub unsafe fn display_set_rotation(disp: u32, rotation: u32) {

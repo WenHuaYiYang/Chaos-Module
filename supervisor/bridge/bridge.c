@@ -111,6 +111,8 @@ static void poll(void){
     if(reset_pending){cc_files_reset();reset_pending=0;session=0;prefix=0;}
     if(!started)return;attach(0);
     if(session&&FN(L2_SESSION,session_fn)(handle)!=session){cc_files_reset();session=0;prefix=0;}
+    extern uint32_t chaos_connect_now_ms(void);
+    if(cc_files_tick(chaos_connect_now_ms())){session=0;prefix=0;}
     for(unsigned served=0;served<RX_SLOTS&&tx_free()>=3;served++){
         uint32_t slot=rx_read;if(rx[slot].state!=2)break;
         struct request *r=&rx[slot];struct cc_frame f;

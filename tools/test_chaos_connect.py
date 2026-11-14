@@ -24,7 +24,9 @@ class ConnectTests(unittest.TestCase):
         (cls.root/'data').mkdir();(cls.root/'resource').mkdir()
     @classmethod
     def tearDownClass(cls):cls.c.cc_files_reset();cls.work.cleanup()
-    def setUp(self):self.c.cc_files_reset();self.c.cc_test_fault(0,0);self.c.cc_test_clear_logs()
+    def setUp(self):
+        self.c.cc_files_reset();self.c.cc_test_fault(0,0);self.c.cc_test_policy(0);self.c.cc_test_time(100)
+        self.request(1);self.c.cc_test_clear_logs()
     def logs(self):
         out=[];buf=C.create_string_buffer(1024)
         for i in range(256):
@@ -158,7 +160,87 @@ class ConnectTests(unittest.TestCase):
         self.assertIn('committed_offset=65536',self.logs())
         self.assertIn('written_bytes=262144',self.logs())
 
+    def device_status(self):
+        status,p=self.request(0x30)
+        self.assertEqual(status,0);self.assertEqual(len(p),8)
+        return tuple(p[:4])+(struct.unpack_from('<I',p,4)[0],)
+
+    def test_developer_permission_allow_deny_ask_and_token_bound_decisions(self):
+        self.c.cc_test_policy(1)
+        self.assertEqual(self.request(0x40,b'\x01')[0],3)
+        self.assertEqual(self.device_status()[:3],(1,0,1))
+        self.c.cc_test_policy(2)
+        status,p=self.request(0x40,b'\x01');self.assertEqual(status,14)
+        token=struct.unpack('<I',p)[0];self.assertNotEqual(token,0)
+        self.assertEqual(self.request(0x40,b'\x01'),(14,p)) # repeated request reuses one prompt
+        self.assertEqual(self.open_write('/resource/not-yet-allowed',1)[0],3)
+        self.c.cc_test_decide(token+1,1);self.c.cc_files_tick(100)
+        self.assertEqual(self.device_status()[1],0)
+        self.c.cc_test_decide(token,1);self.c.cc_files_tick(100)
+        self.assertEqual(self.device_status(),(1,1,2,2,token))
+        self.assertEqual(self.open_write('/resource/allowed',0)[0],0)
+        self.request(0x23)
+        self.request(0x40,b'\x00')
+        status,p=self.request(0x40,b'\x01');token2=struct.unpack('<I',p)[0]
+        self.assertNotEqual(token,token2)
+        self.c.cc_test_decide(token2,2);self.c.cc_files_tick(100)
+        self.assertEqual(self.device_status(),(1,0,2,3,token2))
+
+    def test_revoke_cancels_system_write_and_preserves_existing_file(self):
+        target=self.root/'resource/revoke';target.write_bytes(b'original')
+        self.assertEqual(self.request(0x40,b'\x01')[0],0)
+        self.assertEqual(self.open_write('/resource/revoke',3)[0],0)
+        self.request(0x21,struct.pack('<I',0)+b'new')
+        self.c.cc_test_policy(1);self.c.cc_files_tick(100)
+        self.assertEqual(self.device_status()[1],0)
+        self.assertNotEqual(self.request(0x22,struct.pack('<I',zlib.crc32(b'new')))[0],0)
+        self.assertEqual(target.read_bytes(),b'original')
+        self.assertFalse(list((self.root/'resource').glob('*.part')))
+
+    def test_peer_cannot_overwrite_consent_policy_or_rename_its_ancestors(self):
+        self.request(0x40,b'\x01')
+        for p in ['/data/chaos/connect-permissions.cfg','/data/chaos/connect-permissions.tmp','/data/chaos','/data','/']:
+            self.assertEqual(self.open_write(p,5)[0],3)
+            self.assertEqual(self.request(7,path(p)+path('/data/moved-policy'))[0],3)
+        self.assertEqual(self.request(7,path('/data/other')+path('/data/chaos'))[0],3)
+
+    def test_authorization_cancel_new_session_timeout_and_lease_expiry(self):
+        self.c.cc_test_policy(2)
+        _,p=self.request(0x40,b'\x01');old=struct.unpack('<I',p)[0]
+        self.request(0x40,b'\x00');self.c.cc_test_decide(old,1);self.c.cc_files_tick(100)
+        self.assertEqual(self.device_status()[1],0)
+        _,p=self.request(0x40,b'\x01');old=struct.unpack('<I',p)[0]
+        self.request(1)
+        _,p=self.request(0x40,b'\x01');new=struct.unpack('<I',p)[0]
+        self.assertNotEqual(old,new)
+        self.c.cc_test_decide(old,1);self.c.cc_files_tick(100)
+        self.assertEqual(self.device_status()[1],0)
+        # Keep the lease alive while allowing the 60-second authorization to expire.
+        for now in range(10100,60101,10000):
+            self.c.cc_test_time(now);self.request(0x30);self.c.cc_files_tick(now)
+        self.assertEqual(self.device_status()[1:4],(0,2,4))
+        self.c.cc_test_decide(new,1);self.c.cc_files_tick(60100)
+        self.assertEqual(self.device_status()[1],0)
+        self.c.cc_test_time(75100);self.assertEqual(self.c.cc_files_tick(75100),1)
+        self.assertEqual(self.c.cc_test_state(),0)
+        self.assertEqual(self.request(0x40,b'\x01')[0],3)
+        self.request(1);self.assertEqual(self.device_status()[:2],(1,0))
+
+    def test_lease_reset_closes_files_and_clock_wrap_is_safe(self):
+        self.open_write('/data/lease-reset',3)
+        self.c.cc_test_time(15100);self.assertEqual(self.c.cc_files_tick(15100),1)
+        self.assertFalse(list((self.root/'data').glob('lease-reset*.part')))
+        self.c.cc_test_time(0xfffffff0);self.request(1)
+        self.assertEqual(self.c.cc_files_tick(0x10),0)
+        self.assertEqual(self.c.cc_files_tick((0xfffffff0+15000)&0xffffffff),1)
+
 class MemoryLogTests(unittest.TestCase):
+    def test_permission_persistence_mailbox_and_global_prompt(self):
+        with tempfile.TemporaryDirectory(prefix='chaos-connect-permission-') as work:
+            binary=Path(work)/'permissions'
+            subprocess.run(['rustc','--edition=2021',str(ROOT/'supervisor/tests/connect_permission_harness.rs'),'-o',str(binary)],check=True)
+            for case in ['default','invalid','persist','mailbox','prompt']:
+                subprocess.run([str(binary),case],check=True)
     def test_ring_wrap_pagination_clear_and_utf8(self):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-log-') as work:
             binary=Path(work)/'log-tests'

@@ -201,8 +201,10 @@ pub static PAGE_QUICKAPP_ANIMATION: [u8; 7] = *b"qaanim\0";
 pub static mut APP_META: [u32; 16] = [0; 16];
 
 pub static PAGE_CONNECT: [u8; 8] = *b"connect\0";
+pub static PAGE_CONNECT_PERMISSIONS: [u8; 12] = *b"connectperm\0";
+pub static PAGE_CONNECT_DEV_POLICY: [u8; 11] = *b"connectdev\0";
 
-pub const PAGE_COUNT: usize = 48;                   // 注册页数(页0..页47)
+pub const PAGE_COUNT: usize = 50;                   // 注册页数(页0..页49)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

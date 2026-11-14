@@ -26,4 +26,6 @@ int cc_reply(uint8_t flags,uint8_t op,uint8_t status,uint16_t req,const void *da
 void cc_files_dispatch(const struct cc_frame *frame);
 void cc_files_reset(void);
 void cc_files_set_chunk(uint16_t chunk);
+/* Owner-loop maintenance; returns 1 when the plugin presence lease expired. */
+int cc_files_tick(uint32_t now);
 #endif

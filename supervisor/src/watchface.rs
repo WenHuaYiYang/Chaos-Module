@@ -432,6 +432,7 @@ unsafe fn tick_terminal() {
     // 文件桥只在这里启动/停止：UI owner 已就绪，且开关变化由维护 tick
     // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
     crate::bridge_cfg::tick();
+    crate::connect_prompt::tick();
 }
 
 /// 返回 false = 开机延迟还没走完, 本拍后面的段都不跑。
