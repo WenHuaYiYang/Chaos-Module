@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.13"
       - name: Probe quantizer stability
         run: |
           set -e
@@ -19,23 +19,7 @@ jobs:
             python -m venv "venv-$v"
             "./venv-$v/bin/pip" install -q "Pillow==$v"
             echo "=== Pillow $v ==="
-            (cd tools && "../venv-$v/bin/python" - "$v" <<'PY'
-import hashlib, sys
-import build_gif_icon as build
-shipped = build.OUTPUT.read_bytes()
-pal_shipped = shipped[build.HEADER.size:build.HEADER.unpack_from(shipped)[7]]
-frames, durations, _ = build.load(build.SOURCE)
-palette, pixels = build.quantize(frames)
-print("pillow", sys.argv[1])
-print("shipped_pal_sha", hashlib.sha256(pal_shipped).hexdigest()[:24])
-print("fresh_pal_sha  ", hashlib.sha256(palette).hexdigest()[:24])
-print("pal_equal", pal_shipped == palette)
-print("shipped_head", pal_shipped[500:540].hex())
-print("fresh_head  ", palette[500:540].hex())
-print("shipped_colorset", len({pal_shipped[i:i+4] for i in range(0,len(pal_shipped),4)}))
-print("fresh_colorset  ", len({palette[i:i+4] for i in range(0,len(palette),4)}))
-print("set_equal", {pal_shipped[i:i+4] for i in range(0,len(pal_shipped),4)} == {palette[i:i+4] for i in range(0,len(palette),4)})
-print("pixels0_sha_shipped_vs_fresh_need_decode")
-PY
-            ) || true
+            cd tools
+            "../venv-$v/bin/python" _probe_quant.py
+            cd ..
           done
