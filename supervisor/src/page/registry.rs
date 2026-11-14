@@ -76,6 +76,8 @@ pub(crate) enum Pid {
     Connect = 47,
     ConnectPermissions = 48,
     ConnectDevPolicy = 49,
+    Files = 50,
+    FileDetail = 51,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -170,4 +172,6 @@ pages! {
     Connect = 47, PAGE_CONNECT, connect::PAGE;
     ConnectPermissions = 48, PAGE_CONNECT_PERMISSIONS, connect::PERMISSIONS;
     ConnectDevPolicy = 49, PAGE_CONNECT_DEV_POLICY, connect::POLICY;
+    Files = 50, PAGE_FILES, super::file_manager::FILES;
+    FileDetail = 51, PAGE_FILE_DETAIL, super::file_manager::DETAIL;
 }

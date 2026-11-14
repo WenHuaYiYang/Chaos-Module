@@ -198,3 +198,5 @@ mod fw_api {
         mock::with(|ui| ui.key_code)
     }
 }
+
+mod file_manager { pub static MESSAGE:[u8;96]=[0;96]; pub unsafe fn save_name(_: *const u8)->bool{true} }

@@ -28,7 +28,8 @@ use crate::*;
 pub(crate) const SLOT_FONT: usize = 0;
 pub(crate) const SLOT_ICON: usize = 1;
 pub(crate) const SLOT_APP: usize = 2;
-const SLOT_N: usize = 3;
+pub(crate) const SLOT_FILE: usize = 3;
+const SLOT_N: usize = 4;
 
 /// 0=没有框 2=框显示中 3=已请求关闭但门没过(等调用方下一拍 `close_deferred`)
 static mut CP_ST: [u32; SLOT_N] = [0; SLOT_N];
@@ -43,6 +44,7 @@ static mut CP_BTN: [[u32; 10]; SLOT_N] = [[0; 10]; SLOT_N];
 /// 槽位对应的页号。页号本身只有 `font_list::FONT_PID` / `icon_apply::ICON_PID` 一处真源,
 /// 这里不另写常量。
 fn pid_of(slot: usize) -> u32 {
+    if slot == SLOT_FILE { return crate::page::Pid::FileDetail as u32; }
     if slot == SLOT_APP { return crate::page::Pid::Detail as u32; }
     if slot == SLOT_ICON { icon_apply::ICON_PID } else { font_list::FONT_PID }
 }
@@ -75,7 +77,7 @@ pub(crate) unsafe fn build(slot: usize, target: u32, name: *const u8, name_len: 
     if !safe_ptr(root) { return 2; }
     let tp = core::ptr::addr_of_mut!(CP_TXT[slot]) as *mut u8;
     let mut w = W::new(tp, 48);
-    if slot == SLOT_APP { w.s("确认删除？".as_bytes()); } else {
+    if slot == SLOT_APP || slot == SLOT_FILE { w.s("确认删除？".as_bytes()); } else {
     w.s("删除「".as_bytes());
     if name_len != 0 && !name.is_null() {
         w.s(core::slice::from_raw_parts(name, name_len));

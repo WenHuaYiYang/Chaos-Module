@@ -204,7 +204,10 @@ pub static PAGE_CONNECT: [u8; 8] = *b"connect\0";
 pub static PAGE_CONNECT_PERMISSIONS: [u8; 12] = *b"connectperm\0";
 pub static PAGE_CONNECT_DEV_POLICY: [u8; 11] = *b"connectdev\0";
 
-pub const PAGE_COUNT: usize = 50;                   // 注册页数(页0..页49)
+pub static PAGE_FILES: [u8; 11] = *b"localfiles\0";
+pub static PAGE_FILE_DETAIL: [u8; 11] = *b"filedetail\0";
+
+pub const PAGE_COUNT: usize = 52;                   // 注册页数(页0..页51)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

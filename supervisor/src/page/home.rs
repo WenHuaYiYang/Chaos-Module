@@ -1,7 +1,7 @@
 //! 页0：主页与实时状态（CPU / 存储 / 内存）。
 //!
-//! 信息架构(只重排, 不增删入口): 状态区(CPU/存储/内存, 自绘) ->
-//! 「常用」应用管理/表盘管理/设置 ->「工具」系统美化/快应用动画/截屏录屏/NSH/实验性 ->「信息」关于。
+//! 信息架构: 状态区(CPU/存储/内存, 自绘) ->
+//! 「常用」应用管理/表盘管理/设置/文件管理器 ->「工具」系统美化/快应用动画/截屏录屏/NSH/实验性 ->「信息」ChaosConnect/关于。
 
 use crate::page::*;
 use crate::page::Page;
@@ -33,12 +33,13 @@ unsafe fn charge_text() -> *const u8 {
 }
 
 /// 菜单区行模型。槽位从 3 起: 0/1 留给数据行、2 是 CPU 行 —— tick 按槽号原地刷,
-/// 槽位布局不动, 只重排入口顺序与分组。
+/// 导航使用3..13，充电时间单独使用15，避免互相覆盖。
 static HOME_ROWS: &[RowModel] = &[
     RowModel::section(b"\xe5\xb8\xb8\xe7\x94\xa8\x00"),          // 常用
     RowModel::nav(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\x00", Pid::AppMgr as u32),      // 应用管理
     RowModel::nav(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\x00", Pid::WfMgr as u32),       // 表盘管理
     RowModel::nav(b"\xe8\xae\xbe\xe7\xbd\xae\x00", Pid::Settings as u32),                            // 设置
+    RowModel::nav("文件管理器\0".as_bytes(), Pid::Files as u32),
     RowModel::section(b"\xe5\xb7\xa5\xe5\x85\xb7\x00"),          // 工具
     RowModel::nav(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\x00", Pid::Beautify as u32),    // 系统美化
     RowModel::nav("快应用动画\0".as_bytes(),Pid::QuickappAnimation as u32),
@@ -46,6 +47,7 @@ static HOME_ROWS: &[RowModel] = &[
     RowModel::nav(b"NSH\xe7\xbb\x88\xe7\xab\xaf\x00", Pid::Nsh as u32),                              // NSH终端
     RowModel::nav(b"\xe5\xae\x9e\xe9\xaa\x8c\xe6\x80\xa7\xe5\x8a\x9f\xe8\x83\xbd\x00", Pid::Exp as u32), // 实验性功能
     RowModel::section(b"\xe4\xbf\xa1\xe6\x81\xaf\x00"),          // 信息
+    RowModel::nav(b"ChaosConnect\0", Pid::Connect as u32),
     RowModel::nav(b"\xe5\x85\xb3\xe4\xba\x8e\x00", Pid::About as u32),                               // 关于
 ];
 
@@ -105,9 +107,9 @@ impl Page for InfoPage {
             write_volatile(hp.add(5), d1.bar);
             // 菜单区: 常用/工具/信息 三组(行链锚在内存数据行下面)
             let menu_anchor = if d1.row != 0 { d1.row } else { ctx.title };
-            let charge = build_row(ctx, menu_anchor, 11,
+            let charge = build_row(ctx, menu_anchor, 15,
                 &RowSpec::display("上次充电时间\0".as_bytes(), charge_text()));
-            if charge == 0 { return Err(PageError::RowFailed(11)); }
+            if charge == 0 { return Err(PageError::RowFailed(15)); }
             frame::build(self, ctx, charge)?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
@@ -165,7 +167,7 @@ impl Page for InfoPage {
             }
             let rows = page_rows_ptr(0);
             if tk % 1200 == 0 {
-                let charge = read_volatile(rows.add(11));
+                let charge = read_volatile(rows.add(15));
                 if charge != 0 {
                     fw_api::row_update(charge, fw_api::NONE_PTR, fw_api::NONE_PTR,
                         charge_text(), 0, 0);

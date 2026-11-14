@@ -1,6 +1,6 @@
 # ChaosConnect 文件桥（p67 / 3.101.043）
 
-当前文件桥使用独立的 **ChaosConnect v1**。旧 CPC2、ConnectListen/Send/Message、fake Canopus context、模块 ABI 和兼容实现已从 `supervisor/bridge/` 移除，旧文件管理插件不再兼容。两端需要一起更新；原 `bridge.cfg` 配置继续使用，默认关闭；入口为“设置 → ChaosConnect → 启用”。
+当前文件桥使用独立的 **ChaosConnect v1**。旧 CPC2、ConnectListen/Send/Message、fake Canopus context、模块 ABI 和兼容实现已从 `supervisor/bridge/` 移除，旧文件管理插件不再兼容。两端需要一起更新；原 `bridge.cfg` 配置继续使用，默认关闭；入口为“主页 → 信息 → ChaosConnect → 启用”。
 
 ## 实际承载与 AstroBox 接口
 
@@ -73,7 +73,7 @@ python3 tools/build.py
 - ARM 探针执行生产 transport/codec 与固件真实 CTR wrapper，AES primitive、radio、timer、文件引擎为明确替身；覆盖普通包、同为 OTHER 的其他包名和旧私有类型的转交、损坏私有帧拒绝、8帧窗口、发送重试、epoch 取消和第三方 hook 保护。
 - 插件 `cargo test --lib` 验证实际 prost 往返与 pbjson 日志序列化、旧枚举错误复现、启动无设备/传输调用、协议边界、全部 ACK 后提交；`sh scripts/build_plugin.sh` 生成 WASI 组件和 `dist/chaos-connect.abp`。
 
-安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。进入 Chaos 设置 → ChaosConnect，打开“启用”，插件启用后先“刷新设备”，再“连接ChaosConnect”。无需安装旧模块或启用旧兼容插件。
+安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。进入 Chaos 主页 → 信息 → ChaosConnect，打开“启用”，插件启用后先“刷新设备”，再“连接ChaosConnect”。无需安装旧模块或启用旧兼容插件。
 
 固定互通向量保存在`CHAOSCONNECT-V1.hex`（插件位于`plugin/tests/`）：第一行为HELLO请求CCN1帧（request_id=0x1234），第二行为同一帧的宿主protobuf承载（packet_id=0x12341234）。两仓库的向量逐字节相同，C与Rust测试分别核对。
 
@@ -87,7 +87,7 @@ python3 tools/build.py
 
 原“运行日志”页面、通用日志模块和所有调用已移除，Chaos不再创建或追加`/data/chaos/chaos.log`。系统“日志级别设置”和固件诊断功能独立保留。
 
-“设置 → ChaosConnect”提供持久化的“启用”开关，下方为“ChaosConnect日志”。日志由设备端生产文件引擎在owner loop生成，不需要修改插件或增加任何协议字段；仅记录实际收到并处理的请求，不能观测插件界面中未发送给设备的行为。
+“主页 → 信息 → ChaosConnect”提供持久化的“启用”开关，下方为“ChaosConnect日志”。日志由设备端生产文件引擎在owner loop生成，不需要修改插件或增加任何协议字段；仅记录实际收到并处理的请求，不能观测插件界面中未发送给设备的行为。
 
 - 每条包含本地时间、INFO、请求编号、操作中文说明、完整规整路径、结果及协议状态码。
 - 覆盖连接协商、浏览目录（分页偏移/条目数量）、详情（类型/大小/mtime）、创建目录、删除、复制和移动的两端路径、读取文件、上传/保存编辑、CRC提交、取消和会话清理、开发者模式及链路回显测速。

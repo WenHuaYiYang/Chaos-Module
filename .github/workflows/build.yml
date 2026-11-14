@@ -37,6 +37,9 @@ jobs:
       - name: Test ChaosConnect protocol and native file operations
         run: python3 tools/test_chaos_connect.py
 
+      - name: Test local file manager and filename paths
+        run: python3 tools/test_local_files.py
+
       - name: Check supplied GIF and original playback timing
         run: .capture-test-venv/bin/python tools/test_gif_icon.py
 

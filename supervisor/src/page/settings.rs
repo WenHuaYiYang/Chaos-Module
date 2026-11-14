@@ -275,7 +275,7 @@ impl Page for VibPage {
 // 信息架构(只重排, 不增删入口):
 //   显示与交互  亮度 / 震动 / 屏幕翻转 / 应用图标
 //   时间与外观  时间设置 / 日期设置 / 系统关于页面修改
-//   存储与维护  缓存清理 / 日志级别设置 / 恢复fetch支持 / ChaosConnect
+//   存储与维护  缓存清理 / 日志级别设置 / 恢复fetch支持
 // 页名字符串沿用 `about`(registry.rs): 它只是 page_goto 的解析键, 与标题无关。
 
 unsafe fn enter_time() {
@@ -320,7 +320,6 @@ static SETTINGS_ROWS: &[RowModel] = &[
     RowModel::nav("缓存清理\0".as_bytes(), Pid::Cache as u32),
     RowModel::nav("日志级别设置\0".as_bytes(), Pid::LogLevel as u32),
     RowModel::nav("恢复fetch支持\0".as_bytes(), Pid::Fetch as u32),
-    RowModel::nav(b"ChaosConnect\0", Pid::Connect as u32),
 ];
 
 impl MenuSpec for SettingsPage {

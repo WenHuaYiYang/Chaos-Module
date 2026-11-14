@@ -2,6 +2,22 @@ use super::*;
 use crate::mock;
 
 #[test]
+fn filename_input_supports_long_names_symbols_and_chinese(){
+    let _lock=mock::TEST_LOCK.lock().unwrap();
+    unsafe{
+        setup(Completion::FileName);
+        assert!(chinese_capable()&&symbols_enabled());assert_eq!(capacity(),255);
+        press(KEY_SYMBOLS);for c in b"file_name-01.txt"{press(*c as u32);}
+        assert_eq!(input(),b"file_name-01.txt");
+        press(KEY_CHINESE);assert!(pinyin_active());
+        press(b'n' as u32);press(b'i' as u32);press(KEY_SYMBOLS);
+        assert!(!pinyin_active()&&SYMBOL_MODE);
+        assert!(core::str::from_utf8(&input()).unwrap().contains('你'));
+        press(KEY_CLEAR);for _ in 0..260{press(b'x' as u32);}assert_eq!(LENGTH,255);assert_eq!(TEXT[255],0);
+    }
+}
+
+#[test]
 fn dimmer_keyboard_only_exposes_digits_and_edit_actions() {
     let _lock = mock::TEST_LOCK.lock().unwrap();
     unsafe {

@@ -15,6 +15,7 @@ use crate::*;
 mod home;
 mod time;
 mod connect;
+mod file_manager;
 mod connect_log;
 mod watchface;
 mod settings;
