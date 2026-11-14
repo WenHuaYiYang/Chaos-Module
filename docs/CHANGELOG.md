@@ -9,6 +9,8 @@
 - 安装器脚本打包时瘦身（`tools/minify_lua.py`：去注释/缩进/空行，token 序列逐字比对断言），容器内 main.lua 约 46.5KB→32.9KB。
 - 容器内的模块副本在打包时 `--strip-unneeded`（`tools/build.py`，llvm/ rust-objcopy 优先，失败自动回退未 strip），副本约 1.45MB→1.40MB；构建产物 `supervisor/chaos_sup.ko` 本身不 strip。
 - `chaos-fetch/build.py` 兼容更严的 clang：统计计数器豁免 `-Wunused-but-set-global`；重定位表校验在缺 `llvm-readelf` 的环境退用 `llvm-objdump -r`（解析只认 R_ARM_ 前缀）。
+- 容器预览块改由 `tools/gen_preview.py` 自产（构建时不存在 `dist/preview.bin` 就现场渲染，
+  与固件解压函数同格式 0x5AA521E0 RLE、336x480，与旧链预览块逐字节一致）；`--preview` 仍可显式指定其它块。
 - CI（`.github/workflows/build.yml`）从"只编译模块"扩为完整安装包：`python3 tools/build.py --skip-ko` 出 `dist/chaos-installer-p67.bin` 并上传 artifact。
 
 ### 蜂窝交互

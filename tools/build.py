@@ -351,9 +351,16 @@ def main() -> int:
         print(f"完成（未打容器）: {dist}")
         return 0
 
-    preview = args.preview or repo / "tools" / "p67-preview.block"
+    # 预览块(容器头里的缩略图): 默认 dist/preview.bin, 不存在时由 gen_preview.py
+    # 自产(与固件解压函数同格式: 0x5AA521E0 RLE, 336x480)。--preview 可显式指定
+    # 其它块(如 tools/p67-preview.block)。
+    preview = args.preview or dist / "preview.bin"
     if not preview.is_file():
-        raise RuntimeError(f"缺少预览块: {preview}")
+        sys.path.insert(0, str(repo / "tools"))
+        import gen_preview  # noqa: PLC0415
+        blob = gen_preview.build_blob()
+        preview.write_bytes(blob)
+        print(f"预览块: gen_preview 自产 {len(blob)} bytes -> {preview}")
     out = args.out or dist / "chaos-installer-p67.bin"
     info = build_container(repo, out, preview, stage, assets, args.id, args.name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")
