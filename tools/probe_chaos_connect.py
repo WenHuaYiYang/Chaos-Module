@@ -62,17 +62,17 @@ def main():
         m.hooks[0xc7d719c]=send
         assert call(syms['chaos_bridge_start'])==0;call(syms['boot_tick']);call(syms['owner_tick'])
         receive=word(conn+12);assert receive!=0xc7d6e6d
-        def packet(f,pid):
+        def packet(f,pid,kind=0,namespace=b'ChaosConnect'):
             # fifth C argument (id) is on the stack, so use Python's independent encoding.
             def v(x):
                 out=bytearray()
                 while x>=128:out.append((x&127)|128);x>>=7
                 out.append(x);return bytes(out)
             def b(tag,p):return v(tag*8+2)+v(len(p))+p
-            basic=b(1,b'ChaosConnect')+b(2,b'');message=b(1,basic)+b(2,f)
-            return b'\x08'+v(0x4343)+b'\x10'+v(pid)+b(22,b(9,message))
-        def receive_frame(f,pid,ch=1):
-            p=packet(f,pid) if ch==1 else f;encrypted=bytes(x^0xa5 for x in p);m.u.mem_write(buf,encrypted)
+            basic=b(1,namespace)+b(2,b'');message=b(1,basic)+b(2,f)
+            return b'\x08'+v(kind)+b'\x10'+v(pid)+b(22,b(9,message))
+        def receive_frame(f,pid,ch=1,kind=0,namespace=b'ChaosConnect'):
+            p=packet(f,pid,kind,namespace) if ch==1 else f;encrypted=bytes(x^0xa5 for x in p);m.u.mem_write(buf,encrypted)
             # l2 RX's fifth argument is length; emulate caller stack.
             def dispatch(addr):
                 for reg,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),(h,ch,2,buf)):m.u.reg_write(reg,value)
@@ -85,6 +85,13 @@ def main():
         for reg,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),(h,1,2,buf)):m.u.reg_write(reg,value)
         m.put(0x2001e000,len(p));m.u.reg_write(UC_ARM_REG_SP,0x2001e000);m.u.reg_write(UC_ARM_REG_LR,RETURN|1);m.u.emu_start(receive|1,RETURN,count=4000000)
         assert original[-1]==(1,encrypted) and bytes(m.u.mem_read(crypto,64))==before
+        # OTHER is a host subscription wildcard, so namespace/CRC checks are essential.
+        for kind,namespace in [(0,b'AnotherApp'),(20,b'ChaosConnect'),(0x4343,b'ChaosConnect')]:
+            encrypted=receive_frame(frame(1,1),0x12340001,kind=kind,namespace=namespace)
+            assert original[-1]==(1,encrypted)
+        corrupt=bytearray(frame(1,1));corrupt[-1]^=1
+        count=len(original);receive_frame(bytes(corrupt),0x12340001);assert len(original)==count # corrupt private frame is dropped
+        call(syms['owner_tick']);assert word(syms['test_dispatches'])==0
         receive_frame(frame(1,1),0x12340001);call(syms['owner_tick']);assert word(syms['test_dispatches'])==1 and word(syms['test_chunk'])==2048
         call(syms['bt_tick']);call(syms['bt_tick']);assert attempts[0]==attempts[1] # retry uses pristine plaintext
         for i in range(8):receive_frame(frame(0x31,i+2,bytes([i])*2048),0x12340002+i)
@@ -96,6 +103,6 @@ def main():
         call(syms['chaos_bridge_stop'])
         # A third-party handler is never overwritten.
         m.put(conn+12,0x10070001);call(syms['chaos_bridge_start']);call(syms['owner_tick']);assert word(conn+12)==0x10070001
-        print('PASS production ARM hook/codec, ordinary encrypted and channel-0x43 passthrough, real stateless crypto wrapper, 8-frame window, immutable retry, epoch cancellation and foreign-hook preservation')
+        print('PASS production ARM hook/codec, ordinary encrypted/OTHER namespace passthrough, corrupt-private rejection, real stateless crypto wrapper, 8-frame window, immutable retry, epoch cancellation and foreign-hook preservation')
         print('HOST ONLY: AES/radio/timers/file engine are explicit seams; actual Bluetooth throughput requires hardware')
 if __name__=='__main__':main()

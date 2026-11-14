@@ -8,7 +8,7 @@
 AstroBox v4 插件
   transport.send + register_transport_recv + transport-packet
     → 已认证的小米 SARv2 / L2 PB 通道
-      → 私有 WearPacket.type = 0x4343
+      → WearPacket.Type.OTHER = 0 / ChaosConnect namespace
         → ChaosConnect CCN1 二进制帧
           → Chaos 原生 NuttX VFS
 ```
@@ -24,7 +24,7 @@ AstroBox v4 插件
 - [接收事件分发](https://github.com/AstralSightStudios/AstroBox-NG-Module-PluginSystem/blob/main/src/manager.rs)：`transport-packet` 的载荷是 **直接的标准 Base64 字符串**，不是 JSON 对象。
 - [WearPacket schema](https://github.com/AstralSightStudios/AstroBox-NG-Module-Pb/blob/main/protos/xiaomi/wear.proto)、[MessageContent schema](https://github.com/AstralSightStudios/AstroBox-NG-Module-Pb/blob/main/protos/xiaomi/wear_thirdparty_app.proto)。
 
-私有消息用已定义的 `thirdparty_app.message_content` bytes 字段承载，BasicInfo 名称为 `ChaosConnect`、fingerprint 为空，外层 type 保持私有值。不能使用未知 protobuf 字段藏数据，因为宿主会 decode/re-encode 并丢弃未知字段。插件测试通过真实 prost 往返验证私有 type、请求 ID 和所有二进制内容完整保留。系统应用的普通消息不占用该私有 type。
+私有消息用已定义的 `thirdparty_app.message_content` bytes 字段承载，BasicInfo 名称为 `ChaosConnect`、fingerprint 为空，外层 type 使用 schema 已定义的 `OTHER=0`。不能使用未知 protobuf 字段藏数据，因为宿主会 decode/re-encode 并丢弃未知字段。插件测试通过宿主同版本 prost / pbjson 生成器验证二进制往返和 JSON 日志序列化，确认请求 ID 和所有二进制内容完整保留。宿主订阅的 type 过滤值 0 表示通配，插件须继续检查 type、包名、帧 CRC 和连接前缀。
 
 ## 固件核对与生命周期
 
@@ -39,7 +39,7 @@ AstroBox v4 插件
 | SAR 帧限额 | `0x0C7D63F0..0x0C7D6404` 拒绝 `len+1 >= capacity` 或 `len > 0x7FFE` |
 | owner / BT loop | `0x20125700` / `0x201259E4`；timer init/start `0x0C2E3995` / `0x0C2E3B85`，对象136B |
 
-RX 只消费私有类型、正确 namespace/CRC、加密写 opcode 2 的消息。普通 PB、其他通道（包括旧 `0x43`）原样交回系统。VFS 和协议分发在 owner loop；发送在 BT loop。TX 保留明文并在每次尝试前复制，避免发送失败后把密文再次加密。
+RX 识别 OTHER 类型、ChaosConnect namespace、加密写 opcode 2 的消息，仅将 CRC 正确且请求 ID 一致的请求入队；命中本命名空间的损坏帧丢弃。其他包名、普通 PB、其他通道（包括旧 `0x43`）原样交回系统。VFS 和协议分发在 owner loop；发送在 BT loop。TX 保留明文并在每次尝试前复制，避免发送失败后把密文再次加密。
 
 队列有12个 RX 槽、16个 TX 槽；协商窗口8。处理请求前预留应答空间，进度事件不会挤掉应答。连接变化只接受新 HELLO；设备会清理打开的文件与未提交临时文件。停止时恢复 RX、递增 epoch，旧队列不能在重开后继续执行。文件清理交给 owner，不在设置页回调中执行。活跃维护为2–10ms，关闭后退到1s。
 
@@ -70,9 +70,15 @@ python3 tools/build.py
 ```
 
 - 文件引擎测试调用生产 `chaos_files.c` 与 `chaos_connect.c`，VFS 替换为真实临时目录，覆盖大文件、短写、CRC、重命名失败、目录与协议边界。
-- ARM 探针执行生产 transport/codec 与固件真实 CTR wrapper，AES primitive、radio、timer、文件引擎为明确替身；覆盖普通包转交、8帧窗口、发送重试、epoch 取消和第三方 hook 保护。
-- 插件 `cargo test --lib` 验证实际 prost 往返、协议边界、全部 ACK 后提交；`sh scripts/build_plugin.sh` 生成 WASI 组件和 `dist/chaos-connect.abp`。
+- ARM 探针执行生产 transport/codec 与固件真实 CTR wrapper，AES primitive、radio、timer、文件引擎为明确替身；覆盖普通包、同为 OTHER 的其他包名和旧私有类型的转交、损坏私有帧拒绝、8帧窗口、发送重试、epoch 取消和第三方 hook 保护。
+- 插件 `cargo test --lib` 验证实际 prost 往返与 pbjson 日志序列化、旧枚举错误复现、启动无设备/传输调用、协议边界、全部 ACK 后提交；`sh scripts/build_plugin.sh` 生成 WASI 组件和 `dist/chaos-connect.abp`。
 
-安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。开启 Chaos 设置中的“文件桥”，在插件中连接 ChaosConnect。无需安装旧模块或启用旧兼容插件。
+安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。开启 Chaos 设置中的“文件桥”，插件启用后先“刷新设备”，再“连接ChaosConnect”。无需安装旧模块或启用旧兼容插件。
 
 固定互通向量保存在`CHAOSCONNECT-V1.hex`（插件位于`plugin/tests/`）：第一行为HELLO请求CCN1帧（request_id=0x1234），第二行为同一帧的宿主protobuf承载（packet_id=0x12341234）。两仓库的向量逐字节相同，C与Rust测试分别核对。
+
+## 插件启用失败：Invalid variant 17219 / SendError
+
+首次故障发生于HELLO发送前的宿主日志序列化：旧外层 `0x4343` 是未知枚举，prost可以保留，pbjson却拒绝；宿主 `layer2.rs` 对结果unwrap，导致ECS线程panic。之后查询设备或再次启用插件显示的SendError是核心线程退出后的结果。
+
+设备与插件0.2.1同步改用OTHER，不接受旧私有类型，命名空间/CRC保护保持不变。插件on_load不再自动发现设备和发包，首次手动刷新后才接收设备变化并更新列表。回归测试复现旧错误，并验证新HELLO、数据块和进度事件可通过宿主JSON日志路径。**必须完全退出并重启AstroBox**才能恢复已退出的核心线程，仅切换插件开关无效。
