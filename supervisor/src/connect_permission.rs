@@ -30,6 +30,9 @@ pub(crate) unsafe fn set_policy(value:u32){
     else{fw_api::fs_remove(TEMP.as_ptr());connect_log::line("ChaosConnect权限保存失败，保持原策略");}
 }
 pub(crate) fn state()->u32{STATE.load(Ordering::Acquire)}
+pub(crate) fn disconnect(){
+    STATE.store(0,Ordering::Release);TOKEN.store(0,Ordering::Release);DECISION.store(0,Ordering::Release);
+}
 pub(crate) fn pending()->u32{
     if state()&1!=0&&(state()>>2)&7==1{TOKEN.load(Ordering::Acquire)}else{0}
 }

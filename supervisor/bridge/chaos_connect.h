@@ -28,4 +28,5 @@ void cc_files_reset(void);
 void cc_files_set_chunk(uint16_t chunk);
 /* Owner-loop maintenance; returns 1 when the plugin presence lease expired. */
 int cc_files_tick(uint32_t now);
+void chaos_bridge_set_enabled(uint32_t enabled);
 #endif

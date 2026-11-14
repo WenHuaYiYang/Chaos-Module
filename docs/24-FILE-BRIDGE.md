@@ -112,3 +112,11 @@ PING响应8字节：`connected:u8, developer:u8, policy:u8, authorization:u8, to
 固件依据：`0x0CAC0218` top-layer跳板目标`0x1C02FB35`（原display+0x2C8）；`msgbox_create` `0x0C4CA0D8`传mode0，内部`0x0C4C9F78`调用`0x0C4C9EB4`时page参数为0，因此不把top-layer对象当作page descriptor改写。ARM探针执行真实factory/constructor，底层LVGL分配/style/list为替身，验证父容器canary不变；尚需真机确认实际显示及蓝牙流程。
 
 测试覆盖三种策略、允许/拒绝、60秒超时、跨连接token失效、心跳过期/时钟回绕、撤权中断写入、策略文件保护，以及生产Rust配置持久化（短写/rename失败）、原子mailbox和全局弹窗的息屏/冲突/陈旧点击处理。
+
+## 启用开关的实时门禁（插件0.2.3）
+
+关闭开关先调用原生`chaos_bridge_set_enabled(0)`，再保存配置，不等待维护tick。门禁同时置停启动状态并推进epoch，RX解密前/入队前、owner分发与应答入队、BT发送均核对门禁；旧队列失效。延迟的boot回调也检查门禁，不能把已关闭服务重新启用。重新打开必须新HELLO，旧会话和授权不恢复。定时器/钩子/VFS收尾仍由原有维护owner执行，不在LVGL开关回调调用蓝牙或文件引擎。
+
+关闭时保存当前连接前缀并排一个专用停用事件`flags=2, opcode=0xC2, req=0`，载荷与PING状态8B一致（connected/dev/auth/token均0；policy保留实际策略）。只有这条通知允许在关闭后的BT回调发送，普通文件应答和新握手均不能发送。通知失败最多重试3次，每次从明文重建，避免就地加密污染重试内容；无线不可用时仍有原心跳超时兜底。插件0.2.3校验包名、CRC、请求ID及连接前缀后立即取消文件操作、清除连接/开发者状态与授权等待，不再仅靠心跳超时更新界面。
+
+回归：生产Rust配置开关验证门禁先于保存/维护生效、保存失败仍关闭、快速关开关保持最终状态；真实ARM transport探针验证关闭前已排队的请求/应答不再执行、关闭后新HELLO不通过、延迟boot不复活、重新开启需新HELLO、停用事件重试明文一致。插件生产接收路径测试验证匹配停用事件立即断开，损坏CRC和其他连接的停用事件不误伤。

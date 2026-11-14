@@ -31,7 +31,12 @@ typedef int (*timer_start_fn)(void *,void (*)(void *),uint64_t,uint64_t);
 struct request {volatile uint32_t state;uint32_t epoch,id;uint16_t handle,len;void *session;uint8_t data[CC_MAX_WIRE];};
 static struct request rx[RX_SLOTS],tx[TX_SLOTS];
 static uint8_t probe[CC_MAX_WIRE],plain[CC_MAX_FRAME],send_copy[CC_MAX_WIRE];
-static volatile uint32_t rx_read,rx_write,tx_read,tx_write,epoch,started,reset_pending;
+static volatile uint32_t rx_read,rx_write,tx_read,tx_write,epoch,started,reset_pending,wanted;
+static volatile uint32_t notice_pending,notice_attempts;
+static uint16_t notice_handle;
+static void *notice_session;
+static uint32_t notice_prefix;
+static uint8_t notice_wire[128];
 static uint16_t handle;
 static void *session;
 static uint32_t packet_id,request_epoch,prefix;
@@ -44,14 +49,25 @@ static void barrier(void){__asm__ volatile("dmb":::"memory");}
 static int ptr(uint32_t p){return !(p&3)&&((p>=0x20000000&&p<=0x2400ffff)||(p>=0x30000000&&p<=0x3fffffff));}
 static void copy(void *d,const void *s,uint32_t n){uint8_t *a=d;const uint8_t *b=s;for(uint32_t i=0;i<n;i++)a[i]=b[i];}
 static void original(uint16_t h,uint8_t ch,uint8_t op,void *p,uint16_t n){FN(L2_RX,rx_fn)(h,ch,op,p,n);}
+/* UI-safe gate: no timer, LVGL, VFS, or radio calls from the switch callback. */
+void chaos_bridge_set_enabled(uint32_t enabled){
+    uint32_t mask=lock();enabled=enabled!=0;
+    if(wanted!=enabled){
+        if(!enabled&&session){notice_handle=handle;notice_session=session;notice_prefix=prefix;notice_attempts=0;notice_pending=1;}
+        wanted=enabled;started=0;epoch++;reset_pending=1;barrier();
+    }
+    unlock(mask);
+}
 static void receive(uint16_t h,uint8_t ch,uint8_t op,void *p,uint16_t n){
-    if(!started||ch!=1||op!=2||!p||n>CC_MAX_WIRE){original(h,ch,op,p,n);return;}
+    if(!wanted||!started||ch!=1||op!=2||!p||n>CC_MAX_WIRE){original(h,ch,op,p,n);return;}
+    uint32_t received_epoch=epoch;
     void *s=FN(L2_SESSION,session_fn)(h);const uint8_t *frame;uint32_t size,id;
     /* 0x0c7025e8 copies the IV to its stack: probing does not advance the
      * session cipher. Unrelated encrypted traffic is forwarded byte-for-byte. */
     if(!s||FN(L2_CRYPTO,crypto_fn)(s,0,n,p,probe)!=0||cc_pb_unwrap(probe,n,&frame,&size,&id)!=1){original(h,ch,op,p,n);return;}
     struct cc_frame f;if(cc_decode(frame,size,&f)||f.flags||f.status||f.req!=(id&0xffffu))return;
     uint32_t mask=lock(),slot=rx_write;
+    if(!wanted||!started||received_epoch!=epoch){unlock(mask);return;}
     if(rx[slot].state){unlock(mask);return;} /* Peer is bounded by HELLO's window. */
     rx[slot].state=1;rx[slot].epoch=epoch;rx_write=(slot+1)%RX_SLOTS;unlock(mask);
     rx[slot].handle=h;rx[slot].session=s;rx[slot].id=id;rx[slot].len=size;copy(rx[slot].data,frame,size);barrier();rx[slot].state=2;
@@ -80,18 +96,34 @@ static uint16_t native_chunk(uint16_t h){
 }
 static unsigned tx_free(void){unsigned n=0;for(unsigned i=0;i<TX_SLOTS;i++)if(tx[i].state==0)n++;return n;}
 int cc_reply(uint8_t flags,uint8_t op,uint8_t status,uint16_t req,const void *data,uint32_t n){
-    if(!started||request_epoch!=epoch||!session)return -1;
+    if(!wanted||!started||request_epoch!=epoch||!session)return -1;
     int len=cc_encode(plain,sizeof(plain),flags,op,status,req,data,n);if(len<0)return -1;
     uint32_t mask=lock(),slot=tx_write;
+    if(!wanted||!started||request_epoch!=epoch){unlock(mask);return -1;}
     if(tx[slot].state){unlock(mask);return -1;}tx[slot].state=1;tx_write=(slot+1)%TX_SLOTS;unlock(mask);
     int wire=cc_pb_wrap(tx[slot].data,sizeof(tx[slot].data),plain,len,flags==CC_EVENT?(packet_id&0xffff0000u):packet_id);
     tx[slot].handle=handle;tx[slot].session=session;tx[slot].epoch=request_epoch;tx[slot].len=wire>0?wire:0;
     barrier();tx[slot].state=2;return wire>0?0:-1;
 }
 static int bt_start(uint32_t period);
+static void send_disabled_notice(void){
+    if(!notice_pending)return;
+    uint32_t mask=lock();uint16_t h=notice_handle;void *s=notice_session;uint32_t id=notice_prefix;unlock(mask);
+    if(FN(L2_SESSION,session_fn)(h)!=s){notice_pending=0;return;}
+    extern uint32_t chaos_connect_policy(void);
+    uint8_t payload[8]={0,0,(uint8_t)chaos_connect_policy(),0,0,0,0,0},frame[24];
+    int n=cc_encode(frame,sizeof(frame),CC_EVENT,0xc2,0,0,payload,sizeof(payload));
+    int wire=cc_pb_wrap(notice_wire,sizeof(notice_wire),frame,n,id);
+    if(wire>0){struct l2_packet p={0};p.channel=1;p.opcode=2;p.payload=notice_wire;p.len=wire;
+        if(FN(L2_SEND,send_fn)(s,&p)==0){mask=lock();if(notice_session==s&&notice_prefix==id)notice_pending=0;unlock(mask);}
+        else if(++notice_attempts>=3)notice_pending=0;
+    }
+}
 static void bt_tick(void *unused){
-    (void)unused;if(!started)return;
+    (void)unused;send_disabled_notice();
+    if(!wanted||!started){(void)bt_start(notice_pending?10:1000);return;}
     for(unsigned i=0;i<TX_SLOTS;i++){
+        if(!wanted||!started)break;
         uint32_t slot=tx_read;if(tx[slot].state!=2)break;
         if(tx[slot].len&&tx[slot].epoch==epoch&&FN(L2_SESSION,session_fn)(tx[slot].handle)==tx[slot].session){
             struct l2_packet p={0};p.channel=1;p.opcode=2;p.len=tx[slot].len;p.payload=send_copy;
@@ -109,14 +141,15 @@ static int bt_start(uint32_t period){
 }
 static void poll(void){
     if(reset_pending){cc_files_reset();reset_pending=0;session=0;prefix=0;}
-    if(!started)return;attach(0);
+    if(!wanted||!started){attach(1);return;}attach(0);
     if(session&&FN(L2_SESSION,session_fn)(handle)!=session){cc_files_reset();session=0;prefix=0;}
     extern uint32_t chaos_connect_now_ms(void);
     if(cc_files_tick(chaos_connect_now_ms())){session=0;prefix=0;}
     for(unsigned served=0;served<RX_SLOTS&&tx_free()>=3;served++){
+        if(!wanted||!started)break;
         uint32_t slot=rx_read;if(rx[slot].state!=2)break;
         struct request *r=&rx[slot];struct cc_frame f;
-        if(r->epoch==epoch&&r->len&&FN(L2_SESSION,session_fn)(r->handle)==r->session&&cc_decode(r->data,r->len,&f)==0){
+        if(wanted&&started&&r->epoch==epoch&&r->len&&FN(L2_SESSION,session_fn)(r->handle)==r->session&&cc_decode(r->data,r->len,&f)==0){
             int fresh=session!=r->session||handle!=r->handle||prefix!=(r->id&0xffff0000u);
             if(!fresh||f.op==1){
                 if(fresh){cc_files_reset();session=r->session;handle=r->handle;prefix=r->id&0xffff0000u;}
@@ -138,20 +171,23 @@ static int owner_start(uint32_t period){
 }
 static void boot_tick(void *unused){
     (void)unused;
-    if(owner_start(2)==0){started=1;if(boot_timer){FN(L2_TIMER_DELETE,void (*)(void *))(boot_timer);boot_timer=0;}}
+    if(wanted&&owner_start(2)==0)started=1;
+    if((started||!wanted)&&boot_timer){FN(L2_TIMER_DELETE,void (*)(void *))(boot_timer);boot_timer=0;}
 }
 int chaos_bridge_start(void){
+    if(!wanted)return -1;
     if(started||boot_timer)return 0;
     if(owner_init){if(owner_start(2))return -1;started=1;if(bt_init)(void)bt_start(10);return 0;}
     boot_timer=FN(L2_TIMER,void *(*)(void (*)(void *),uint32_t,void *))(boot_tick,10,0);
     return boot_timer?0:-1;
 }
 void chaos_bridge_stop(void){
+    chaos_bridge_set_enabled(0);
     started=0;barrier();attach(1);
     if(boot_timer){FN(L2_TIMER_DELETE,void (*)(void *))(boot_timer);boot_timer=0;}
     uint32_t mask=lock();epoch++;reset_pending=1;
     /* Do not overwrite buffers while their owner is processing them. Epochs
      * discard old work; owner/BT drains retire occupied slots in order. */
     unlock(mask);
-    if(owner_init)(void)owner_start(10);if(bt_init)(void)bt_start(1000);
+    if(owner_init)(void)owner_start(10);if(bt_init)(void)bt_start(notice_pending?10:1000);
 }

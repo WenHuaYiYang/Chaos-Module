@@ -235,6 +235,12 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(self.c.cc_files_tick((0xfffffff0+15000)&0xffffffff),1)
 
 class MemoryLogTests(unittest.TestCase):
+    def test_switch_gate_changes_before_save_or_maintenance(self):
+        with tempfile.TemporaryDirectory(prefix='chaos-connect-switch-') as work:
+            binary=Path(work)/'switch'
+            subprocess.run(['rustc','--edition=2021',str(ROOT/'supervisor/tests/bridge_cfg_harness.rs'),'-o',str(binary)],check=True)
+            for case in ['default','saved','immediate','failed-save','rapid']:
+                subprocess.run([str(binary),case],check=True)
     def test_permission_persistence_mailbox_and_global_prompt(self):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-permission-') as work:
             binary=Path(work)/'permissions'

@@ -3,8 +3,7 @@
 //! 文件格式：`BRG1` + 1 字节 enabled（0/1）。默认关闭；首次安装不会
 //! 自动接管私有消息，用户需要ChaosConnect文件桥时在设置页手动打开。
 //!
-//! 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 放到 `chaos_shake_timer`
-//! 里做，避免在 LVGL 点击回调里创建/撤销 owner timer。
+//! 开关回调立即切换收发门禁并作废旧队列，timer/VFS收尾仍交给各自owner。
 
 use crate::state::BRIDGE_STATE;
 use crate::{fw_api, connect_log, st_rd, st_wr};
@@ -19,6 +18,7 @@ static mut ENABLED: u32 = 0;
 const STATE_STOP: u32 = 0xFFFF_FFFE;
 
 extern "C" {
+    fn chaos_bridge_set_enabled(enabled:u32);
     fn chaos_bridge_start() -> i32;
     fn chaos_bridge_stop();
 }
@@ -38,6 +38,7 @@ unsafe fn load() {
     if n == 5 && &buf[0..4] == MAGIC && buf[4] <= 1 {
         ENABLED = buf[4] as u32;
     }
+    chaos_bridge_set_enabled(ENABLED);
 }
 
 /// 当前开关状态（默认关）。
@@ -66,10 +67,12 @@ unsafe fn save(on: bool) {
     }
 }
 
-/// UI 开关调用：翻转并落盘；实际 start/stop 由下一次维护 tick 执行。
+/// UI先关闭/开启原生门禁，再持久化；无需等待后续维护tick才禁止访问。
 pub(crate) unsafe fn toggle() -> bool {
     let on = !enabled();
     ENABLED = if on { 1 } else { 0 };
+    chaos_bridge_set_enabled(ENABLED);
+    if !on { crate::connect_permission::disconnect(); }
     save(on);
     // 打开时清 0，允许从停止/失败状态重新 start。
     // 关闭时写“停止待执行”，即使快速 关→开→关 也能让 tick 最终 stop；

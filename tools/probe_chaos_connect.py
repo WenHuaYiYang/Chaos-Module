@@ -18,7 +18,7 @@ def main():
             out=tmp/(Path(src).stem+'.o');objects.append(str(out))
             subprocess.run(['clang','--target=arm-none-eabi','-mcpu=cortex-m33','-mthumb','-mfloat-abi=soft','-ffreestanding','-fno-builtin','-ffunction-sections','-fdata-sections','-O2','-I'+str(ROOT/'supervisor/bridge'),'-c',str(ROOT/src),'-o',str(out)],check=True)
         elf=tmp/'probe.elf';sysroot=Path(subprocess.check_output(['rustc','--print','sysroot'],text=True).strip());host=next(x.split(': ',1)[1] for x in subprocess.check_output(['rustc','-vV'],text=True).splitlines() if x.startswith('host:'));lld=sysroot/'lib/rustlib'/host/'bin/rust-lld'
-        subprocess.run([str(lld),'-flavor','gnu','-Ttext=0x10000000','--gc-sections','--entry=chaos_bridge_start','-u','chaos_bridge_stop','-u','test_dispatches','-u','test_resets','-u','test_chunk',*objects,'-o',str(elf)],check=True)
+        subprocess.run([str(lld),'-flavor','gnu','-Ttext=0x10000000','--gc-sections','--entry=chaos_bridge_start','-u','chaos_bridge_stop','-u','chaos_bridge_set_enabled','-u','test_dispatches','-u','test_resets','-u','test_chunk',*objects,'-o',str(elf)],check=True)
         with elf.open('rb') as stream:
             e=ELFFile(stream);pages=set()
             for s in e.iter_segments():
@@ -60,6 +60,12 @@ def main():
             if fail[0]:fail[0]=False;return 0xffffffff
             return 0
         m.hooks[0xc7d719c]=send
+        assert call(syms['chaos_bridge_start'])==0xffffffff # disabled by default
+        call(syms['chaos_bridge_set_enabled'],1)
+        assert call(syms['chaos_bridge_start'])==0
+        call(syms['chaos_bridge_set_enabled'],0);call(syms['boot_tick'])
+        assert word(conn+12)==0xc7d6e6d and call(syms['chaos_bridge_start'])==0xffffffff
+        call(syms['chaos_bridge_set_enabled'],1)
         assert call(syms['chaos_bridge_start'])==0;call(syms['boot_tick']);call(syms['owner_tick'])
         receive=word(conn+12);assert receive!=0xc7d6e6d
         def packet(f,pid,kind=0,namespace=b'ChaosConnect'):
@@ -97,12 +103,33 @@ def main():
         for i in range(8):receive_frame(frame(0x31,i+2,bytes([i])*2048),0x12340002+i)
         call(syms['owner_tick']);call(syms['bt_tick']);assert word(syms['test_dispatches'])==9
         assert bytes(m.u.mem_read(crypto,64))==before
-        # Queued work must not survive a stop/restart into the new epoch.
-        receive_frame(frame(0x31,20,b'old'),0x12340014);call(syms['chaos_bridge_stop']);assert word(conn+12)==0xc7d6e6d
-        call(syms['chaos_bridge_start']);call(syms['owner_tick']);call(syms['bt_tick']);assert word(syms['test_dispatches'])==9
+        # Closing is immediate, even before the maintenance stop callback.
+        # Queue an already-accepted request and a reply, then close at the UI gate.
+        receive_frame(frame(0x31,19,b'queued-reply'),0x12340013);call(syms['owner_tick'])
+        receive_frame(frame(0x31,20,b'queued-request'),0x12340014)
+        before_dispatch=word(syms['test_dispatches']);before_send=len(attempts)
+        call(syms['chaos_bridge_set_enabled'],0)
+        receive_frame(frame(1,21),0x12340015) # cached RX callback still installed
+        call(syms['owner_tick']);fail[0]=True;call(syms['bt_tick']);call(syms['bt_tick'])
+        assert word(syms['test_dispatches'])==before_dispatch
+        # Only the stopped event may pass; its retry also uses pristine plaintext.
+        assert len(attempts)==before_send+2 and attempts[-1]==attempts[-2]
+        stopped=attempts[-1][0];assert b'CCN1'+bytes([1,2,0xc2,0]) in stopped
+        call(syms['bt_tick']);assert len(attempts)==before_send+2
+        assert call(syms['chaos_bridge_start'])==0xffffffff
+        call(syms['boot_tick']);assert word(conn+12)==0xc7d6e6d # late boot cannot re-enable
+        call(syms['chaos_bridge_set_enabled'],1);call(syms['chaos_bridge_start']);call(syms['owner_tick']);call(syms['bt_tick'])
+        assert word(syms['test_dispatches'])==before_dispatch
+        receive_frame(frame(0x31,22,b'no-hello'),0x56780016);call(syms['owner_tick'])
+        assert word(syms['test_dispatches'])==before_dispatch
+        receive_frame(frame(1,23),0x56780017);call(syms['owner_tick']);call(syms['bt_tick'])
+        assert word(syms['test_dispatches'])==before_dispatch+1
+        # Subsequent off/on cycles must also invalidate the old epoch.
+        baseline=word(syms['test_dispatches']);receive_frame(frame(0x31,24,b'old'),0x56780018);call(syms['chaos_bridge_stop']);assert word(conn+12)==0xc7d6e6d
+        call(syms['chaos_bridge_set_enabled'],1);call(syms['chaos_bridge_start']);call(syms['owner_tick']);call(syms['bt_tick']);assert word(syms['test_dispatches'])==baseline
         call(syms['chaos_bridge_stop'])
         # A third-party handler is never overwritten.
-        m.put(conn+12,0x10070001);call(syms['chaos_bridge_start']);call(syms['owner_tick']);assert word(conn+12)==0x10070001
+        m.put(conn+12,0x10070001);call(syms['chaos_bridge_set_enabled'],1);call(syms['chaos_bridge_start']);call(syms['owner_tick']);assert word(conn+12)==0x10070001
         # Execute the actual .043 msgbox factory/constructor used by the consent
         # overlay. Only lower LVGL allocation/style/list primitives are seams.
         # mode=0 must skip page lifecycle attachment (0xc4c9eb4's null branch),
@@ -116,6 +143,6 @@ def main():
         assert call(0xc4ca0d8,parent,0)==modal
         assert word(holder)==modal and bytes(m.u.mem_read(parent,128))==canary
         print('PASS real .043 system msgbox mode-0 constructor without page descriptor mutation; LVGL allocation/style primitives are seams')
-        print('PASS production ARM hook/codec, ordinary encrypted/OTHER namespace passthrough, corrupt-private rejection, real stateless crypto wrapper, 8-frame window, immutable retry, epoch cancellation and foreign-hook preservation')
+        print('PASS production ARM hook/codec, ordinary encrypted/OTHER namespace passthrough, corrupt-private rejection, real stateless crypto wrapper, 8-frame window, immutable retry, immediate off gate/late-boot rejection/stopped notice/new-HELLO requirement, epoch cancellation and foreign-hook preservation')
         print('HOST ONLY: AES/radio/timers/file engine are explicit seams; actual Bluetooth throughput requires hardware')
 if __name__=='__main__':main()
