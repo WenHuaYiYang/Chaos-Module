@@ -81,74 +81,6 @@ pub(crate) unsafe fn toggle() -> bool {
     next == VALUE_FLIPPED
 }
 
-// ===== 撕裂修复（2026-11-14 模拟器+真机逆向定案） =====
-//
-// 机理（逆向实证，见 docs/Chaos_UI重构_20261113.md §9.5）:
-//   翻转后 LVGL 的旋转拷贝把区域原地写进绘制缓冲，而面板驱动的流式任务正在
-//   **顺序读同一块缓冲**送面板 —— 旋转拷贝与流式读是两个线程的无同步竞争，
-//   流出去的就是"半新半旧"的一帧 = 用户看到的横向割裂。
-//   固件的 flush_cb(0x0C4B778C) 把失效区域收进队列后立即返回（异步），它自己
-//   在 busy(驱动 ctx+0x2B6) 非零时会用 ctx+0x2B8 的信号量**阻塞等待**上一批
-//   完成 —— 说明信号量的语义就是"驱动持有 = 正在流式，释放 = 本批完成"。
-// 修法: 替换 disp+0x2C(flush_wait_cb) 为一个真正等待的版本 —— LVGL 在每轮
-//   刷新的绘制开始前调用它，我们在那里等驱动把上一批流完，旋转拷贝就再也不会
-//   与流式读竞争。等待用固件自己的信号量原语(0xC1EA358 = 阻塞 take)，
-//   拿到即归还，不破坏驱动自己的计数。
-
-/// 原始 flush_cb（翻转前的值，恢复用）。已含 Thumb 位。
-static mut FLUSH_ORIG: u32 = 0x0C4B_778D;
-/// 我们的 flush_wait 已安装标志。
-static WAIT_INSTALLED: AtomicU8 = AtomicU8::new(0);
-
-/// 面板驱动上下文指针的持有者（SRAM，flush_cb 字面量池核对）。
-const DRIVER_CTX_HOLDER: u32 = 0x200C_EB7C;
-/// 信号量原语：0xC1EA358 = 阻塞 take（内部 nxsem_wait，IPSR 检查+计数递减+休眠路径
-/// 已反汇编核对）；完成路径由驱动在流式结束后释放同一信号量。
-const SEM_WAIT: u32 = 0x0C1E_A359;
-
-/// 我们的 flush_wait：等驱动的流式任务把上一批送完。
-/// LVGL 在每轮刷新绘制开始前调用它 —— 等待发生在这里，旋转拷贝就落在安静窗口。
-unsafe extern "C" fn our_flush_wait(_disp: u32) {
-    let ctx = read_volatile(DRIVER_CTX_HOLDER as *const u32);
-    if ctx != 0 && read_volatile((ctx + 0x2B6) as *const u8) != 0 {
-        // 上一批还在流式: 阻塞等驱动释放信号量(完成)，拿到后立即归还。
-        let sem = read_volatile((ctx + 0x2B8) as *const u32);
-        if sem != 0 {
-            let wait: unsafe extern "C" fn(u32) -> i32 = core::mem::transmute(SEM_WAIT as usize);
-            let _ = wait(sem);
-        }
-    }
-    // 之后执行原始 flush_wait 的重画触发逻辑(0x0C4B7425)。
-    let orig: unsafe extern "C" fn(u32) = core::mem::transmute((read_volatile(core::ptr::addr_of!(FLUSH_ORIG)) as usize) + 1);
-    orig(_disp);
-}
-
-/// 安装/恢复 flush_wait 钩子。翻转态安装，正常态恢复原始。
-unsafe fn wait_hook_install(install: bool) {
-    let disp = fw_api::display_default();
-    if disp == 0 {
-        return;
-    }
-    if install {
-        if WAIT_INSTALLED.swap(1, Ordering::AcqRel) == 1 {
-            return;
-        }
-        let orig = read_volatile((disp + 0x2C) as *const u32);
-        write_volatile(core::ptr::addr_of_mut!(FLUSH_ORIG), orig);
-        // 我们的等待函数地址(Thumb 位必须置 1，否则 INVSTATE 硬 fault)
-        let ours = our_flush_wait as *const () as u32 | 1;
-        write_volatile((disp + 0x2C) as *mut u32, ours);
-    } else {
-        if WAIT_INSTALLED.swap(0, Ordering::AcqRel) == 0 {
-            return;
-        }
-        let orig = read_volatile(core::ptr::addr_of!(FLUSH_ORIG));
-        if orig != 0 {
-            write_volatile((disp + 0x2C) as *mut u32, orig);
-        }
-    }
-}
-
 unsafe fn apply_now(value: u8) {
     let disp = fw_api::display_default();
     if disp == 0 {
@@ -156,9 +88,6 @@ unsafe fn apply_now(value: u8) {
     }
     fw_api::display_set_rotation(disp, if value == VALUE_FLIPPED { ROTATION_180 } else { ROTATION_0 });
     APPLIED.store(value, Ordering::Release);
-    // 撕裂修复: 翻转态安装 flush_wait 钩子（每轮刷新绘制前等上一批流完，
-    // 旋转拷贝不再与流式读竞争）；恢复态卸载。
-    wait_hook_install(value == VALUE_FLIPPED);
     // 旋转只重排已提交的像素；已建页面的内容树还带着旧方向的缓存，整树重画一次，
     // 免得切页时新旧方向的内容叠在一起（表现为一条横向接缝）。
     invalidate_pages();
@@ -184,7 +113,6 @@ pub(crate) unsafe fn ensure_applied() {
     }
     apply_now(want);
 }
-
 
 /// 只读探测：返回 display 指针与 `disp+0x20..0x5F` 的 64 个字节。
 ///
