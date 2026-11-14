@@ -301,6 +301,13 @@ pub unsafe extern "C" fn vibrate(vib_type: u32) {
     f(vib_type)
 }
 
+/// .043 MiWearScreen screen_turn_on(tag, source), UI owner only.
+/// 0x0CA7323C forwards r0/r1 to 0x0CA717B8; source 26 is stock wakelock.
+pub(crate) unsafe fn screen_wake_for_connect() {
+    let f: unsafe extern "C" fn(*const u8,u32)=transmute(0x0CA7323Dusize);
+    f(b"chaos-connect\0".as_ptr(),26);
+}
+
 /// `translate(消息号)` 取当前语言下的词，返回 NUL 结尾字符串
 ///
 /// 依据: 闹钟页宿主与滚轮回调都这么用 —— 池里存 `"hour.common"`/`"min.common"` 这类

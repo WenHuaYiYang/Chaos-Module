@@ -142,6 +142,26 @@ def main():
         for a in [0xc588cb8,0xc5883f8,0xc589448]:m.hooks[a]=lambda u:0
         assert call(0xc4ca0d8,parent,0)==modal
         assert word(holder)==modal and bytes(m.u.mem_read(parent,128))==canary
+        # Real screen_turn_on(tag, source): exercise its OFF-state dispatch and
+        # prove the stock wakelock source 26 + tag reach the display-owner helper.
+        screen_global=word(0xca73280);m.put(screen_global+0x1bc,0)
+        tag=0x20068000;m.u.mem_write(tag,b'chaos-connect\0');wake=[]
+        m.hooks[0xca6ecd8]=lambda u:0
+        m.hooks[0xca717b8]=lambda u:wake.append((u.reg_read(UC_ARM_REG_R0),u.reg_read(UC_ARM_REG_R1))) or 0
+        call(0xca7323c,tag,26);assert wake==[(tag,26)]
+        assert data[0xca6e9fc-0xc0c0000:0xca6e9fe-0xc0c0000]==b'\x1a\x21' # stock wakelock caller movs r1,#26
+        # Actual stock row update: a1/primary NULL, secondary populated. Verify
+        # a refresh changes only the secondary label, never the main title.
+        row,primary,secondary,status=0x20069000,0x2006a000,0x2006b000,0x2006c000
+        m.u.mem_write(row,bytes(128));m.put(row+0x3c,primary,secondary)
+        m.u.mem_write(status,"已连接\0".encode());updated=[]
+        m.hooks[0xc589490]=lambda u:updated.append((u.reg_read(UC_ARM_REG_R0),u.reg_read(UC_ARM_REG_R1))) or 0
+        m.hooks[0xc5891b0]=lambda u:0
+        m.put(0x2001e000,0,0)
+        call(0xc4c8904,row,0,0,status)
+        assert updated==[(secondary,status)],updated
+        print('PASS real .043 row refresh preserves primary and updates secondary only')
+        print('PASS real .043 screen wake dispatcher and stock source-26 caller; display-owner helper is a seam')
         print('PASS real .043 system msgbox mode-0 constructor without page descriptor mutation; LVGL allocation/style primitives are seams')
         print('PASS production ARM hook/codec, ordinary encrypted/OTHER namespace passthrough, corrupt-private rejection, real stateless crypto wrapper, 8-frame window, immutable retry, immediate off gate/late-boot rejection/stopped notice/new-HELLO requirement, epoch cancellation and foreign-hook preservation')
         print('HOST ONLY: AES/radio/timers/file engine are explicit seams; actual Bluetooth throughput requires hardware')

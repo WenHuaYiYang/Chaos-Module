@@ -19,7 +19,7 @@ pub mod fw_api {
     pub unsafe fn style_apply(_:u32,_:u32,_:u32,_:u32){}
     pub unsafe fn label_set_text(_:u32,p:*const u8){super::with(|u|u.text=std::ffi::CStr::from_ptr(p.cast()).to_str().unwrap().into());}
     pub unsafe fn obj_set_size_wh(_:u32,_:u32,h:u32){super::with(|u|u.height=h);}
-    pub unsafe fn obj_align(_:u32,_:u32,_:i32,_:i32){}
+    pub unsafe fn obj_align(obj:u32,_:u32,x:i32,y:i32){if obj==1{assert_eq!((x,y),(4,112));}}
     pub unsafe fn obj_clear_scrollable(_:u32){}
 }
 mod page {
@@ -44,7 +44,7 @@ mod page {
         pub use crate::confirm;
         pub mod scroll {
             pub unsafe fn viewport(_:u32,anchor:u32,_:i32,h:i32,horizontal:bool)->u32{
-                assert_eq!(anchor,12);assert_eq!(h,226);assert!(!horizontal);1
+                assert_eq!(anchor,0);assert_eq!(h,226);assert!(!horizontal);1
             }
             pub unsafe fn board(_:u32,_:i32,h:i32)->u32{crate::with(|u|u.board=h);2}
         }

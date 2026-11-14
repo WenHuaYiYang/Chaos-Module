@@ -2,7 +2,7 @@
 #![allow(dead_code,static_mut_refs)]
 use std::sync::Mutex;
 #[derive(Default)]
-struct Fixture{config:Option<Vec<u8>>,temp:Vec<u8>,fault:u8,on:bool,shown:bool,other:bool,creates:u32,logs:Vec<String>}
+struct Fixture{config:Option<Vec<u8>>,temp:Vec<u8>,fault:u8,on:bool,shown:bool,other:bool,wakes:u32,vibrations:u32,creates:u32,logs:Vec<String>}
 static FIX:Mutex<Option<Fixture>>=Mutex::new(None);
 fn with<T>(f:impl FnOnce(&mut Fixture)->T)->T{f(FIX.lock().unwrap().as_mut().unwrap())}
 const TOP:u32=0x20051000;const MODAL:u32=0x20052000;const OTHER:u32=0x20053000;
@@ -30,6 +30,8 @@ mod fw_api{
         if f.fault==2{return -1;}f.config=Some(f.temp.clone());f.temp.clear();0
     })}
     pub unsafe fn fs_remove(_: *const u8)->i32{super::with(|f|f.temp.clear());0}
+    pub unsafe fn screen_wake_for_connect(){super::with(|f|{f.on=true;f.wakes+=1;});}
+    pub unsafe fn vibrate(kind:u32){assert_eq!(kind,13);super::with(|f|f.vibrations+=1);}
     pub unsafe fn screen_is_on()->bool{super::with(|f|f.on)}
     pub unsafe fn display_default()->u32{0x20050000}
     pub unsafe fn display_top_layer(_:u32)->u32{super::TOP}
@@ -66,8 +68,8 @@ fn main(){
         }
         "prompt"=>unsafe{
             connect_permission::chaos_connect_state(1|4,19);
-            with(|f|f.on=false);connect_prompt::tick();with(|f|assert!(!f.shown));
-            with(|f|{f.on=true;f.other=true;});connect_prompt::tick();with(|f|assert_eq!(f.creates,0));
+            with(|f|{f.on=false;f.other=true;});connect_prompt::tick();with(|f|{assert!(!f.shown);assert_eq!((f.wakes,f.vibrations),(1,1));});
+            with(|f|{f.on=true;f.other=true;});connect_prompt::tick();with(|f|{assert_eq!(f.creates,0);assert_eq!((f.wakes,f.vibrations),(1,1));});
             with(|f|f.other=false);connect_prompt::tick();connect_prompt::tick();with(|f|assert_eq!(f.creates,1));
             connect_prompt::choose(6,true);assert_eq!(connect_permission::chaos_connect_take_decision(19),0);
             connect_prompt::choose(7,true);assert_eq!(connect_permission::chaos_connect_take_decision(19),1);with(|f|assert!(!f.shown));

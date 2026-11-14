@@ -107,7 +107,7 @@ ChaosConnect页面依次显示“启用”、连接状态、开发者模式、�
 
 PING响应8字节：`connected:u8, developer:u8, policy:u8, authorization:u8, token:u32`。HELLO能力位0x04表示支持状态/权限。普通PING成功不刷INFO日志；拒绝、授权结果、超时、会话结束会记录。插件核对能力位，等待授权期间阻止其它文件操作并提供取消按钮；最终状态以手环为准，不将“请求已发送”当作授权成功。
 
-弹窗使用已验证的043原生`lvx_page_msgbox`（左取消、右允许），挂在display top layer，支持Chaos在后台时提醒。系统已有顶层消息框时等待；屏幕关闭时不强制亮屏，插件提示点亮手环，60秒内未确认则拒绝。UI只处理弹窗，真正权限变更仍在协议owner执行。
+弹窗使用已验证的043原生`lvx_page_msgbox`（左取消、右允许），挂在display top layer，支持Chaos在后台时提醒。系统已有顶层消息框时等待；新授权请求到来时调用系统亮屏接口并震动一次，60秒内未确认则拒绝。UI只处理弹窗，真正权限变更仍在协议owner执行。
 
 固件依据：`0x0CAC0218` top-layer跳板目标`0x1C02FB35`（原display+0x2C8）；`msgbox_create` `0x0C4CA0D8`传mode0，内部`0x0C4C9F78`调用`0x0C4C9EB4`时page参数为0，因此不把top-layer对象当作page descriptor改写。ARM探针执行真实factory/constructor，底层LVGL分配/style/list为替身，验证父容器canary不变；尚需真机确认实际显示及蓝牙流程。
 
@@ -120,3 +120,11 @@ PING响应8字节：`connected:u8, developer:u8, policy:u8, authorization:u8, to
 关闭时保存当前连接前缀并排一个专用停用事件`flags=2, opcode=0xC2, req=0`，载荷与PING状态8B一致（connected/dev/auth/token均0；policy保留实际策略）。只有这条通知允许在关闭后的BT回调发送，普通文件应答和新握手均不能发送。通知失败最多重试3次，每次从明文重建，避免就地加密污染重试内容；无线不可用时仍有原心跳超时兜底。插件0.2.3校验包名、CRC、请求ID及连接前缀后立即取消文件操作、清除连接/开发者状态与授权等待，不再仅靠心跳超时更新界面。
 
 回归：生产Rust配置开关验证门禁先于保存/维护生效、保存失败仍关闭、快速关开关保持最终状态；真实ARM transport探针验证关闭前已排队的请求/应答不再执行、关闭后新HELLO不通过、延迟boot不复活、重新开启需新HELLO、停用事件重试明文一致。插件生产接收路径测试验证匹配停用事件立即断开，损坏CRC和其他连接的停用事件不误伤。
+
+## 显示与授权提醒修复（插件0.2.4）
+
+日志的全宽328px视口不再对齐左侧156px按钮；它固定在content的x=4/y=112，内容板328px、标签320px并只纵向滚动，长行手动折行。先设置标签尺寸再设置文本，避免初始默认宽度导致裁切。状态刷新按固件真实参数`row_update(row, NULL, NULL, secondary, 0, 0)`更新，保留连接/开发者/授权状态的主标题。
+
+新授权token首次到来时（UI维护上下文）调用`screen_turn_on("chaos-connect",26)`唤醒熄屏，并执行系统`vibrate(0x0D)`一次；同token等待系统弹窗释放或用户确认时不反复提醒。震动遵守系统震动设置，授权超时与拒绝规则保留。
+
+固件依据：`0x0CA7323C`读取screen manager的+0x1BC，在OFF路径保留r0/r1传递给`0x0CA717B8`；stock wakelock调用点`0x0CA6E9FC`设置r1=26。ARM探针执行真实screen_turn_on入口，display-owner helper为替身；同时执行真实`0x0C4C8904`验证仅更新row+0x40副标签，row+0x3C主标签不变。亮屏、震动和物理显示仍需真机验收。

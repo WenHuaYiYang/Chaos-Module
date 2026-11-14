@@ -388,6 +388,7 @@ unsafe fn tick_busy() -> bool {
     || crate::fw_api::dynamic_icon::pack_animation_busy()
     || (st_rd!(SIM_LITE) == 0 && crate::appmgr::boot_pending())
     || crate::terminal_ui::busy()
+    || crate::connect_permission::pending()!=0
 }
 
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。
@@ -399,7 +400,9 @@ unsafe fn tick_adapt() {
     let busy = tick_busy();
     let want = if busy {
         TICK_FAST_MS
-    } else if fw_api::screen_is_on() {
+    } else if fw_api::screen_is_on() || crate::connect_permission::state()&1!=0 {
+        // An active plugin may request on-watch consent while the screen is off;
+        // keep its UI mailbox responsive instead of sleeping for four seconds.
         TICK_MID_MS
     } else {
         TICK_IDLE_MS

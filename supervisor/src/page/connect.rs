@@ -49,7 +49,7 @@ impl Page for ConnectPage {
         if LAST==state{return;}LAST=state;
         for (slot,text) in [(1,connection_text()),(2,developer_text()),(3,authorization_text())]{
             let row=read_volatile(page_rows_ptr(Pid::Connect as usize).add(slot));
-            if row!=0{fw_api::row_update(row,fw_api::NONE_PTR,text,fw_api::NONE_PTR,0,0);}
+            if row!=0{fw_api::row_update(row,fw_api::NONE_PTR,fw_api::NONE_PTR,text,0,0);}
         }
     }}
 }

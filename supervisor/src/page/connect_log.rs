@@ -236,17 +236,20 @@ impl Page for LogPage {
             let older = build_tile_below(ctx, t0, 2, "更早日志\0".as_bytes(), TILE_W, 44);
             if older == 0 { return Err(PageError::RowFailed(2)); }
             let _ = build_tile_right(ctx, older, 3, "更新日志\0".as_bytes(), TILE_W, 44);
-            let vp = crate::page::kit::scroll::viewport(ctx.content, older,
+            // The anchor above is the LEFT half-width button. Centering a full
+            // viewport under it shifts the log ~80px offscreen. Anchor to content.
+            let vp = crate::page::kit::scroll::viewport(ctx.content, 0,
                 LOG_VIEWPORT_W as i32, LOG_VIEWPORT_H as i32, false);
             if vp != 0 {
+                fw_api::obj_align(vp, fw_api::align::TOP_LEFT, 4, 112);
                 let board_h = if LOG_TEXT_H > LOG_VIEWPORT_H as i32 { LOG_TEXT_H } else { LOG_VIEWPORT_H as i32 };
                 let board = crate::page::kit::scroll::board(vp, LOG_VIEWPORT_W as i32, board_h);
                 if board != 0 {
                     let lab = fw_api::label_create(board);
                     if lab != 0 {
                         fw_api::style_apply(lab, crate::FW_STYLE_MISANS_REG_24, 255, 0);
-                        fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
                         fw_api::obj_set_size_wh(lab, LOG_TEXT_W, LOG_TEXT_H as u32);
+                        fw_api::label_set_text(lab, core::ptr::addr_of!(LOG_TEXT) as *const u8);
                         fw_api::obj_align(lab, fw_api::align::TOP_LEFT, 4, 0);
                         fw_api::obj_clear_scrollable(lab);
                     }
