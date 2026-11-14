@@ -7,7 +7,8 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
         let icons = [0x10000,0x10100,0x10200];
         for visual in [0,1,2] {
             if visual != 0 { select(visual); }
-            for _ in 0..4 { tick(); }
+            tick(); // 首拍即显示，不等待背景采样倒计时。
+            crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
             assert_eq!(MODE,visual as usize);
             assert!(GLASS_VALID);
             crate::state(|s| {
@@ -28,13 +29,22 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
         let samples = crate::state(|s|s.samples);
         for y in [350,340,330] {
             crate::state(|s|s.anchor_y=Some(y)); tick();
-            assert!(!GLASS_VALID);
-            crate::state(|s|assert_eq!(s.samples,samples));
+            assert!(GLASS_VALID);
+            crate::state(|s| {
+                assert_eq!(s.samples,samples);
+                assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0);
+            });
         }
         for _ in 0..3 { tick(); }
         assert!(GLASS_VALID);
-        crate::state(|s| {assert_eq!(s.samples,samples+1);assert!(s.cleans>=7);});
+        crate::state(|s| {assert_eq!(s.samples,samples);assert!(s.cleans>=6);});
         toggle(); tick(); assert_eq!(VIEW,0);
+        crate::state(|s|s.gpu_busy=true);
+        toggle(); tick();
+        assert!(!GLASS_VALID);
+        crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
+        assert!(GLASS_ATTEMPTED); // GPU忙碌也立即显示，不进入无限等待。
+        toggle(); tick();
         LOADED=false; assert!(!enabled());
     }
 }

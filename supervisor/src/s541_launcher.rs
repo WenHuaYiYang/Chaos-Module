@@ -16,10 +16,8 @@ static mut BUTTON_CLICKABLE: bool = false;
 static mut SHOWN_MODE: usize = 3;
 static mut GLASS: u32 = 0;
 static mut GLASS_VALID: bool = false;
-static mut GLASS_WAIT: u8 = 2;
+static mut GLASS_ATTEMPTED: bool = false;
 static mut GLASS_INDEX: usize = 0;
-static mut NEEDS_GLASS: bool = false;
-static mut GLASS_FAILURES: u8 = 0;
 static mut LAST_PAN: Point = Point { x: i32::MAX, y: i32::MAX };
 #[repr(align(64))]
 struct Pixels([u8; 110592]);
@@ -72,8 +70,7 @@ unsafe fn clear() {
     }
     VIEW = 0; LAYER = 0; ROOT = 0; OWNER = 0; GLASS = 0; BUTTON = 0;
     SHOWN_MODE = 3;
-    GLASS_VALID = false; GLASS_WAIT = 2;
-    NEEDS_GLASS = false; GLASS_FAILURES = 0;
+    GLASS_VALID = false; GLASS_ATTEMPTED = false;
     LAST_PAN = Point { x: i32::MAX, y: i32::MAX };
 }
 unsafe extern "C" fn deleted(event: u32) {
@@ -129,7 +126,7 @@ unsafe fn create(grid: u32, button: u32) -> bool {
         fw::obj_add_flag(b, fw::LV_OBJ_FLAG_CLICKABLE);
         fw::obj_add_event(b, select as *const () as u32, 4, i as u32);
     }
-    hide(VIEW, true); GLASS_VALID = false; GLASS_WAIT = 2;
+    hide(VIEW, true); GLASS_VALID = false; GLASS_ATTEMPTED = false;
     true
 }
 pub(crate) unsafe fn render(grid: u32) {
@@ -149,26 +146,20 @@ pub(crate) unsafe fn render(grid: u32) {
     if rd32((button + 0x2c) as *const u32) & 1 != 0 { hide(VIEW, true); return; }
     let pos = Point { x, y };
     if LAST_PAN != pos {
-        // 滚动时不能继续携带旧位置的背景快照，也不能在移动中的帧逐行取样。
+        // 只移动控制条；保留已发布的不可变玻璃图，不能隐藏按钮等待重采样。
         fw::obj_invalidate(VIEW);
-        hide(VIEW, true);
         fw::obj_align(VIEW, fw::align::TOP_LEFT, x, y);
         LAST_PAN = pos;
-        GLASS_VALID = false; GLASS_WAIT = 2; GLASS_FAILURES = 0;
         fw::obj_invalidate(LAYER);
     }
-    NEEDS_GLASS = !GLASS_VALID && x >= 0 && x <= 48 && y >= 0 && y + 96 <= 480;
-    if !NEEDS_GLASS && !GLASS_VALID { hide(VIEW, true); return; }
-    if !GLASS_VALID {
-        // 先让原生背景在没有控制条的情况下完成一帧，避免捕获自身。
-        if GLASS_WAIT != 0 { GLASS_WAIT -= 1; hide(VIEW, true); return; }
-        if rd32((ROOT + 0x20) as *const u32) != 0 || !fw::s541_frame_idle() { return; }
-        if fw::s541_capture_region(&mut SAMPLE, x as u32, y as u32).is_err() {
-            GLASS_FAILURES += 1;
-            if GLASS_FAILURES >= 3 {
-                crate::log::line("s541控制条：背景采样失败，使用透明底图");
-                GLASS_VALID = true; NEEDS_GLASS = false; hide(VIEW, false);
-            }
+    // 首次发布前至多尝试一次取样；显示后绝不隐藏或采到自身。
+    let first_visible = !GLASS_ATTEMPTED && x >= 0 && x <= 48 && y < 480 && y + 96 > 0;
+    let capture = first_visible && rd32((ROOT + 0x20) as *const u32) == 0 && fw::s541_frame_idle();
+    if first_visible { GLASS_ATTEMPTED = true; }
+    hide(VIEW, false);
+    if capture {
+        if fw::s541_capture_region(&mut SAMPLE, x as u32, y.clamp(0, 384) as u32).is_err() {
+            crate::log::line("s541控制条：背景采样失败，使用透明底图");
             return;
         }
         // 捕获期间若GPU开始下一帧，舍弃跨帧样本，不能发布撕裂背景。
@@ -180,7 +171,7 @@ pub(crate) unsafe fn render(grid: u32) {
         fw::s541_clean_pixels(GLASS_PIXELS[next].0.as_ptr(), 110592);
         GLASS_IMAGES[next] = [0x11019, 288 | (96 << 16), 1152, 110592, GLASS_PIXELS[next].0.as_ptr() as u32, 0, 0];
         fw::background_image_set_source(GLASS, GLASS_IMAGES[next].as_ptr() as u32);
-        GLASS_INDEX = next; GLASS_VALID = true; NEEDS_GLASS = false;
+        GLASS_INDEX = next; GLASS_VALID = true;
     }
     hide(VIEW, false);
 }
@@ -189,7 +180,7 @@ pub(crate) unsafe fn tick() {
     if crate::honeycomb::enabled() { clear(); return; }
     let grid = native::launcher();
     if grid == 0 || !native::s541_supported(grid) { clear(); return; }
-    if fw::top_app_id() != fw::HOME_APP_ID { GLASS_VALID = false; GLASS_WAIT = 2; GLASS_FAILURES = 0; return; }
+    if fw::top_app_id() != fw::HOME_APP_ID { return; }
     if !native::visible(grid) { if VIEW != 0 { hide(VIEW, true); } return; }
     render(grid);
 }
