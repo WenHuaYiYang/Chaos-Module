@@ -129,7 +129,6 @@ unsafe fn refresh_msg_row() {
     }
 }
 
-
 // ---- 列表分批建立 ----
 // 打开页面时一次建几十行会长时间占住 UI 线程；这里先建首屏几行, 其余的每次 tick 续几行。
 // kind: 1 = 页1(无复选框), 2 = 页30(带复选框)。副标题用调用方传进来的状态文案。
@@ -180,8 +179,7 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32) {
     }
     let expected = if kind == 2 { crate::appmgr::batch_total() as u32 } else { LB_N };
     crate::appmgr::set_ui_rows(expected);
-    crate::log::kv("应用总数 ", crate::appmgr::count() as u32);
-    crate::log::kv("可见列表条目数 ", LB_N);
+
     list_build_chunk(LB_FIRST_CHUNK);
 }
 
@@ -209,7 +207,7 @@ unsafe fn list_build_chunk(limit: u32) {
         let sub_ph: &[u8] = b"\xc2\xa0\0";
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
             sub_ph.as_ptr(), trailing);
-        if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
+        if r == 0 {  LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
         fw_api::obj_add_event(r, row_cb(), 7, v as u32 + 12);
         fw_api::obj_set_size_wh(r, 320, 100);
@@ -382,7 +380,6 @@ impl Page for AppMgrPage {
         }
     }
 }
-
 
 static mut AM_MSG_ROW: u32 = 0;
 static mut AM_HDR_ROW: u32 = 0;
@@ -662,6 +659,5 @@ impl Page for BatchPage {
         }
     }
 }
-
 
 pub(super) static PAGE_APPMGR: AppMgrPage = AppMgrPage;

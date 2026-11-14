@@ -9,7 +9,6 @@ use super::*;
 // 不走固件的卸载命令, 也不需要重启。
 // 批量页: 勾选集合, 支持全选/取消全选、隐藏选中、显示选中、删除选中。
 
-
 // 快应用在各固件版本里落盘位置不完全一致; 逐个候选求和/删除, 不存在的自然贡献 0。
 // 依据: 固件字符串 "/data/app/%s/%s"(图标)、"/data/quickapp/"(config/rpk_info)、
 // "data/quickapp/system"、"/data/quickapp/cache"; SmartHome 另外尝试 /data/ 下。
@@ -219,8 +218,7 @@ pub(crate) unsafe fn scan_size(pkg: *const u8) {
         k += 1;
     }
     D_SIZE = D_BYTES;
-    crate::log::kv("详情大小(字节) ", D_BYTES);
-    crate::log::kv("命中的目录数 ", HITS);
+
 }
 
 pub(crate) unsafe fn rm_app_dirs(pkg: *const u8) {
@@ -421,18 +419,15 @@ pub(crate) unsafe fn detail_launch() -> bool {
     if !detail_valid() { return false; }
     let pkg = core::ptr::addr_of!(D_PKG) as *const u8;
     // 表没初始化（真机上 0x20111B90 常为 NULL）时先拉起 proxyquickapp 一次。
-    let mut n = fw_api::quickapp_app_count();
-    if n <= 0 {
-        let booted = fw_api::quickapp_proxy_init();
-        n = fw_api::quickapp_app_count();
-        crate::log::kv("打开应用-拉起proxy ", if booted { 1 } else { 0 });
+    if fw_api::quickapp_app_count() <= 0 {
+        let _ = fw_api::quickapp_proxy_init();
     }
-    crate::log::kv("打开应用-应用表数量 ", if n > 0 { n as u32 } else { 0 });
+
     // 深度隐藏重启后注册表没有节点: 先按包名补建(固件页面管理器按节点找应用),
     // 补完若原本是隐藏态, 再把图标摘掉, 保持隐藏。
     if find_node(pkg) == 0 {
         let ok = fw_api::quickapp_register_pkg(pkg);
-        crate::log::kv("打开应用-补建节点 ", if ok { 1 } else { 0 });
+
         if ok && D_HIDDEN != 0 { let _ = apply_pkg(true, pkg); }
     }
     let rc = fw_api::quickapp_launch_app(pkg);
@@ -461,7 +456,7 @@ pub(crate) unsafe fn uninstall_pkg(pkg: *const u8, name: *const u8) -> bool {
     w.s("\0".as_bytes());
     w.end();
     MSG_KEEP = 1;
-    crate::log::cstr(core::ptr::addr_of!(APP_MSG) as *const u8);
+
     reload();
     true
 }
@@ -587,7 +582,7 @@ pub(crate) unsafe fn do_del_batch() {
     w.end();
     MSG_KEEP = 1;
     sel_clear();
-    crate::log::kv("批量卸载完成 ", DEL_OK as u32);
+
     reload();
 }
 

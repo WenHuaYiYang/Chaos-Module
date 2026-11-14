@@ -24,7 +24,13 @@ class ConnectTests(unittest.TestCase):
         (cls.root/'data').mkdir();(cls.root/'resource').mkdir()
     @classmethod
     def tearDownClass(cls):cls.c.cc_files_reset();cls.work.cleanup()
-    def setUp(self):self.c.cc_files_reset();self.c.cc_test_fault(0,0)
+    def setUp(self):self.c.cc_files_reset();self.c.cc_test_fault(0,0);self.c.cc_test_clear_logs()
+    def logs(self):
+        out=[];buf=C.create_string_buffer(1024)
+        for i in range(256):
+            if not self.c.cc_test_log(i,buf):break
+            out.append(buf.value.decode('utf-8'))
+        return '\n'.join(out)
     def request(self,op,payload=b'',req=1):
         wire=frame(op,req,payload);self.assertEqual(self.c.cc_test_dispatch(wire,len(wire)),0)
         replies=[];buf=C.create_string_buffer(4096)
@@ -107,5 +113,61 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(self.request(0x23)[0],0)
         status,echo=self.request(0x31,bytes(range(128)));self.assertEqual((status,echo),(0,bytes(range(128))))
         self.c.cc_files_set_chunk(CHUNK)
+
+    def test_info_audit_tracks_paths_actions_results_and_never_file_contents(self):
+        self.request(1)
+        folder='/data/日志测试';target=folder+'/说明.txt'
+        self.request(4,path(folder))
+        self.request(2,path(folder)+struct.pack('<IB',0,16))
+        data=b'private contents must not appear in audit'
+        self.open_write(target,len(data));self.request(0x21,struct.pack('<I',0)+data)
+        self.request(0x22,struct.pack('<I',zlib.crc32(data)))
+        self.request(3,path(target));self.request(0x10,path(target))
+        self.request(0x11,struct.pack('<IH',0,len(data)));self.request(0x12)
+        self.request(8,path(target)+path(folder+'/副本.txt')+b'\x00')
+        self.request(7,path(folder+'/副本.txt')+path(folder+'/移动.txt'))
+        self.request(5,path(folder+'/移动.txt'))
+        self.request(6,path(folder)) # not empty
+        self.open_write('/proc/denied',1)
+        logs=self.logs()
+        for s in ['连接/协商协议','chunk=2048','浏览文件夹 "'+folder+'"',
+                  '打开文件读取（预览/下载） "'+target+'"',
+                  '打开文件写入（上传/保存编辑） "'+target+'"',
+                  '查看文件/目录信息','复制文件','移动/重命名','删除文件',
+                  '目录非空','没有权限','校验并提交文件 "'+target+'"','req=',
+                  'committed_offset=','returned_bytes=','transferred_bytes=']:
+            self.assertIn(s,logs)
+        self.assertNotIn(data.decode(),logs)
+
+    def test_failed_commit_and_session_reset_retain_auditable_target(self):
+        self.open_write('/data/audit-failed.txt',3)
+        self.request(0x21,struct.pack('<I',0)+b'abc')
+        self.request(0x22,struct.pack('<I',0))
+        self.assertIn('校验并提交文件 "/data/audit-failed.txt"',self.logs())
+        self.assertIn('CRC校验失败',self.logs())
+        self.open_write('/data/audit-reset.txt',3);self.c.cc_files_reset()
+        self.assertIn('取消未提交写入并清理临时文件 "/data/audit-reset.txt"',self.logs())
+
+    def test_large_transfer_logs_checkpoints_without_per_packet_flood(self):
+        data=b'z'*(256*1024)
+        self.open_write('/data/audit-large.bin',len(data))
+        for offset in range(0,len(data),CHUNK):
+            self.request(0x21,struct.pack('<I',offset)+data[offset:offset+CHUNK])
+        self.request(0x22,struct.pack('<I',zlib.crc32(data)))
+        self.assertLess(len(self.logs().splitlines()),12)
+        self.assertIn('committed_offset=65536',self.logs())
+        self.assertIn('written_bytes=262144',self.logs())
+
+class MemoryLogTests(unittest.TestCase):
+    def test_ring_wrap_pagination_clear_and_utf8(self):
+        with tempfile.TemporaryDirectory(prefix='chaos-connect-log-') as work:
+            binary=Path(work)/'log-tests'
+            subprocess.run(['rustc','--test',str(ROOT/'supervisor/src/connect_log_buffer.rs'),'-o',str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
+    def test_log_page_long_paths_paging_and_clear(self):
+        with tempfile.TemporaryDirectory(prefix='chaos-connect-log-ui-') as work:
+            binary=Path(work)/'log-ui-tests'
+            subprocess.run(['rustc','--edition=2021','--test',str(ROOT/'supervisor/tests/connect_log_page_harness.rs'),'-o',str(binary)],check=True,env=dict(os.environ,CARGO_PKG_VERSION='test'))
+            subprocess.run([str(binary),'--test-threads=1'],check=True)
 
 if __name__=='__main__':unittest.main()

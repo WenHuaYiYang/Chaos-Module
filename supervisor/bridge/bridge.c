@@ -38,7 +38,6 @@ static uint32_t packet_id,request_epoch,prefix;
 static uint32_t owner_init,bt_init,owner_period,bt_period;
 static uint64_t owner_timer[(TIMER_SIZE+7)/8],bt_timer[(TIMER_SIZE+7)/8];
 static void *boot_timer;
-extern void chaos_bridge_log(const char *);
 static uint32_t lock(void){uint32_t p;__asm__ volatile("mrs %0, primask\n\tcpsid i":"=r"(p)::"memory");return p;}
 static void unlock(uint32_t p){__asm__ volatile("msr primask, %0"::"r"(p):"memory");}
 static void barrier(void){__asm__ volatile("dmb":::"memory");}

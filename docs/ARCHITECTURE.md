@@ -36,7 +36,8 @@ Chaos-Module/
 │   │   │   ├── beautify.rs      页 4/5/6/7/13/15/28 美化
 │   │   │   ├── watchface.rs     页 8/9/10 表盘
 │   │   │   ├── settings.rs      页 11/12/14/16/19 设置类
-│   │   │   ├── log.rs           页 17 运行日志
+│   │   │   ├── connect_log.rs   页 17 ChaosConnect内存操作日志
+│   │   │   ├── connect.rs       页 47 ChaosConnect入口与启用开关
 │   │   │   ├── about.rs         页 18/20/21 关于与许可
 │   │   │   ├── system.rs        页 22/24/25/26/27 系统关于
 │   │   │   └── keyboard.rs      页 23 键盘页面包装
@@ -52,7 +53,8 @@ Chaos-Module/
 │   │   ├── icon_pack_animation.rs  图标包动画流式播放/暂停/切包
 │   │   ├── background_*.rs      通透背景、模糊、桌面滑动
 │   │   ├── watchface*.rs        表盘切换、摇一摇轮换
-│   │   ├── log.rs               运行日志（48 KB 滚动）
+│   │   ├── connect_log.rs       ChaosConnect专用INFO日志（32KiB内存，不写闪存）
+│   │   ├── connect_log_buffer.rs 完整记录环形缓冲与分页
 │   │   └── ...
 │   └── build.rs                 注入 CHAOS_BUILD_TIME
 ├── installer/                   Lua 安装器与投递包
@@ -117,7 +119,7 @@ Chaos 直接调用固件里已静态核对的函数地址（`supervisor/src/fw_a
 | `/data/chaos/settings.cfg` | 模块 | 用户设置 |
 | `/data/chaos/appmgr_*.bin` / `appmgr_apply.cfg` | 模块 | 排除名单、批量操作状态 |
 | `/data/chaos/font/index.txt` | 模块 | 字体槽位清单（定长文本） |
-| `/data/chaos/chaos.log` | 模块 | 运行日志 |
+| `/data/chaos/bridge.cfg` | 模块 | ChaosConnect启用配置；操作日志仅存内存 |
 | `/data/apps.json` / `/data/apps.json_hide` | 固件 + 模块 | 应用注册表（隐藏模式见 APP-MANAGER） |
 | `/data/rc.d/chaos.sh` | 安装器 | 开机加载脚本 |
 

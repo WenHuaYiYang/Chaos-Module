@@ -79,17 +79,9 @@ pub(crate) unsafe fn apply_pkg(hide: bool, pkg: *const u8) -> bool {
 
 pub(crate) unsafe fn apply_immediate(hide: bool) -> bool {
     let pkg = core::ptr::addr_of!(REQ_PKG) as *const u8;
-    // 深度隐藏重启后节点缺失: 显示前先按包名从 proxyquickapp 已装表补建节点,
-    // 否则 app_launcher_add 找不到记录。补建失败时把应用表数量写进日志，
-    // 便于区分“表没起来”和“表里没有这个包”。
+    // 深度隐藏重启后节点缺失，显示前按包名补建。
     if !hide && find_node(pkg) == 0 {
-        let n = fw_api::quickapp_app_count();
-        crate::log::kv("显示应用-应用表 ", if n > 0 { n as u32 } else { 0 });
-        let ok = fw_api::quickapp_register_pkg(pkg);
-        crate::log::kv("显示应用-补建节点 ", if ok { 1 } else { 0 });
-        if find_node(pkg) == 0 {
-            crate::log::line("显示应用-补建后仍无节点");
-        }
+        let _ = fw_api::quickapp_register_pkg(pkg);
     }
     apply_pkg(hide, pkg)
 }
@@ -117,7 +109,7 @@ pub(crate) unsafe fn do_op() {
     } else {
         wmsg_keep("操作失败, 注册表未改动\0");
     }
-    crate::log::cstr(core::ptr::addr_of!(APP_MSG) as *const u8);
+
     reload();
     sort_view_visible_first();
 }
@@ -162,9 +154,7 @@ pub(crate) unsafe fn do_batch() {
     }
     w.end();
     MSG_KEEP = 1;
-    crate::log::kv("批量完成, 成功 ", BATCH_DONE as u32);
-    if BATCH_NOREG != 0 { crate::log::kv("批量完成, 需重启 ", BATCH_NOREG as u32); }
-    if BATCH_FAIL != 0 { crate::log::kv("批量完成, 失败 ", BATCH_FAIL as u32); }
+
     sel_clear();
     reload();
     sort_view_visible_first();

@@ -220,7 +220,6 @@ pub unsafe fn persist_get(key: *const u8, def: i32) -> i32 {
 /// `persist.switch_guestre_state` —— 固件自带摇一摇功能的开关
 pub static KEY_SWITCH_GUESTRE: [u8; 29] = *b"persist.switch_guestre_state\0";
 
-
 // ===== 链表原语(固件 lv_ll; 从 vg_font_create_core/lvx 字体遍历反汇编取形) =====
 
 /// `0x0C589050(list_head*)` 返回首个节点(空=0)。 静态核对
@@ -440,7 +439,7 @@ pub unsafe fn quickapp_launch_app(pkg: *const u8) -> i32 {
 pub unsafe fn quickapp_proxy_init() -> bool {
     let n = quickapp_app_count();
     if n > 0 { return true; }
-    crate::log::line("补建节点: 应用表未就绪");
+
     false
 }
 
@@ -451,9 +450,9 @@ pub unsafe fn quickapp_proxy_init() -> bool {
 /// 建节点（会加图标, 调用方随后 `apply_pkg(false)` 会先 del 再 add, 不会重复）。
 pub unsafe fn quickapp_register_pkg(pkg: *const u8) -> bool {
     let mut n = quickapp_app_count();
-    // 表没就绪时只记录状态，不手动初始化 proxyquickapp（见 quickapp_proxy_init）。
+    // 表没就绪时只检查状态，不手动初始化 proxyquickapp（见 quickapp_proxy_init）。
     if n <= 0 {
-        crate::log::kv("补建节点-应用表 ", if quickapp_proxy_init() { 1 } else { 0 });
+        let _ = quickapp_proxy_init();
         n = quickapp_app_count();
     }
     if n <= 0 { return false; }
@@ -483,7 +482,6 @@ unsafe fn cstr_same(a: *const u8, b: *const u8) -> bool {
     }
     false
 }
-
 
 /// 遍历已装应用表，**只给注册表里查不到的 app 补节点**，返回 `(扫描数, 补建数)`。
 ///

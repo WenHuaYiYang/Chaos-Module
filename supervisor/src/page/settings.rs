@@ -224,7 +224,6 @@ impl Page for CachePage {
     }
 }
 
-
 // ===== 页16: 主页 -> 震动 =====
 //
 // 两个开关独立持久化 /data/chaos/swipe_vib.cfg, 默认全关; "测试震动"是动作行。
@@ -276,7 +275,7 @@ impl Page for VibPage {
 // 信息架构(只重排, 不增删入口):
 //   显示与交互  亮度 / 震动 / 屏幕翻转 / 应用图标
 //   时间与外观  时间设置 / 日期设置 / 系统关于页面修改
-//   存储与维护  缓存清理 / 运行日志 / 恢复fetch支持 / 文件桥
+//   存储与维护  缓存清理 / 日志级别设置 / 恢复fetch支持 / ChaosConnect
 // 页名字符串沿用 `about`(registry.rs): 它只是 page_goto 的解析键, 与标题无关。
 
 unsafe fn enter_time() {
@@ -288,11 +287,6 @@ unsafe fn enter_date() {
 
 unsafe fn rot_get() -> bool { crate::screen_rotation::enabled() }
 unsafe fn rot_toggle() { crate::screen_rotation::toggle(); }
-unsafe fn bridge_get() -> bool { crate::bridge_cfg::enabled() }
-unsafe fn bridge_toggle() {
-    let on = crate::bridge_cfg::toggle();
-    crate::log::kv("文件桥开关 ", if on { 1 } else { 0 });
-}
 unsafe fn appicon_sub() -> *const u8 {
     crate::dynamic_icon::name(crate::dynamic_icon::selected()).as_ptr()
 }
@@ -301,7 +295,6 @@ static ROT_DEF: ToggleDef = ToggleDef { get: rot_get, toggle: rot_toggle, status
 static PALM_DEF: ToggleDef = ToggleDef {
     get: crate::touch_palm::enabled, toggle: crate::touch_palm::toggle, status: None,
 };
-static BRIDGE_DEF: ToggleDef = ToggleDef { get: bridge_get, toggle: bridge_toggle, status: None };
 
 static SETTINGS_ROWS: &[RowModel] = &[
     RowModel::section("显示与交互\0".as_bytes()),
@@ -325,11 +318,9 @@ static SETTINGS_ROWS: &[RowModel] = &[
     RowModel::nav("系统关于页面修改\0".as_bytes(), Pid::AboutMod as u32),
     RowModel::section("存储与维护\0".as_bytes()),
     RowModel::nav("缓存清理\0".as_bytes(), Pid::Cache as u32),
-    RowModel::nav("运行日志\0".as_bytes(), Pid::Log as u32),
     RowModel::nav("日志级别设置\0".as_bytes(), Pid::LogLevel as u32),
     RowModel::nav("恢复fetch支持\0".as_bytes(), Pid::Fetch as u32),
-    RowModel { label: "文件桥\0".as_bytes(), sub: RowSub::None,
-               kind: RowKind::Toggle(&BRIDGE_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
+    RowModel::nav(b"ChaosConnect\0", Pid::Connect as u32),
 ];
 
 impl MenuSpec for SettingsPage {
@@ -351,7 +342,6 @@ impl Page for SettingsPage {
     fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
     fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
-
 
 // ===== 页19: 设置 -> 恢复 fetch 支持 =====
 pub(crate) struct FetchPage;
@@ -376,7 +366,6 @@ impl Page for FetchPage {
 
     fn on_click(&self, _idx: usize) {}
 }
-
 
 pub(super) static PAGE_BRIGHT: BrightnessPage = BrightnessPage;
 pub(super) static PAGE_CACHEP: CachePage = CachePage;

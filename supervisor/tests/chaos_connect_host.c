@@ -11,6 +11,10 @@
 #include <dirent.h>
 #include <errno.h>
 static uint8_t replies[32][CC_MAX_FRAME];static unsigned lengths[32],used;
+static char logs[256][1024];static unsigned log_count;
+void chaos_connect_log(const char *message){if(log_count<256)snprintf(logs[log_count++],sizeof(logs[0]),"%s",message);}
+void cc_test_clear_logs(void){log_count=0;}
+int cc_test_log(unsigned i,char *out){if(i>=log_count)return 0;strcpy(out,logs[i]);return (int)strlen(out);}
 static int short_write,rename_error,write_budget;
 void cc_test_fault(int short_bytes,int rename_errno){short_write=short_bytes;rename_error=rename_errno;write_budget=-short_bytes;}
 void cc_test_clear(void){used=0;}

@@ -10,7 +10,7 @@
 use crate::*;
 
 // 页实例住在兄弟子模块里; 这里 use 进来, 宏行里才能写 `time::PAGE_TIMESET` 这类路径。
-use super::{app_icon, appmgr, about, beautify, capture, debug, home, keyboard, log, settings,
+use super::{app_icon, appmgr, about, beautify, capture, debug, home, keyboard, connect, connect_log, settings,
             system, time, watchface, quickapp};
 
 /// 一行的注册项: 页号、页名(page_goto 的解析键)、页面实例。
@@ -43,7 +43,7 @@ pub(crate) enum Pid {
     Settings = 14,
     BlurZone = 15,
     Vibrate = 16,
-    Log = 17,
+    ConnectLog = 17,
     About = 18,
     Fetch = 19,
     Licenses = 20,
@@ -73,6 +73,7 @@ pub(crate) enum Pid {
     LogLevel = 44,
     BlurDebug = 45,
     QuickappAnimation = 46,
+    Connect = 47,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -134,7 +135,7 @@ pages! {
     Settings   = 14, PAGE_ABOUT,    settings::PAGE_SETTINGS;
     BlurZone   = 15, PAGE_ZONE,     beautify::PAGE_ZONEP;
     Vibrate    = 16, PAGE_VIB,      settings::PAGE_VIBP;
-    Log        = 17, PAGE_LOG,      log::PAGE_LOG;
+    ConnectLog = 17, PAGE_CONNECT_LOG, connect_log::PAGE;
     About      = 18, PAGE_ABOUT2,   about::PAGE_ABOUT_PAGE;
     Fetch      = 19, PAGE_FETCH,    settings::PAGE_FETCHP;
     Licenses   = 20, PAGE_LICENSES, about::PAGE_LICENSESP;
@@ -164,4 +165,5 @@ pages! {
     LogLevel   = 44, PAGE_LOG_LEVEL, settings::PAGE_LOG_LEVEL;
     BlurDebug  = 45, PAGE_BLUR_DEBUG, debug::PAGE_BLUR_DEBUG;
     QuickappAnimation = 46, PAGE_QUICKAPP_ANIMATION, quickapp::PAGE;
+    Connect = 47, PAGE_CONNECT, connect::PAGE;
 }

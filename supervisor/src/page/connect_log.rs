@@ -1,10 +1,10 @@
-//! 页17：运行日志尾部读取、折行与滚动显示。
+//! 页17：ChaosConnect 内存操作日志，分页、折行与滚动显示。
 
 use crate::page::*;
 use crate::page::Page;
 
-// ===== 页17: 运行日志 =====
-// 只读日志尾部，从最新一行往前拼成一段可滚动的文字。
+// ===== 页17: ChaosConnect日志 =====
+// 每页按最新优先显示完整记录，支持翻到更早的内存日志。
 //
 // 2026-11-02 修：此固件的 label 不会响应 LV_SIZE_CONTENT，文字超过对象高度时
 // 是直接裁掉而不是把对象撑开；旧版给 label 写死 240 高、又没有打开滚动，
@@ -12,18 +12,20 @@ use crate::page::Page;
 // 算出总行数再换算成 label/内层 board 的高度，外层 viewport 打开纵向滚动
 // （同一套写法见 keyboard.rs 的横向 viewport）。
 pub(crate) struct LogPage;
-pub(super) static PAGE_LOG: LogPage = LogPage;
+pub(super) static PAGE: LogPage = LogPage;
 
-// 日志页只展示最近 60 条，16 KB 远大于 8 KB 文本上限；省下的静态 RAM 留给应用注册表。
+// 每页12条完整记录，分页读取内存环；手动折行和动态高度避免长路径被裁切。
 const LOG_VIEW_CAP: usize = 16 * 1024;
-const LOG_TEXT_CAP: usize = 8 * 1024;
+const LOG_TEXT_CAP: usize = 16 * 1024;
 const LOG_TEXT_W: u32 = 320;
 const LOG_LINE_H: i32 = 36;
 // 字宽估算是保守值，正常不会多折行；留几行余量，个别字形略宽也不会裁掉末行。
 const LOG_SLACK_ROWS: i32 = 3;
-const LOG_MAX_ENTRIES: usize = 60;
+const LOG_MAX_ENTRIES: usize = 12;
 const LOG_VIEWPORT_W: u32 = 328;
-const LOG_VIEWPORT_H: u32 = 280;
+const LOG_VIEWPORT_H: u32 = 226;
+static mut LOG_SKIP: usize = 0;
+static mut LOG_TOTAL: usize = 0;
 
 static mut LOG_VIEW: [u8; LOG_VIEW_CAP] = [0; LOG_VIEW_CAP];
 static mut LOG_TEXT: [u8; LOG_TEXT_CAP] = [0; LOG_TEXT_CAP];
@@ -149,7 +151,12 @@ impl LogText {
 
 unsafe fn log_page_load() {
     let buf = core::ptr::addr_of_mut!(LOG_VIEW) as *mut u8;
-    let n = crate::log::tail(buf, LOG_VIEW_CAP - 1);
+    let (n, total) = crate::connect_log::page(buf, LOG_VIEW_CAP - 1, LOG_SKIP, LOG_MAX_ENTRIES);
+    LOG_TOTAL = total;
+    if LOG_SKIP >= total && LOG_SKIP != 0 {
+        LOG_SKIP = total.saturating_sub(1) / LOG_MAX_ENTRIES * LOG_MAX_ENTRIES;
+        log_page_load(); return;
+    }
     if n + 1 < LOG_VIEW_CAP { write_volatile(buf.add(n), 0); }
 
     // LOG_LINE_OFF 是环形缓冲：只保留最近 1024 行的行首。旧写法到 1024 行就停，
@@ -178,8 +185,10 @@ unsafe fn log_page_load() {
 
     if count != 0 {
         t.put_bytes(concat!("v", env!("CARGO_PKG_VERSION"), " · 共 ").as_bytes());
-        t.put_num(count as u32);
-        t.put_bytes(" 行".as_bytes());
+        t.put_num(total as u32);
+        t.put_bytes(" 条 · 第 ".as_bytes());
+        t.put_num((LOG_SKIP / LOG_MAX_ENTRIES + 1) as u32);
+        t.put_bytes(" 页".as_bytes());
         t.newline();
 
         // 从最新一行往前拼，最新在上；旧日志在下面，随 viewport 滚动查看。
@@ -202,7 +211,7 @@ unsafe fn log_page_load() {
             shown += 1;
         }
     } else if mlen == 0 {
-        t.put_bytes("暂无日志".as_bytes());
+        t.put_bytes("暂无操作日志，等待插件连接。日志仅存内存，重启清空。".as_bytes());
     }
     t.trim_newline();
     if t.len + 1 < LOG_TEXT_CAP { write_volatile(out.add(t.len), 0); }
@@ -212,19 +221,22 @@ unsafe fn log_page_load() {
 
 impl Page for LogPage {
     fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "运行日志\0".as_bytes()); }
+        unsafe { put_str(buf, "ChaosConnect日志\0".as_bytes()); }
     }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             log_page_load();
-            // 顶部一排按钮固定不动(刷新/清空), 返回靠标题栏返回键;
+            // 顶部固定刷新/清空与更早/更新两排按钮，返回靠标题栏返回键;
             // 文字放进统一滚动视口(kit/scroll.rs), 视口底避开底部 32px 手势区。
             let t0 = build_tile_below(ctx, ctx.title, 0, "刷新\0".as_bytes(), TILE_W, 44);
             if t0 == 0 { return Err(PageError::RowFailed(0)); }
             let cl: &[u8] = if LOG_CLEAR.armed() { "再点一次确认清空\0".as_bytes() } else { "清空日志\0".as_bytes() };
             let _t1 = build_tile_right(ctx, t0, 1, cl, TILE_W, 44);
 
-            let vp = crate::page::kit::scroll::viewport(ctx.content, t0,
+            let older = build_tile_below(ctx, t0, 2, "更早日志\0".as_bytes(), TILE_W, 44);
+            if older == 0 { return Err(PageError::RowFailed(2)); }
+            let _ = build_tile_right(ctx, older, 3, "更新日志\0".as_bytes(), TILE_W, 44);
+            let vp = crate::page::kit::scroll::viewport(ctx.content, older,
                 LOG_VIEWPORT_W as i32, LOG_VIEWPORT_H as i32, false);
             if vp != 0 {
                 let board_h = if LOG_TEXT_H > LOG_VIEWPORT_H as i32 { LOG_TEXT_H } else { LOG_VIEWPORT_H as i32 };
@@ -245,20 +257,20 @@ impl Page for LogPage {
     }
     fn on_click(&self, idx: usize) {
         unsafe {
-            LOG_CLEAR.reset();   // 点了别的按钮: 撤销清空武装
-            if idx == 0 {
-                render_req(Pid::Log as u32);
-            } else if idx == 1 {
-                if LOG_CLEAR.click() {
-                    let ok = crate::log::clear();
-                    put_str(core::ptr::addr_of_mut!(LOG_MSG) as *mut u8,
-                        if ok { "日志已清空\0".as_bytes() } else { "清空失败\0".as_bytes() });
-                    render_req(Pid::Log as u32);
-                } else {
-                    // 武装击: 换文案
-                    render_req(Pid::Log as u32);
+            if idx != 1 { LOG_CLEAR.reset(); }
+            match idx {
+                0 => LOG_SKIP = 0,
+                1 => {
+                    if LOG_CLEAR.click() {
+                        crate::connect_log::clear(); LOG_SKIP = 0;
+                        put_str(core::ptr::addr_of_mut!(LOG_MSG) as *mut u8, "日志已清空\0".as_bytes());
+                    }
                 }
+                2 => { if LOG_SKIP + LOG_MAX_ENTRIES < LOG_TOTAL { LOG_SKIP += LOG_MAX_ENTRIES; } }
+                3 => LOG_SKIP = LOG_SKIP.saturating_sub(LOG_MAX_ENTRIES),
+                _ => return,
             }
+            render_req(Pid::ConnectLog as u32);
         }
     }
 }

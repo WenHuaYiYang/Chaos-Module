@@ -1,6 +1,6 @@
 # ChaosConnect 文件桥（p67 / 3.101.043）
 
-当前文件桥使用独立的 **ChaosConnect v1**。旧 CPC2、ConnectListen/Send/Message、fake Canopus context、模块 ABI 和兼容实现已从 `supervisor/bridge/` 移除，旧文件管理插件不再兼容。两端需要一起更新；原 `bridge.cfg` 开关继续使用，默认关闭。
+当前文件桥使用独立的 **ChaosConnect v1**。旧 CPC2、ConnectListen/Send/Message、fake Canopus context、模块 ABI 和兼容实现已从 `supervisor/bridge/` 移除，旧文件管理插件不再兼容。两端需要一起更新；原 `bridge.cfg` 配置继续使用，默认关闭；入口为“设置 → ChaosConnect → 启用”。
 
 ## 实际承载与 AstroBox 接口
 
@@ -73,7 +73,7 @@ python3 tools/build.py
 - ARM 探针执行生产 transport/codec 与固件真实 CTR wrapper，AES primitive、radio、timer、文件引擎为明确替身；覆盖普通包、同为 OTHER 的其他包名和旧私有类型的转交、损坏私有帧拒绝、8帧窗口、发送重试、epoch 取消和第三方 hook 保护。
 - 插件 `cargo test --lib` 验证实际 prost 往返与 pbjson 日志序列化、旧枚举错误复现、启动无设备/传输调用、协议边界、全部 ACK 后提交；`sh scripts/build_plugin.sh` 生成 WASI 组件和 `dist/chaos-connect.abp`。
 
-安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。开启 Chaos 设置中的“文件桥”，插件启用后先“刷新设备”，再“连接ChaosConnect”。无需安装旧模块或启用旧兼容插件。
+安装时同时更新Chaos安装包和插件；先重启设备，再运行新版Chaos，释放旧驻留文件桥的入口。进入 Chaos 设置 → ChaosConnect，打开“启用”，插件启用后先“刷新设备”，再“连接ChaosConnect”。无需安装旧模块或启用旧兼容插件。
 
 固定互通向量保存在`CHAOSCONNECT-V1.hex`（插件位于`plugin/tests/`）：第一行为HELLO请求CCN1帧（request_id=0x1234），第二行为同一帧的宿主protobuf承载（packet_id=0x12341234）。两仓库的向量逐字节相同，C与Rust测试分别核对。
 
@@ -82,3 +82,17 @@ python3 tools/build.py
 首次故障发生于HELLO发送前的宿主日志序列化：旧外层 `0x4343` 是未知枚举，prost可以保留，pbjson却拒绝；宿主 `layer2.rs` 对结果unwrap，导致ECS线程panic。之后查询设备或再次启用插件显示的SendError是核心线程退出后的结果。
 
 设备与插件0.2.1同步改用OTHER，不接受旧私有类型，命名空间/CRC保护保持不变。插件on_load不再自动发现设备和发包，首次手动刷新后才接收设备变化并更新列表。回归测试复现旧错误，并验证新HELLO、数据块和进度事件可通过宿主JSON日志路径。**必须完全退出并重启AstroBox**才能恢复已退出的核心线程，仅切换插件开关无效。
+
+## ChaosConnect 操作日志
+
+原“运行日志”页面、通用日志模块和所有调用已移除，Chaos不再创建或追加`/data/chaos/chaos.log`。系统“日志级别设置”和固件诊断功能独立保留。
+
+“设置 → ChaosConnect”提供持久化的“启用”开关，下方为“ChaosConnect日志”。日志由设备端生产文件引擎在owner loop生成，不需要修改插件或增加任何协议字段；仅记录实际收到并处理的请求，不能观测插件界面中未发送给设备的行为。
+
+- 每条包含本地时间、INFO、请求编号、操作中文说明、完整规整路径、结果及协议状态码。
+- 覆盖连接协商、浏览目录（分页偏移/条目数量）、详情（类型/大小/mtime）、创建目录、删除、复制和移动的两端路径、读取文件、上传/保存编辑、CRC提交、取消和会话清理、开发者模式及链路回显测速。
+- 读取/写入的预览、下载、编辑共用现有命令，设备端不能准确区分用途，按真实语义显示“读取（预览/下载）”或“写入（上传/保存编辑）”。不记录文件内容。
+- 文件传输记录首块、末块、每64KiB进度和所有失败；测速记录首次和每256KiB累计结果，避免逐包淹没日志。失败记录会保留清理前的文件路径。
+- 日志只占32KiB内存，按完整记录淘汰最旧内容，不写闪存，重启/重新加载后清空。日志页面每页12条，最新在上，支持“刷新”“更早日志”“更新日志”和两次点击确认清空；长路径按实际行数增加滚动高度。
+
+`python3 tools/test_chaos_connect.py`同时验证生产C文件引擎的操作记录、失败路径、内容不泄露、传输日志节流，以及内存环换行/淘汰/翻页和生产日志页面的长文本滚动、翻页及清空确认。

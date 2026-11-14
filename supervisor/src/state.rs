@@ -130,8 +130,8 @@ pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
 /// 页16: 主页 -> 震动(三级)。滑动震动开关 + 测试震动。
 pub static PAGE_VIB: [u8; 8] = *b"vibtest\0";
 
-/// 页17: 设置 -> 运行日志。/data/chaos/chaos.log 的尾部展示与清空。
-pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
+/// 页17: ChaosConnect -> 内存操作日志。
+pub static PAGE_CONNECT_LOG: [u8; 11] = *b"connectlog\0";
 
 /// 页18: 设置 -> 关于。版本、编译时间、固件、开发者分列。
 pub static PAGE_ABOUT2: [u8; 7] = *b"about2\0";
@@ -200,7 +200,9 @@ pub static PAGE_QUICKAPP_ANIMATION: [u8; 7] = *b"qaanim\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 47;                   // 注册页数(页0..页46)
+pub static PAGE_CONNECT: [u8; 8] = *b"connect\0";
+
+pub const PAGE_COUNT: usize = 48;                   // 注册页数(页0..页47)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 
@@ -352,8 +354,6 @@ pub static mut TIMER_CREATE_N: u32 = 0;   // 诊断: 我们一共创建了几个
 pub static mut TICK_ADAPT: u32 = 0;
 /// 当前已生效的周期(避免每拍都调 set_period; 也用于"变了才写")
 pub static mut TICK_PERIOD_MS: u32 = 50;
-/// 自适应关掉时滚动提速也不会生效 —— 报过一次就置位, 别让真机把它看成"提速了但没效果"。
-pub static mut TICK_ADAPT_WARN: u32 = 0;
 
 pub static mut SHAKE_PENDING: u32 = 0;                   // 回调置旗, timer 消费
 
@@ -384,7 +384,6 @@ pub const LV_GLOBAL: u32 = 0x2010_3174;
 /// + u16 style, +0x2c = 引用计数)。构造点 0x0C85F724 `str.w r4,[r8,#0x24]`,
 /// 删除路径 0x0C85F94C `ldr r5,[r4,#0x24]` 同读法反证。
 pub const FACE_LINE_HEIGHT_OFF: u32 = 0x0C;
-
 
 pub static mut APP_FG: u32 = 0;                  // 1 = 我们的应用在前台(on_resume 置, on_pause/on_destroy 清)
 

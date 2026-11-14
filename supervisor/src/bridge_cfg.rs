@@ -7,7 +7,7 @@
 //! 里做，避免在 LVGL 点击回调里创建/撤销 owner timer。
 
 use crate::state::BRIDGE_STATE;
-use crate::{fw_api, log, st_rd, st_wr};
+use crate::{fw_api, connect_log, st_rd, st_wr};
 
 const CFG_PATH: &[u8] = b"/data/chaos/bridge.cfg\0";
 const MAGIC: &[u8; 4] = b"BRG1";
@@ -56,13 +56,13 @@ unsafe fn save(on: bool) {
         0o640,
     );
     if fd < 0 {
-        log::line("文件桥开关: 配置写入失败");
+        connect_log::line("ChaosConnect 配置: 配置写入失败");
         return;
     }
     let n = fw_api::write(fd, buf.as_ptr(), buf.len() as u32);
     fw_api::close(fd);
     if n != buf.len() as i32 {
-        log::line("文件桥开关: 配置写入不完整");
+        connect_log::line("ChaosConnect 配置: 配置写入不完整");
     }
 }
 
@@ -86,10 +86,10 @@ pub(crate) unsafe fn tick() {
         if state == 0 {
             let rc = chaos_bridge_start();
             st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
-            log::line(if rc == 0 {
-                "文件桥: ChaosConnect 已启动"
+            connect_log::line(if rc == 0 {
+                "ChaosConnect 已启用，等待插件连接"
             } else {
-                "文件桥: 启动失败"
+                "ChaosConnect 启动失败"
             });
         }
     } else if state != 0 {
@@ -97,6 +97,6 @@ pub(crate) unsafe fn tick() {
         // stop 本身幂等，失败/待停止状态都顺手清回 0。
         chaos_bridge_stop();
         st_wr!(BRIDGE_STATE, 0);
-        log::line("文件桥: 已关闭");
+        connect_log::line("ChaosConnect 已停用");
     }
 }

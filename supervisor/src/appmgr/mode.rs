@@ -180,7 +180,7 @@ pub(crate) unsafe fn toggle_apply_mode() {
         return;
     }
     REQ_MODE = 1;
-    crate::log::line(if APPLY_MODE == 0 { "切换模式: 深度隐藏(需重启)" } else { "切换模式: 普通隐藏" });
+
 }
 
 pub(crate) unsafe fn mode_pending() -> bool { REQ_MODE != 0 }
@@ -221,7 +221,7 @@ pub(crate) unsafe fn do_mode_apply() {
         let _ = keep_save();
         reload();
         wmsg_keep("深度隐藏已开启, 重启后生效\0");
-        crate::log::line("模式迁移: keep -> apps.json_hide 完成");
+
     } else {
         // 关闭深度隐藏: 把 apps.json_hide 的条目全部搬回 apps.json,
         // 但**保持原来的隐藏状态** —— 同时记入 keep 名单, 开机补偿再隐藏。
@@ -285,7 +285,7 @@ pub(crate) unsafe fn do_mode_apply() {
         let _ = keep_save();
         reload();
         wmsg_keep("深度隐藏已关闭, 存储已迁移; 请重启后生效\0");
-        crate::log::line("模式迁移: apps.json_hide -> apps.json 完成");
+
     }
 }
 
@@ -370,16 +370,12 @@ pub(crate) unsafe fn do_reapply() {
         w += put_u32(d.add(w), n as u32);
         write_volatile(d.add(w), 0);
         MSG_KEEP = 1;
-        crate::log::kv("重新应用隐藏, 命中 ", found as u32);
+
         return;
     }
 
     // 深度隐藏: 先把缺的注册表节点补回来, 再把隐藏表里的条目统一搬回隐藏态。
-    let (total, rebuilt) = fw_api::quickapp_resync_missing();
-    if rebuilt > 0 {
-        crate::log::kv("补建快应用节点, 应用表合计 ", total);
-        crate::log::kv("补建快应用节点, 本次新建 ", rebuilt);
-    }
+    let (_total, rebuilt) = fw_api::quickapp_resync_missing();
     let (found, moved, n) = deep_apply_all();
     let d = core::ptr::addr_of_mut!(APP_MSG) as *mut u8;
     let mut w = put_lit(d, "已重新应用隐藏 ".as_bytes());
@@ -396,8 +392,7 @@ pub(crate) unsafe fn do_reapply() {
     }
     write_volatile(d.add(w), 0);
     MSG_KEEP = 1;
-    crate::log::kv("重新应用隐藏, 命中 ", found as u32);
-    if moved > 0 { crate::log::kv("重新应用隐藏, 迁移 ", moved as u32); }
+
 }
 
 /// 开机补偿: 模块加载后由维护定时器(UI 线程)调用。只对保留条目模式生效,
@@ -422,28 +417,21 @@ pub(crate) unsafe fn boot_apply() {
         // proxyquickapp 的已装表可能比模块晚就绪，所以每 5 次补偿重试一次，
         // 而不是只在第 5 次试一次。
         if BOOT_TRIES % 5 == 0 {
-            let (total, rebuilt) = fw_api::quickapp_resync_missing();
-            if rebuilt > 0 {
-                crate::log::kv("开机补偿: 补建节点, 应用表 ", total);
-                crate::log::kv("开机补偿: 补建节点, 本次 ", rebuilt);
-            }
+            let _ = fw_api::quickapp_resync_missing();
         }
         let found = keep_apply_all();
         let n = KEEP_N;
         if n == 0 || found >= n || BOOT_TRIES >= 300 {
             BOOT_APPLIED = 1;
-            crate::log::kv("开机补偿: 隐藏条目 ", n as u32);
-            crate::log::kv("开机补偿: 命中 ", found as u32);
+
         }
         return;
     }
     let _ = fw_api::quickapp_resync_missing();
-    let (found, moved, n) = deep_apply_all();
+    let (found, _moved, n) = deep_apply_all();
     if n == 0 || found >= n || BOOT_TRIES >= 300 {
         BOOT_APPLIED = 1;
-        crate::log::kv("开机补偿: 隐藏条目 ", n as u32);
-        crate::log::kv("开机补偿: 命中 ", found as u32);
-        if moved > 0 { crate::log::kv("开机补偿: 迁移 ", moved as u32); }
+
     }
 }
 

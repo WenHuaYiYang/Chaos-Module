@@ -57,11 +57,8 @@
 //!    内缩档 66/168/270，满档 54/168/282。这里只搬"往中间收"，不搬 RW6 中间三排
 //!    向外鼓的那 15/3/-3/-14 —— 10P 满尺寸盒子 112 宽、左沿已经在 -2，往外挪就是切边。
 //!
-//! ## 读数（运行日志页）
-//!
-//! `law ` 写进去的项数；`law c` 容器地址；`law m` 模式字（不是 1 也不是 0x10001 时不写表）。
 //! 开关选择持久化在 `/data/chaos/applist.cfg`（1 字节位图，缺失=全开），
-//! 开机第一次 tick 读回并自动写入表；运行日志里 `ds cfg <位图>` 是读到的值。
+//! 开机第一次 tick 读回并自动写入表。
 
 use crate::fw_api;
 use crate::mem::{rd32, safe_ptr};
@@ -129,11 +126,9 @@ static mut INSET_SW: u32 = 1;
 const CFG: &[u8] = b"/data/chaos/applist.cfg\0";
 static mut CFG_LOADED: u32 = 0;
 static mut CFG_DIRTY: u32 = 0;
-static mut CFG_WARNED: u32 = 0;
 /// 上一次写表时的 (容器, 三个开关) 签名。
 static mut LAW_SIG: u32 = 0;
 static mut LAW_CONT: u32 = 0;
-static mut LAW_LOGGED: u32 = 0;
 static mut SCROLL_PREV: i32 = 0;
 // Reset the old RW tables once on entering honeycomb, then leave them alone.
 static mut HONEYCOMB_STOCK_CONT: u32 = 0;
@@ -157,7 +152,7 @@ unsafe fn ensure_loaded() {
         st_wr!(LENS_SW, (v & 1) as u32);
         st_wr!(PITCH_SW, ((v >> 1) & 1) as u32);
         st_wr!(INSET_SW, ((v >> 2) & 1) as u32);
-        crate::log::kv("ds cfg", v as u32);
+
     }
 }
 
@@ -177,10 +172,6 @@ unsafe fn save_deferred() {
     } else { false };
     if saved {
         st_wr!(CFG_DIRTY, 0);
-        st_wr!(CFG_WARNED, 0);
-    } else if st_rd!(CFG_WARNED) == 0 {
-        crate::log::line("RW6 布局: 设置保存失败，将重试");
-        st_wr!(CFG_WARNED, 1);
     }
 }
 
@@ -485,12 +476,6 @@ pub(crate) unsafe fn tick() {
         law_write(me, k0);
         st_wr!(LAW_SIG, sig);
         st_wr!(LAW_CONT, cont);
-        if st_rd!(LAW_LOGGED) == 0 {
-            st_wr!(LAW_LOGGED, 1);
-            crate::log::kv("law ", (ROWS * COLS) as u32);
-            crate::log::kv("law c", cont);
-            crate::log::kv("law m", mode);
-        }
     }
     if APPLY_PENDING && fw_api::honeycomb::refresh_native(cont) {
         APPLY_PENDING = false;

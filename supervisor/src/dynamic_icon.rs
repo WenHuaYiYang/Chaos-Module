@@ -1,5 +1,5 @@
 //! Application-icon selection, saved independently of native launcher geometry.
-use crate::{fw_api as fw, log};
+use crate::fw_api as fw;
 use crate::dynamic_icon_frames::{Animation, PACKAGED};
 use fw::dynamic_icon as port;
 
@@ -25,7 +25,6 @@ static mut LAST_FRAME: usize = usize::MAX;
 static mut START: Option<u32> = None;
 static mut ASSET_CHECKED: bool = false;
 static mut ANIMATION: Option<Animation<'static>> = None;
-static mut TIMER_WARNED: bool = false;
 
 pub fn name(style: u8) -> &'static [u8] { NAMES.get(style as usize).copied().unwrap_or(NAMES[0]) }
 
@@ -87,7 +86,7 @@ unsafe fn save(now: u32) {
     if ok { DIRTY = false; SAVE_RETRY = None; }
     else {
         fw::fs_remove(TEMP.as_ptr());
-        if SAVE_RETRY.is_none() { log::line("应用图标: 选择保存失败，将重试"); }
+
         SAVE_RETRY = Some(now);
     }
 }
@@ -95,7 +94,7 @@ unsafe fn save(now: u32) {
 unsafe fn animation() -> Option<Animation<'static>> {
     if !ASSET_CHECKED {
         ASSET_CHECKED = true; ANIMATION = Animation::parse(PACKAGED);
-        if ANIMATION.is_none() { log::line("应用图标: GIF 帧资源无效"); }
+
     }
     ANIMATION
 }
@@ -137,9 +136,7 @@ unsafe fn drive() {
         return;
     }
     let Some(asset) = animation() else { port::animation_active(false, 20); forget(); return; };
-    if !port::animation_active(true, asset.period_ms) && !TIMER_WARNED {
-        TIMER_WARNED = true; log::line("应用图标: 动画定时器不可用，使用维护节拍");
-    }
+    let _ = port::animation_active(true, asset.period_ms);
     if OWNER != icon.object || icon.source != LAST_SOURCE {
         OWNER = icon.object; LAST_SOURCE = icon.source; LAST_FRAME = usize::MAX; START = None;
     }
@@ -166,5 +163,5 @@ pub(crate) unsafe extern "C" fn animation_tick(_: u32) {
 #[cfg(test)]
 pub(crate) unsafe fn reset_for_test() {
     LOADED = false; SELECTED = DYNAMIC; DIRTY = false; PENDING = true; FORCE = false;
-    SAVE_RETRY = None; ASSET_CHECKED = false; ANIMATION = None; TIMER_WARNED = false; forget();
+    SAVE_RETRY = None; ASSET_CHECKED = false; ANIMATION = None; forget();
 }

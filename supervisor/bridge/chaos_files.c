@@ -69,6 +69,8 @@ static uint8_t g_dev_mode;
 
 static int32_t g_read_fd = -1;
 static uint32_t g_read_size;
+static char g_read_target[CC_PATH_MAX];
+static uint32_t g_read_transferred;
 static int32_t g_write_fd = -1;
 static char g_write_target[CC_PATH_MAX];
 static char g_write_temp[CC_PATH_MAX];
@@ -219,17 +221,89 @@ static int ccf_read_allowed(const char *path)
     return !ccf_protected(path);
 }
 
-static void ccf_send(uint8_t op,uint16_t req,uint8_t status,const uint8_t *payload,uint32_t plen)
-{(void)cc_reply(CC_RESPONSE,op,status,req,payload,plen);}
+/* Owner-loop INFO audit. No flash writes or plugin changes; never log file contents.
+ * Capture paths before a handler closes/discards its transaction. */
+extern void chaos_connect_log(const char *message);
+static char audit_context[768];
+static uint32_t audit_used,audit_offset,audit_length,benchmark_bytes;
+static void audit_text(const char *s){while(*s&&audit_used+1<sizeof(audit_context))audit_context[audit_used++]=*s++;audit_context[audit_used]=0;}
+static void audit_number(uint32_t n){char b[10];unsigned i=0;do{b[i++]='0'+n%10;n/=10;}while(n);while(i){char c[2]={b[--i],0};audit_text(c);}}
+static void audit_path(const char *s){audit_text(" \"");audit_text(*s?s:"<无活动文件>");audit_text("\"");}
+static const char *audit_action(uint8_t op){
+ switch(op){
+ case CCF_OP_HELLO:return "连接/协商协议";case CCF_OP_LIST:return "浏览文件夹";
+ case CCF_OP_STAT:return "查看文件/目录信息";case CCF_OP_MKDIR:return "新建文件夹";
+ case CCF_OP_REMOVE:return "删除文件";case CCF_OP_RMDIR:return "删除空文件夹";
+ case CCF_OP_RENAME:return "移动/重命名";case CCF_OP_COPY:return "复制文件";
+ case CCF_OP_OPEN_READ:return "打开文件读取（预览/下载）";case CCF_OP_READ:return "读取文件数据";
+ case CCF_OP_CLOSE_READ:return "关闭读取文件";case CCF_OP_OPEN_WRITE:return "打开文件写入（上传/保存编辑）";
+ case CCF_OP_WRITE:return "写入文件数据";case CCF_OP_COMMIT:return "校验并提交文件";
+ case CCF_OP_ABORT:return "取消写入/清理临时文件";case CCF_OP_PING:return "连接检查";
+ case 0x31:return "链路回显测速";case CCF_OP_SET_DEV:return "设置开发者模式";
+ case CCF_OP_GET_DEV:return "查询开发者模式";default:return "未知请求";}
+}
+static void audit_begin(const struct cc_frame *f){
+ const uint8_t *p=f->payload;uint32_t used=0,next=0;char path[CC_PATH_MAX];
+ audit_used=0;audit_offset=audit_length=0;audit_text("req=");audit_number(f->req);
+ audit_text(" ");audit_text(audit_action(f->op));
+ if((f->op>=CCF_OP_LIST&&f->op<=CCF_OP_COPY)||f->op==CCF_OP_OPEN_READ||f->op==CCF_OP_OPEN_WRITE){
+  if(ccf_parse_path(p,f->len,&used,path)){audit_text(" <无效路径>");return;}audit_path(path);
+  if(f->op==CCF_OP_RENAME||f->op==CCF_OP_COPY){
+   audit_text(" ->");if(ccf_parse_path(p+used,f->len-used,&next,path)){audit_text(" <无效目标路径>");return;}audit_path(path);
+   if(f->op==CCF_OP_COPY&&f->len>used+next){audit_text(" overwrite=");audit_number(p[used+next]);}
+  }else if(f->op==CCF_OP_LIST&&f->len>=used+5){audit_text(" offset=");audit_number(ccf_get_u32(p+used));audit_text(" limit=");audit_number(p[used+4]);}
+  else if(f->op==CCF_OP_OPEN_WRITE&&f->len>=used+5){audit_text(" expected_bytes=");audit_number(ccf_get_u32(p+used));audit_text(" overwrite=");audit_number(p[used+4]);}
+ }else if(f->op==CCF_OP_READ||f->op==CCF_OP_CLOSE_READ){
+  audit_path(g_read_target);
+  if(f->op==CCF_OP_READ&&f->len>=6){audit_offset=ccf_get_u32(p);audit_length=ccf_get_u16(p+4);audit_text(" offset=");audit_number(audit_offset);audit_text(" requested=");audit_number(audit_length);}
+  else{audit_text(" transferred_bytes=");audit_number(g_read_transferred);}
+ }else if(f->op==CCF_OP_WRITE||f->op==CCF_OP_COMMIT||f->op==CCF_OP_ABORT){
+  audit_path(g_write_target);
+  if(f->op==CCF_OP_WRITE&&f->len>=4){audit_offset=ccf_get_u32(p);audit_length=f->len-4;audit_text(" offset=");audit_number(audit_offset);audit_text(" bytes=");audit_number(audit_length);}
+  else{audit_text(" written_bytes=");audit_number(g_write_written);if(f->op==CCF_OP_COMMIT&&f->len>=4){audit_text(" expected_crc32=");audit_number(ccf_get_u32(p));}}
+ }else if(f->op==CCF_OP_SET_DEV&&f->len){audit_text(p[0]?" 开启":" 关闭");}
+ else if(f->op==0x31){audit_text(" bytes=");audit_number(f->len);}
+ else if(f->op>CCF_OP_GET_DEV){audit_text(" opcode=");audit_number(f->op);}
+}
+static void ccf_send(uint8_t op,uint16_t req,uint8_t status,const uint8_t *payload,uint32_t plen){
+ int queued=cc_reply(CC_RESPONSE,op,status,req,payload,plen);
+ /* INFO has start/end and 64KiB transfer checkpoints, not one row per packet.
+  * Failures always log, including response queue failures. */
+ if(op==CCF_OP_READ&&status==0)g_read_transferred+=plen;
+ if(op==0x31&&status==0)benchmark_bytes+=plen;
+ if(status==0&&queued>=0){
+  if(op==CCF_OP_READ&&audit_offset!=0&&audit_offset/65536==(audit_offset+plen)/65536&&audit_offset+plen<g_read_size&&plen==audit_length)return;
+  if(op==CCF_OP_WRITE&&audit_offset!=0&&audit_offset/65536==(audit_offset+audit_length)/65536&&g_write_written<g_write_expected)return;
+  if(op==0x31&&benchmark_bytes!=plen&&(benchmark_bytes-plen)/262144==benchmark_bytes/262144)return;
+ }
+ static const char *const result[]={"成功","参数错误","不存在","没有权限","目标已存在","不是目录","目标是目录","空间不足","设备忙/目录非空","读写失败","CRC校验失败","传输顺序错误","不支持","超出大小限制"};
+ audit_text(" | ");audit_text(status<14?result[status]:"未知状态");audit_text(" status=");audit_number(status);
+ if(queued<0)audit_text(" 应答入队失败");
+ if(status==0){
+  if(op==CCF_OP_LIST&&plen>=6){audit_text(" total=");audit_number(ccf_get_u16(payload));audit_text(" returned=");audit_number(ccf_get_u16(payload+4));}
+  else if(op==CCF_OP_STAT&&plen>=9){audit_text(payload[0]?" 文件夹":" 文件");audit_text(" size=");audit_number(ccf_get_u32(payload+1));audit_text(" mtime=");audit_number(ccf_get_u32(payload+5));}
+  else if(op==CCF_OP_OPEN_READ&&plen>=4){audit_text(" size=");audit_number(ccf_get_u32(payload));}
+  else if(op==CCF_OP_READ){audit_text(" returned_bytes=");audit_number(plen);}
+  else if(op==CCF_OP_WRITE&&plen>=8){audit_text(" committed_offset=");audit_number(ccf_get_u32(payload));}
+  else if(op==CCF_OP_HELLO&&plen>=11){audit_text(" version=");audit_number(payload[0]);audit_text(" chunk=");audit_number(ccf_get_u16(payload+1));audit_text(" window=");audit_number(ccf_get_u32(payload+7));}
+  else if(op==CCF_OP_GET_DEV&&plen){audit_text(payload[0]?" 开启":" 关闭");}
+  else if(op==0x31){audit_text(" echoed_total=");audit_number(benchmark_bytes);}
+ }
+ chaos_connect_log(audit_context);
+}
 static void ccf_event(uint8_t code,const uint8_t *payload,uint32_t plen)
 {(void)cc_reply(CC_EVENT,code,0,0,payload,plen);}
-static void ccf_close_read(void){if(g_read_fd>=0)(void)cc_io_close(g_read_fd);g_read_fd=-1;g_read_size=0;}
+static void ccf_close_read(void){if(g_read_fd>=0)(void)cc_io_close(g_read_fd);g_read_fd=-1;g_read_size=0;g_read_target[0]=0;g_read_transferred=0;}
 static void ccf_discard_write(void){
  if(g_write_fd>=0)(void)cc_io_close(g_write_fd);g_write_fd=-1;
  if(g_write_temp[0])(void)cc_io_remove(g_write_temp);
  g_write_temp[0]=g_write_target[0]=0;g_write_expected=g_write_written=g_write_reported=0;g_write_crc=0xffffffffu;
 }
-void cc_files_reset(void){ccf_close_read();ccf_discard_write();g_dev_mode=0;}
+void cc_files_reset(void){
+ if(g_read_fd>=0){audit_used=0;audit_text("会话结束/重置：关闭读取文件");audit_path(g_read_target);chaos_connect_log(audit_context);}
+ if(g_write_fd>=0){audit_used=0;audit_text("会话结束/重置：取消未提交写入并清理临时文件");audit_path(g_write_target);chaos_connect_log(audit_context);}
+ ccf_close_read();ccf_discard_write();g_dev_mode=0;benchmark_bytes=0;
+}
 void cc_files_set_chunk(uint16_t chunk){g_chunk=chunk>0&&chunk<=CC_CHUNK?chunk:CC_CHUNK;}
 static uint32_t ccf_crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
 {
@@ -579,6 +653,7 @@ static void ccf_handle_open_read(uint16_t req,
         return;
     }
     g_read_fd = fd;
+    ccf_copy_bytes((uint8_t *)g_read_target,(const uint8_t *)path,(uint32_t)ccf_strlen(path)+1);
     g_read_size = (uint32_t)size;
     ccf_put_u32(out, g_read_size);
     ccf_send(CCF_OP_OPEN_READ, req, CCF_ST_OK, out, 4);
@@ -776,8 +851,11 @@ void cc_files_dispatch(const struct cc_frame *frame)
  uint8_t op=frame->op;uint16_t req=frame->req;
  const uint8_t *p=frame->payload;uint32_t plen=frame->len;
  if(frame->flags!=0||frame->status!=0)return;
+    /* HELLO resets active transfers before its own audit context is constructed. */
+    if(op==CCF_OP_HELLO)cc_files_reset();
+    audit_begin(frame);
     switch (op) {
-    case CCF_OP_HELLO: cc_files_reset();ccf_handle_hello(req); break;
+    case CCF_OP_HELLO: ccf_handle_hello(req); break;
     case CCF_OP_LIST: ccf_handle_list(req, p, plen); break;
     case CCF_OP_STAT: ccf_handle_stat(req, p, plen); break;
     case CCF_OP_MKDIR: ccf_handle_mkdir(req, p, plen); break;

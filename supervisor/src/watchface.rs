@@ -338,7 +338,7 @@ pub(crate) unsafe extern "C" fn chaos_shake_cb(event: u32, _udata: u32) -> u32 {
 //   的巡检周期等比拉长(0.8s/4s), 它们防的都是秒级以上的状态漂移, 不影响手感;
 //   **慢拍 1000ms** = 息屏。手表绝大部分时间息屏, 恒定的唤醒源就是本模块贡献的那一份,
 //   陷阱 18 那一轮(§48)已经把息屏页修过; 这轮再砍的是亮屏闲时的 20Hz 空转。
-//   不变式: 所有以"拍"为单位计时的等待量, 其活跃窗口都在 tick_busy() 里, 走快拍 —— 
+//   不变式: 所有以"拍"为单位计时的等待量, 其活跃窗口都在 tick_busy() 里, 走快拍 ——
 //   墙钟节奏与旧版一致; 档位切换对页面透明。
 const TICK_FAST_MS: u32 = 50;
 /// 中档: 亮屏但没有任何逐拍活(用户停在表盘/其它应用, 各流水线都空闲)。
@@ -393,12 +393,7 @@ unsafe fn tick_busy() -> bool {
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。
 unsafe fn tick_adapt() {
     if st_rd!(TICK_ADAPT) == 0 {
-        // 句柄形状没验上 => 一辈子 50ms，滚动提速也不会生效。报一次，
-        // 免得真机把"根本没提速"看成"提速了但观感没变"。
-        if crate::desktop_scale::scrolling() && st_rd!(TICK_ADAPT_WARN) == 0 {
-            st_wr!(TICK_ADAPT_WARN, 1);
-            crate::log::line("tick noadapt");
-        }
+        // 句柄形状未验证时保持原有 50ms 周期。
         return;
     }
     let busy = tick_busy();

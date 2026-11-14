@@ -29,7 +29,7 @@ Chaos 打开后是主页（信息页），可进入应用管理、表盘、系�
 | 14 | 设置 | 主页 → 设置 |
 | 15 | 模糊区域（所有模糊选项共用） | 系统美化 → 系统模糊 → 模糊区域 |
 | 16 | 震动 | 主页 → 设置 → 震动 |
-| 17 | 运行日志 | 设置 → 运行日志 |
+| 17 | ChaosConnect日志 | 设置 → ChaosConnect → ChaosConnect日志 |
 | 18 | 关于 / 调试 | 主页末行"关于" |
 | 20 | 开放源代码许可 | 关于 → 开放源代码许可 |
 | 21 | 许可全文 | 开放源代码许可 → Corona / MIBAND10PRO-TUNMODULE |
@@ -39,6 +39,7 @@ Chaos 打开后是主页（信息页），可进入应用管理、表盘、系�
 | 41 | 录屏设置 | 截屏与录屏 → 录屏设置 |
 | 42 | 截图设置 | 截屏与录屏 → 截图设置 |
 | 43 | 应用图标 | 设置 → 应用图标 |
+| 47 | ChaosConnect | 设置 → ChaosConnect |
 
 > 页号上限由 `state.rs` 的 `PAGE_COUNT` 决定，`PAGE_TABLE` 必须与之一致；新增页面要同时改这两处。
 
@@ -103,7 +104,7 @@ Chaos 打开后是主页（信息页），可进入应用管理、表盘、系�
 
 ## 设置
 
-时间设置、日期设置、亮度、震动、缓存清理、运行日志、版本信息。
+时间设置、日期设置、亮度、震动、缓存清理、ChaosConnect、版本信息。
 时间/日期直接写 RTC，滚轮交互与系统闹钟页一致。
 
 ### 自定义文本键盘
@@ -128,10 +129,11 @@ Q W E R T Y U I O P
 
 布局尺寸、固件接口依据和验证清单见 [键盘实现说明](KEYBOARD.md)。
 
-## 运行日志
+## ChaosConnect
 
-关键操作（应用显隐、批量、模式切换、字体/图标切换、异常）带时间戳写入 `/data/chaos/chaos.log`，
-单文件上限 48 KB，写满后自动删旧重建。日志页显示最新记录，最新在上，长文可上下滚动，可清空（两步确认）。
+在“设置 → ChaosConnect”中打开“启用”，通过配套插件连接；旧“文件桥”的开关配置保留，默认关闭。下方“ChaosConnect日志”显示设备实际收到的连接、目录浏览、文件读取/写入、复制、移动、删除、CRC提交、失败原因与传输进度。无需修改插件；日志不包含文件内容，同一读取命令无法区分预览和下载。
+
+原运行日志及闪存写入已移除。新日志只保留最近32KiB内存内容，重启后清空；每页12条，支持刷新、翻页、长文滚动及两次点击确认清空。
 
 ## 调试入口
 
@@ -155,7 +157,7 @@ Q W E R T Y U I O P
 | `/data/chaos/blur_regions.cfg` | 所有模糊选项共用的区域开关 |
 | `/data/chaos/appmgr_excl.bin`、`appmgr_keep.bin`、`appmgr_apply.cfg` | 应用管理名单与配置 |
 | `/data/chaos/font/` | 字体槽位与 `index.txt` 清单 |
-| `/data/chaos/chaos.log` | 运行日志 |
+| `/data/chaos/bridge.cfg` | ChaosConnect启用状态（BRG1；默认关闭） |
 | `/data/chaos/capture.cfg` | 录屏格式、录屏和截图的独立储存路径 |
 | `/data/chaos/media/`、`/data/offlinelog/` | Chaos 录屏、截图（由用户选择；缓存清理保留 Chaos 媒体文件） |
 | `/data/chaos/shake.cfg`、`shake-wfaces.cfg` | 摇一摇轮换配置 |

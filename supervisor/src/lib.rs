@@ -29,7 +29,8 @@ mod keyboard;
 mod nsh;
 mod terminal_ui;
 mod appmgr;
-mod log;
+mod connect_log;
+mod connect_log_buffer;
 mod cacheclean;
 mod confirm_pop;
 #[allow(dead_code)]
@@ -70,24 +71,6 @@ mod capture_settings;
 mod capture;
 mod debug_info;
 
-/// Called by the C bridge only for one-shot state transitions, never per
-/// frame. Keeping it here means the bridge uses Chaos' log file and the
-/// "运行日志" page instead of a second logging path.
-#[no_mangle]
-pub extern "C" fn chaos_bridge_log(message: *const u8) {
-    if message.is_null() {
-        return;
-    }
-    unsafe {
-        let mut n = 0usize;
-        while n < 160 && *message.add(n) != 0 {
-            n += 1;
-        }
-        if let Ok(text) = core::str::from_utf8(core::slice::from_raw_parts(message, n)) {
-            crate::log::line(text);
-        }
-    }
-}
 pub(crate) use text::*;
 pub(crate) use watchface::*;
 pub(crate) use page::*;
@@ -102,65 +85,9 @@ pub(crate) use mem::{plausible_ptr, safe_ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
-
-
 type FnLookup = unsafe extern "C" fn(u32) -> *mut u8;
 type FnInstall = unsafe extern "C" fn(*const u32, *const u32, u32) -> i32;
 type FnInitBuffer = unsafe extern "C" fn(u32) -> *mut u8;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // 行事件回调只有一个(chaos_row_any, 在 ui.rs): 行号注册时写进 obj_add_event 的
 // user_data, 派发时从 event_user_data 读回 —— 新增行不再需要在这里补回调。
@@ -216,10 +143,7 @@ unsafe extern "C" fn chaos_ctor() {
             }
         }
         crate::watchface::maintenance_arm();
-        // 定时器句柄: 0 说明 timer_create 没成, 那样 chaos_shake_timer 永远不会被调,
-        // 依赖它的一切(页面 tick / desktop_scale)都不会跑。
-        crate::log::kv("timer h ", st_rd!(SHAKE_TIMER));
-        crate::log::line("模块加载: /dev/chaos 注册成功");
+
         // The bridge is armed from chaos_shake_timer, not here: the owner
         // loop / LVGL timer source is not ready while insmod is running.
     }
@@ -237,8 +161,6 @@ unsafe extern "C" fn chaos_dtor() {
     unregister(core::ptr::addr_of!(DEV_PATH) as *const u8);
     st_wr!(DRIVER_ON, 0);
 }
-
-
 
 #[no_mangle]
 pub extern "C" fn module_main() -> i32 {

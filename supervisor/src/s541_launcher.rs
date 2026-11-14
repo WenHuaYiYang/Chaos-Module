@@ -168,7 +168,7 @@ pub(crate) unsafe fn render(grid: u32) {
     hide(VIEW, false);
     if capture {
         if fw::s541_capture_region(&mut SAMPLE, x as u32, y.clamp(0, 384) as u32).is_err() {
-            crate::log::line("s541控制条：背景采样失败，使用透明底图");
+
             return;
         }
         // GPU空闲不代表面板DMA或另一帧没有更新fb0。连续读取两次，

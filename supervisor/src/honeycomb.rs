@@ -2,13 +2,12 @@
 //! input, maintenance persists settings, and the frame timer advances motion.
 use crate::fw_api::honeycomb as fw;
 use crate::honeycomb_layout::{Camera, Frame, ReturnAnimation, Route, MAX_ICONS};
-use crate::{fw_api, log};
+use crate::fw_api;
 
 const CONFIG: &[u8] = b"/data/chaos/honeycomb.cfg\0";
 static mut LOADED: bool = false;
 static mut ENABLED: bool = false;
 static mut DIRTY: bool = false;
-static mut SAVE_WARNED: bool = false;
 static mut OWNER: u32 = 0;
 static mut COUNT: usize = 0;
 static mut REVISION: u32 = 0;
@@ -68,7 +67,7 @@ unsafe fn load_choice(sync_rw: bool) {
         ENABLED = b[4] != 0;
         if ENABLED && sync_rw {
             crate::desktop_scale::disable_for_honeycomb();
-            log::line("蜂窝视图: 已恢复开启状态");
+
         }
     }
 }
@@ -119,10 +118,6 @@ unsafe fn save() {
     };
     if ok {
         DIRTY = false;
-        SAVE_WARNED = false;
-    } else if !SAVE_WARNED {
-        log::line("蜂窝视图: 设置保存失败，将重试");
-        SAVE_WARNED = true;
     }
 }
 
@@ -175,7 +170,7 @@ unsafe fn draw() {
     fw::present(owner);
     for (i, &icon) in icons[..n].iter().enumerate() {
         if !fw::geometry_matches(icon, view_frame(i)) {
-            log::kv("hc geometry icon", i as u32);
+
             DRAWING = false;
             FAULT_PENDING = true;
             return;
@@ -220,7 +215,7 @@ unsafe fn consume_fault() {
         return;
     }
     FAULT_PENDING = false;
-    log::line("蜂窝视图: 布局检查失败，已关闭并恢复系统布局");
+
     set_enabled(false);
     restore();
 }
@@ -239,7 +234,7 @@ unsafe fn restore() {
     REVISION = 0;
     HOOK_REVISION = 0;
     fw::detach(owner, &icons[..n]);
-    log::line("蜂窝视图: 已恢复系统布局");
+
 }
 
 /// Explicit switch application on the UI owner: release old per-object hooks,
@@ -313,7 +308,7 @@ unsafe fn prepare(grid: u32) -> bool {
     RENDER_PENDING = true;
     fw::frame_timer_start();
     fw::frame_timer_active(fw::visible(grid) && moving());
-    log::line("蜂窝视图: 双向拖动已启用");
+
     true
 }
 

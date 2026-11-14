@@ -14,7 +14,8 @@ use crate::*;
 
 mod home;
 mod time;
-mod log;
+mod connect;
+mod connect_log;
 mod watchface;
 mod settings;
 mod beautify;
@@ -176,7 +177,6 @@ pub(crate) unsafe fn tile_primary(row: u32) {
     if lb != 0 { fw_api::obj_set_local_style_prop(lb, ps::TEXT_COLOR, 0xFFFFFF, 0); }
 }
 
-
 pub(crate) fn pill_w(txt: &[u8]) -> u32 {
     let mut w = 30u32;
     let mut i = 0usize;
@@ -319,13 +319,11 @@ pub(crate) trait Page: Sync {
     fn needs_tick(&self) -> bool { false }
 }
 
-
 pub(crate) unsafe fn cstr_len(s: *const u8) -> usize {
     let mut n = 0usize;
     while read_volatile(s.add(n)) != 0 { n += 1; }
     n
 }
-
 
 // PAGE_TABLE 已搬到 page/registry.rs: 与 Pid 枚举、页名一起由 `pages!` 宏一次生成,
 // 页号/页名/页实例三处对齐由编译期断言兜住(见 registry.rs 头注释)。
