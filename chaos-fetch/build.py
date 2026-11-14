@@ -127,10 +127,26 @@ CFLAGS = [
     "-ffunction-sections",
     "-fdata-sections",
     "-Wall", "-Wextra", "-Werror",
-    # 运行统计计数器(g_svc_calls 等)只写不读, 新版 clang 把 set-but-not-used
-    # 升成告警; 与 -Werror 组合会让本地构建挂掉。计数器保留(调障用), 只豁免这一项。
-    "-Wno-unused-but-set-global",
 ]
+
+# 运行统计计数器(g_svc_calls 等)只写不读: 新版 clang 把它升成
+# -Wunused-but-set-global 告警, 与 -Werror 组合会让构建挂掉, 所以要豁免这一项
+# (计数器保留, 调障用)。但 CI 上的 NDK clang 还没有这个告警组, 未知的 -Wno-*
+# 在 -Werror 下同样是错误("unknown warning option"); 直接写死在 CFLAGS 里会让
+# 一边绿一边红。所以运行期探测: 本机 clang 认这个开关才加 —— 不认就说明这个
+# 告警本来就不存在, 也无需豁免。
+WARNING_OPT_OUTS = ["-Wno-unused-but-set-global"]
+
+
+def warning_opt_outs(clang):
+    accepted = []
+    for flag in WARNING_OPT_OUTS:
+        probe = subprocess.run([clang, "--target=arm-none-eabi", flag, "-Werror",
+                                "-fsyntax-only", "-x", "c", "-"],
+                               input=b"", capture_output=True)
+        if probe.returncode == 0:
+            accepted.append(flag)
+    return accepted
 
 REQUIRED_SYMS = [
     "module_initialize",
@@ -355,12 +371,13 @@ def main():
     print("   lld   :", LLD)
     print("   target: %s  cpu=%s float=%s" % (TARGET_ID, CPU, FLOAT_ABI))
 
+    flags = CFLAGS + warning_opt_outs(CLANG)
     print("\n== [1/3] 编译 ==")
-    cmd = [CLANG] + CFLAGS + ["-c", SRC, "-o", obj]
+    cmd = [CLANG] + flags + ["-c", SRC, "-o", obj]
     print("   " + " ".join(cmd))
     run(cmd)
     print("   -> %s  (%d B)" % (os.path.basename(obj), os.path.getsize(obj)))
-    cmd = [CLANG] + CFLAGS + ["-c", DNS_SRC, "-o", dns_obj]
+    cmd = [CLANG] + flags + ["-c", DNS_SRC, "-o", dns_obj]
     print("   " + " ".join(cmd))
     run(cmd)
     print("   -> %s  (%d B)" % (os.path.basename(dns_obj), os.path.getsize(dns_obj)))
