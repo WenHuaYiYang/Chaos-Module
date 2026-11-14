@@ -251,10 +251,12 @@ pub(crate) unsafe fn s541_icon(icon: u32) -> Option<(u32, u32, *const u8)> {
     let callback = word(node, 0x1c);
     // 用户安装的原生模块（包括Chaos）的回调位于0x3xxxxxxx RAM，不能只认固件flash。
     if callback & 1 == 0 || !crate::mem::plausible_ptr(callback) { return None; }
-    let name: unsafe extern "C" fn() -> *const u8 = transmute(callback as usize);
+    // 原生0x0C5142BE取回调后直接BLX，R0仍是lookup返回的应用节点。
+    // 某些内置应用（如0x0C549634）会读取node+0x30，不能当无参函数调用。
+    let name: unsafe extern "C" fn(u32) -> *const u8 = transmute(callback as usize);
     let source = word(icon, 0x34);
     if source == 0 { return None; }
-    Some((id, source, name()))
+    Some((id, source, name(node)))
 }
 
 pub(crate) unsafe fn s541_button(grid: u32) -> u32 {
