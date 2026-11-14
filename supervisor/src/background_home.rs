@@ -655,6 +655,7 @@ pub(crate) unsafe fn pending() -> bool {
 }
 
 pub(crate) unsafe fn tick() {
+    crate::log_level::ensure_applied();
     if st_rd!(BOOT_DELAY) != 0 {
         st_wr!(BOOT_DELAY, st_rd!(BOOT_DELAY) - 1);
         return;
