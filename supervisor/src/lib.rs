@@ -57,6 +57,7 @@ mod touch_palm;
 mod dimmer_timeout;
 mod log_level;
 mod s541_launcher;
+mod s541_pixels;
 mod dynamic_icon;
 mod dynamic_icon_frames;
 mod icon_pack_animation;

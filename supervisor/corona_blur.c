@@ -154,6 +154,13 @@ int chaos_corona_backgrounds_idle(void) {
     return 1;
 }
 
+/* Local launcher glass needs only renderer quiescence, not a Corona region
+ * configuration or panel ownership. Reuse the audited balanced GPU fence. */
+uint32_t chaos_s541_frame_idle(void) {
+    if (chaos_corona_in_call || p67_busy || !p67_blur_native_idle()) return 0;
+    return p67_blur_native_fence() && p67_blur_native_idle();
+}
+
 /* Ownership watchdog. The native owners are torn down by their own DELETE /
  * gesture handling; when that happens without a matching commit the module
  * would keep believing it still owns the scene and stop painting (blur gone,

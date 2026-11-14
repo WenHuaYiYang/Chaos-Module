@@ -87,6 +87,48 @@ pub unsafe fn capture_frame(out: &mut [u8]) -> Result<(), i32> {
     result.and(if close_rc < 0 { Err(close_rc) } else { Ok(()) })
 }
 
+/// p67 RGB888 framebuffer局部采样，沿用截图的video/plane校验，不分配全屏缓冲。
+pub unsafe fn s541_capture_region(out: &mut [u8; 5184], x: u32, y: u32) -> Result<(), i32> {
+    if x > 48 || y > 384 { return Err(-22); }
+    let fd = capture_result(open(b"/dev/fb0\0".as_ptr(), oflag::RDONLY, 0));
+    if fd < 0 { return Err(fd); }
+    let result = (|| {
+        check_video(fd)?;
+        let plane = read_plane(fd)?;
+        if plane[5] != 0 || plane[6] as u64 + 480 > plane[4] as u64 { return Err(-95); }
+        let mut row = [0u8; 864];
+        for line in 0..24usize {
+            let offset = (plane[6] as u64 + y as u64 + line as u64 * 4 + 2) * 1008 + x as u64 * 3;
+            if offset + row.len() as u64 > plane[1] as u64 { return Err(-95); }
+            if lseek(fd, offset as i64, seek::SET) != offset as i64 { return Err(-5); }
+            let mut used = 0;
+            while used < row.len() {
+                let n = nsh_read(fd, &mut row[used..]);
+                if n <= 0 || n as usize > row.len() - used { return Err(if n < 0 { n } else { -5 }); }
+                used += n as usize;
+            }
+            for col in 0..72 { for c in 0..3 {
+                let mut sum = 0u32;
+                for dx in 0..4 { sum += row[(col * 4 + dx) * 3 + c] as u32; }
+                out[(line * 72 + col) * 3 + c] = (sum / 4) as u8;
+            } }
+        }
+        Ok(())
+    })();
+    close(fd); result
+}
+
+/// 与p67原生模糊同一cache-clean入口；CPU写完预乘像素后才交给GPU。
+pub unsafe fn s541_clean_pixels(pixels: *const u8, size: u32) {
+    let clean: unsafe extern "C" fn(u32, u32, u32) -> i32 = transmute(0x0C588F89usize);
+    clean(1, pixels as u32, size);
+    core::arch::asm!("dsb", "isb", options(nostack, preserves_flags));
+}
+pub unsafe fn s541_frame_idle() -> bool {
+    extern "C" { fn chaos_s541_frame_idle() -> u32; }
+    chaos_s541_frame_idle() != 0
+}
+
 // Exact .043 pollfd: six WORDS (not Linux's 8-byte fd/events/revents).
 // Driver owns the two UnsafeCells until poll teardown. The allocation is
 // stable even when the Rust reader moves between task-stack frames.

@@ -4,6 +4,19 @@ mod layout;
 use layout::*;
 
 #[test]
+fn linear_layout_uses_its_own_full_list_extent() {
+    let mut c=Camera::new();
+    c.linear_end(128,4000);
+    assert_eq!(c.pan(),Point{x:0,y:-4000});
+    c.press_linear(Point{x:330,y:100});
+    c.drag(Point{x:0,y:64},128);
+    assert_eq!(c.zoom(),256);
+    assert_eq!(c.pan(),Point{x:0,y:-3936});
+    c.linear_bounds(3,0);
+    assert_eq!(c.pan(),Point::default());
+}
+
+#[test]
 fn edit_return_animates_both_position_and_size_until_the_exact_final_frame() {
     let mut a = ReturnAnimation::new();
     let from = Frame {

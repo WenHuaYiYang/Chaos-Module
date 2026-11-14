@@ -1,6 +1,14 @@
 //! Exercise the complete production controller with an isolated firmware port.
 #![allow(dead_code, static_mut_refs)]
-mod s541_launcher { pub unsafe fn disable() {} }
+mod s541_launcher {
+    pub static mut ACTIVE: bool = false;
+    pub unsafe fn disable() { ACTIVE=false; } pub unsafe fn enabled()->bool{ACTIVE}
+    pub unsafe fn pending()->bool{false}
+    pub unsafe fn frame(i:usize,p:crate::honeycomb_layout::Point)->crate::honeycomb_layout::Frame{
+        crate::honeycomb_layout::Frame{x:60+(i%3)as i32*108,y:48+(i/3)as i32*88+p.y,diameter:72,visible:true}}
+    pub unsafe fn range(n:usize)->i32{(n.div_ceil(3)as i32*88+144-480).max(0)}
+    pub unsafe fn render(_:u32,_:&[u32],_:crate::honeycomb_layout::Point,_:bool){}
+}
 #[path = "../src/desktop_scale.rs"]
 mod desktop_scale;
 #[path = "../src/honeycomb.rs"]
@@ -421,6 +429,16 @@ fn main() {
         });
         let case = std::env::args().nth(1).unwrap();
         match case.as_str() {
+            "s541-native" => {
+                s541_launcher::ACTIVE=true;
+                honeycomb::tick();
+                assert!(!honeycomb::enabled());
+                with(|u|{assert_eq!(u.attached,1);assert_eq!(u.placed,u.icons);assert_eq!(u.frames[0].x,60);});
+                honeycomb::s541_changed(true); honeycomb::tick();
+                with(|u|assert_eq!(u.frames[u.frames.len()-u.icons.len()].y,48-s541_launcher::range(u.icons.len())));
+                s541_launcher::disable(); honeycomb::tick();
+                with(|u|assert_eq!(u.detached,1));
+            }
             "defaults" => {
                 honeycomb::tick();
                 assert!(!honeycomb::enabled());

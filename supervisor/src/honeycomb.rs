@@ -23,7 +23,29 @@ static mut RETURN: ReturnAnimation = ReturnAnimation::new();
 static mut REAPPLY_PENDING: bool = false;
 
 unsafe fn view_frame(index: usize) -> Frame {
-    RETURN.frame(index, CAMERA.frame(index))
+    if crate::s541_launcher::enabled() {
+        crate::s541_launcher::frame(index, CAMERA.pan())
+    } else { RETURN.frame(index, CAMERA.frame(index)) }
+}
+
+unsafe fn active() -> bool { ENABLED || crate::s541_launcher::enabled() }
+
+pub(crate) unsafe fn s541_changed(at_end: bool) {
+    CAMERA = Camera::new(); RETURN.cancel();
+    if crate::s541_launcher::enabled() {
+        let range = crate::s541_launcher::range(COUNT);
+        CAMERA.linear_bounds(COUNT, range);
+        if at_end { CAMERA.linear_end(COUNT, range); }
+    }
+    RENDER_PENDING = true;
+    if OWNER != 0 && fw::launcher() == OWNER && fw::visible(OWNER) { fw::frame_timer_active(true); }
+}
+
+pub(crate) unsafe fn s541_ui_tick() {
+    if DRAWING || IN_LAYOUT || OWNER == 0 || fw::launcher() != OWNER || !fw::visible(OWNER) { return; }
+    let mut icons = [0u32; MAX_ICONS];
+    let n = fw::icons(OWNER, &mut icons);
+    if n != 0 { crate::s541_launcher::render(OWNER, &icons[..n], CAMERA.pan(), moving()); }
 }
 
 unsafe fn moving() -> bool {
@@ -70,7 +92,7 @@ unsafe fn load() {
 /// 蜂窝视图是否处在需要快拍的活跃态(编辑中/重排挂起/镜头或回位动画在动)。
 /// 维护定时器的节拍自适应用: 不活跃时亮屏也可以降频到中档。
 pub(crate) unsafe fn busy() -> bool {
-    EDIT_GRID != 0 || DRAWING || REAPPLY_PENDING || (ENABLED && moving())
+    EDIT_GRID != 0 || DRAWING || REAPPLY_PENDING || RENDER_PENDING || crate::s541_launcher::pending() || (active() && moving())
 }
 
 pub(crate) unsafe fn enabled() -> bool {
@@ -143,6 +165,7 @@ unsafe fn draw() {
         COUNT = n;
     }
     DRAWING = true;
+    if crate::s541_launcher::enabled() { CAMERA.linear_bounds(COUNT, crate::s541_launcher::range(COUNT)); }
     let mut hooks = 2166136261u32;
     for &icon in &icons[..n] {
         hooks = hooks.wrapping_mul(16777619) ^ icon;
@@ -167,6 +190,9 @@ unsafe fn draw() {
         }
     }
     fw::present(owner);
+    if crate::s541_launcher::enabled() {
+        crate::s541_launcher::render(owner, &icons[..n], CAMERA.pan(), CAMERA.moving());
+    }
     for (i, &icon) in icons[..n].iter().enumerate() {
         if !fw::geometry_matches(icon, view_frame(i)) {
             log::kv("hc geometry icon", i as u32);
@@ -184,7 +210,7 @@ unsafe fn draw() {
 /// allocation, animation deletion, invalidation, I/O or detach here. Clearing
 /// HIDDEN on an already visible icon dirties its parent again in this firmware.
 pub(crate) unsafe extern "C" fn layout_event(object: u32, _data: u32) {
-    if object != OWNER || !ENABLED || DRAWING || IN_LAYOUT || FAULT_PENDING {
+    if object != OWNER || !active() || DRAWING || IN_LAYOUT || FAULT_PENDING {
         return;
     }
     IN_LAYOUT = true;
@@ -215,6 +241,7 @@ unsafe fn consume_fault() {
     }
     FAULT_PENDING = false;
     log::line("蜂窝视图: 布局检查失败，已关闭并恢复系统布局");
+    crate::s541_launcher::disable();
     set_enabled(false);
     restore();
 }
@@ -253,12 +280,12 @@ pub(crate) unsafe fn reapply_now() {
     fw::stop_watch();
     FAULT_PENDING = false; // A fresh binding validates geometry again.
     RENDER_PENDING = false;
-    if !ENABLED {
+    if !active() {
         save(); // Persist release before enabling RW in the other config file.
     }
     crate::desktop_scale::reapply_now();
     tick();
-    if !ENABLED {
+    if !active() {
         save();
     }
 }
@@ -320,13 +347,13 @@ pub(crate) unsafe fn tick() {
     consume_fault();
     save();
     let grid = fw::launcher();
-    if EDIT_GRID != 0 && (!ENABLED || EDIT_GRID != grid) {
+    if EDIT_GRID != 0 && (!active() || EDIT_GRID != grid) {
         EDIT_GRID = 0;
     }
     if OWNER != 0 && OWNER != grid {
         forget_owner();
     }
-    if !ENABLED {
+    if !active() {
         fw::frame_timer_active(false);
         restore();
         fw::stop_watch();
@@ -375,7 +402,7 @@ pub(crate) unsafe fn tick() {
 /// A separate UI animation timer; the general 50 ms maintenance queue keeps
 /// its original cadence. An idle/off-screen cloud returns to a 1000 ms timer.
 pub(crate) unsafe extern "C" fn animation_tick(_timer: u32) {
-    if !ENABLED || OWNER == 0 || fw::launcher() != OWNER || !fw::visible(OWNER) {
+    if !active() || OWNER == 0 || fw::launcher() != OWNER || !fw::visible(OWNER) {
         finish_return();
         fw::frame_timer_active(false);
         return;
@@ -398,7 +425,7 @@ pub(crate) unsafe extern "C" fn animation_tick(_timer: u32) {
 }
 
 pub(crate) unsafe extern "C" fn entry_event(event: u32) {
-    if !ENABLED || DRAWING || IN_LAYOUT || !matches!(fw_api::event_get_code(event), 9 | 11 | 12) {
+    if !active() || DRAWING || IN_LAYOUT || !matches!(fw_api::event_get_code(event), 9 | 11 | 12) {
         return;
     }
     let grid = fw::launcher();
@@ -418,7 +445,7 @@ pub(crate) unsafe extern "C" fn entry_event(event: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn chaos_honeycomb_pre_scroll(event: u32) -> u32 {
     let code = fw_api::event_get_code(event);
-    if !ENABLED || DRAWING || IN_LAYOUT || !matches!(code, 9 | 11 | 12) {
+    if !active() || DRAWING || IN_LAYOUT || !matches!(code, 9 | 11 | 12) {
         return 0;
     }
     let grid = fw::launcher();
@@ -500,7 +527,8 @@ pub(crate) unsafe extern "C" fn class_event(_class: u32, event: u32) {
     }
     match code {
         1 => {
-            CAMERA.press_at(fw::point(event));
+            if crate::s541_launcher::enabled() { CAMERA.press_linear(fw::point(event)); }
+            else { CAMERA.press_at(fw::point(event)); }
             fw::navigation(OWNER, event, 0);
             fw::frame_timer_active(true);
         }

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = ("defaults", "config", "invalid", "short", "save-retry", "toggle-restore",
+CASES = ("s541-native", "defaults", "config", "invalid", "short", "save-retry", "toggle-restore",
          "tap", "drag", "rebuild", "remove", "destroy", "unsupported", "idle", "offscreen", "capacity",
          "grow-over-capacity", "remove-all", "exclusive-on", "exclusive-rw", "exclusive-lens", "exclusive-inset",
          "exclusive-boot", "layout-callback", "rw-save-retry", "geometry-failed",

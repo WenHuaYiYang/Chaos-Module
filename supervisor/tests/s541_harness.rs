@@ -9,7 +9,13 @@ fn state<T>(f: impl FnOnce(&mut State)->T)->T { STATE.with(|s| f(&mut s.borrow_m
 const FW_STYLE_HR_NAME: u32 = 1;
 #[path = "../src/honeycomb_layout.rs"] mod honeycomb_layout;
 #[path = "../src/s541_launcher.rs"] mod s541_launcher;
-mod honeycomb { pub unsafe fn set_enabled(_: bool) {} pub unsafe fn enabled()->bool { false } }
+#[path = "../src/s541_pixels.rs"] mod s541_pixels;
+mod honeycomb {
+    pub unsafe fn set_enabled(_: bool) {} pub unsafe fn enabled()->bool { false }
+    pub unsafe fn s541_changed(_:bool) {} pub unsafe fn s541_ui_tick() {}
+}
+mod desktop_scale { pub unsafe fn disable_for_honeycomb() {} }
+mod corona_blur { pub unsafe fn backgrounds_idle()->bool{true} }
 mod log { pub fn line(_: &str) {} }
 mod mem {
     pub fn safe_ptr(p: u32)->bool { p != 0 }
@@ -37,7 +43,8 @@ mod fw_api {
     pub unsafe fn capture_mkdir_path(_: *const u8)->i32{0}
     pub unsafe fn obj_create(parent:u32,_:u32)->u32 {crate::state(|s|{
         if s.fail{return 0;}s.next+=1;let id=1000+s.next;s.objects.insert(id,parent);id})}
-    pub unsafe fn obj_is_child_of(parent:u32,o:u32)->bool {crate::state(|s|s.objects.get(&o)==Some(&parent))}
+    pub unsafe fn obj_is_child_of(parent:u32,o:u32)->bool {crate::state(|s|
+        s.objects.values().filter(|&&p|p==parent).count()<=24 && s.objects.get(&o)==Some(&parent))}
     pub unsafe fn obj_delete(o:u32){crate::state(|s|{s.objects.remove(&o);});}
     pub unsafe fn obj_add_flag(o:u32,f:u32){crate::state(|s|{*s.flags.entry(o).or_default()|=f;});}
     pub unsafe fn obj_clear_flag(o:u32,f:u32){crate::state(|s|{*s.flags.entry(o).or_default()&=!f;});}
@@ -59,12 +66,17 @@ mod fw_api {
     pub unsafe fn label_set_text(_:u32,p:*const u8){crate::state(|s|s.labels.push(std::ffi::CStr::from_ptr(p.cast()).to_bytes().to_vec()));}
     pub unsafe fn screen_is_on()->bool{true}
     pub unsafe fn top_app_id()->u32{HOME_APP_ID}
+    pub unsafe fn s541_capture_region(out:&mut[u8;5184],_:u32,_:u32)->Result<(),i32>{out.fill(120);Ok(())}
+    pub unsafe fn s541_clean_pixels(_: *const u8,_:u32){}
+    pub unsafe fn s541_frame_idle()->bool{true}
+    pub unsafe fn fw_img_free_by_path(_:u32){}
     pub mod honeycomb {
         pub unsafe fn current_target(e:u32)->u32{e}
         pub unsafe fn launcher()->u32{20}
         pub unsafe fn parent(_:u32)->u32{10}
         pub unsafe fn s541_button(_:u32)->u32{30}
         pub unsafe fn supported(_:u32)->bool{true}
+        pub unsafe fn visible(_:u32)->bool{true}
         pub unsafe fn icons(_:u32,o:&mut [u32;crate::honeycomb_layout::MAX_ICONS])->usize{o[..3].copy_from_slice(&[0x10000,0x10100,0x10200]);3}
         pub unsafe fn s541_icon(i:u32)->Option<(u32,u32,*const u8)>{Some((i,0x1234,"应用\0".as_ptr()))}
         pub unsafe fn launch(_:u32){crate::state(|s|s.launches+=1);}

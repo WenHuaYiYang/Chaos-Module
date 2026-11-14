@@ -240,6 +240,19 @@ impl Camera {
             y: self.pan.y / ONE,
         }
     }
+    /// 原生纵向列表复用同一惯性/点击保护，不启用蜂窝边缘缩放。
+    pub(crate) fn linear_bounds(&mut self, count: usize, range: i32) {
+        self.zoom = ONE; self.spacing = ONE;
+        self.min = Point::default(); self.max = Point { x: 0, y: range.max(0) };
+        self.bounds_count = count.min(MAX_ICONS); self.clamp(count);
+    }
+    pub(crate) fn linear_end(&mut self, count: usize, range: i32) {
+        self.pan = Point { x: 0, y: -range.max(0) * ONE };
+        self.linear_bounds(count, range);
+    }
+    pub(crate) fn press_linear(&mut self, point: Point) {
+        self.press_at(point); self.gesture = Gesture::Pan;
+    }
     pub(crate) fn zoom(&self) -> i32 {
         self.zoom
     }
