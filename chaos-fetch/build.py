@@ -86,6 +86,19 @@ CLANG = _tool("CLANG", "clang")
 LLD = _tool("LLD", "ld.lld")
 NM = _tool("NM", "llvm-nm")
 READELF = _tool("READELF", "llvm-readelf")
+OBJDUMP = _tool("OBJDUMP", "llvm-objdump")
+
+
+def _reloc_cmd(out):
+    """重定位表: 优先 llvm-readelf, 缺席退 llvm-objdump -r。
+
+    两处调用(378/407)的解析都只按空白拆 token 认 R_ARM_ 前缀, 两种工具的
+    输出都满足。本机 LLVM 发行版常不带 llvm-readelf, 别让它把整条构建卡死。
+    """
+    tool = READELF if READELF and os.path.exists(READELF) else OBJDUMP
+    if not tool or not os.path.exists(tool):
+        raise RuntimeError("llvm-readelf 与 llvm-objdump 都不可用, 无法核重定位类型")
+    return [tool, "-r", out]
 
 # ---- 编译参数 -----------------------------------------------------------
 # 基准 = BTMouse standalone/build.sh 的 CFLAGS（043 实机已验证的同场景）
@@ -115,6 +128,25 @@ CFLAGS = [
     "-fdata-sections",
     "-Wall", "-Wextra", "-Werror",
 ]
+
+# 运行统计计数器(g_svc_calls 等)只写不读: 新版 clang 把它升成
+# -Wunused-but-set-global 告警, 与 -Werror 组合会让构建挂掉, 所以要豁免这一项
+# (计数器保留, 调障用)。但 CI 上的 NDK clang 还没有这个告警组, 未知的 -Wno-*
+# 在 -Werror 下同样是错误("unknown warning option"); 直接写死在 CFLAGS 里会让
+# 一边绿一边红。所以运行期探测: 本机 clang 认这个开关才加 —— 不认就说明这个
+# 告警本来就不存在, 也无需豁免。
+WARNING_OPT_OUTS = ["-Wno-unused-but-set-global"]
+
+
+def warning_opt_outs(clang):
+    accepted = []
+    for flag in WARNING_OPT_OUTS:
+        probe = subprocess.run([clang, "--target=arm-none-eabi", flag, "-Werror",
+                                "-fsyntax-only", "-x", "c", "-"],
+                               input=b"", capture_output=True)
+        if probe.returncode == 0:
+            accepted.append(flag)
+    return accepted
 
 REQUIRED_SYMS = [
     "module_initialize",
@@ -339,12 +371,13 @@ def main():
     print("   lld   :", LLD)
     print("   target: %s  cpu=%s float=%s" % (TARGET_ID, CPU, FLOAT_ABI))
 
+    flags = CFLAGS + warning_opt_outs(CLANG)
     print("\n== [1/3] 编译 ==")
-    cmd = [CLANG] + CFLAGS + ["-c", SRC, "-o", obj]
+    cmd = [CLANG] + flags + ["-c", SRC, "-o", obj]
     print("   " + " ".join(cmd))
     run(cmd)
     print("   -> %s  (%d B)" % (os.path.basename(obj), os.path.getsize(obj)))
-    cmd = [CLANG] + CFLAGS + ["-c", DNS_SRC, "-o", dns_obj]
+    cmd = [CLANG] + flags + ["-c", DNS_SRC, "-o", dns_obj]
     print("   " + " ".join(cmd))
     run(cmd)
     print("   -> %s  (%d B)" % (os.path.basename(dns_obj), os.path.getsize(dns_obj)))
@@ -372,7 +405,7 @@ def main():
     # 只允许 {2 R_ARM_ABS32, 10 R_ARM_THM_CALL, 38 R_ARM_THM_JUMP24}（内核加载器
     # 实测能处理的那几种）。其它类型一律不放行：R_ARM_TARGET1(30) 语义上就是
     # "按静态链接当 ABS32"，直接改写成 ABS32（同样结果、但落在已验证的集合里）。
-    r = run([READELF, "-r", out])
+    r = run(_reloc_cmd(out))
     import collections
     hist = collections.Counter()
     for ln in r.stdout.splitlines():
@@ -401,7 +434,7 @@ def main():
     if patched:
         open(out, "wb").write(bytes(raw))
         print("     ★ 归一化 R_ARM_TARGET1 -> R_ARM_ABS32：%d 处" % patched)
-        r = run([READELF, "-r", out])
+        r = run(_reloc_cmd(out))
         hist = collections.Counter()
         for ln in r.stdout.splitlines():
             for tok in ln.split():

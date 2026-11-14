@@ -100,6 +100,16 @@ class BuildPreflightTests(unittest.TestCase):
                 self.assertEqual(cwd, repo)
                 self.assertEqual(env["CHAOS_ICON_SIZE"], "64")
 
+    def test_preview_generation_uses_pillow_interpreter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            output = repo / "dist/preview.bin"
+            with patch.object(build, "run") as run:
+                build.build_preview(repo, output, "project-python")
+                run.assert_called_once_with([
+                    "project-python", str(repo / "tools/gen_preview.py"), str(output),
+                ], repo)
+
 
 class ContainerIntegrityTests(unittest.TestCase):
     def test_container_preserves_every_payload_byte_including_fetch(self):

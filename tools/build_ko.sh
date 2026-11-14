@@ -25,8 +25,10 @@ root=$(cd "$here/.." && pwd)
 src=$(cd "${1:-$root/supervisor}" && pwd)
 
 out=${2:-"$src/chaos_sup.ko"}
+# 绝对路径两种形式都认: MSYS 的 /c/... 与 Windows 的 C:/...
+# (build.py 从 Windows 调用时传的就是后者, 只认 /* 会误拼出 pwd+C:/... 的双前缀)
 case $out in
-  /*) ;;
+  /*|[A-Za-z]:[\\/]*) ;;
   *) out="$(pwd)/$out" ;;
 esac
 
@@ -86,7 +88,12 @@ python3 "$here/build_network.py" --source "$src/network"
 # Native CanopusConnect file bridge. It is deliberately a C provider: the
 # CPC2/L2 paths came from the audited Canopus target pack, while the file
 # protocol is the embedded band_files source.
-bridge_objs=""
+# rust-lld 是 Windows 原生程序: 不认 MSYS 的 /c/ 形式路径, 也拆不动带空格的
+# 命令行参数 —— 全部输入统一经 cygpath 转 C:/ 形式, bridge 三个 .o 与 network
+# 的 37 个 .o 一样走响应文件(每行一个带引号路径)。
+win() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
+bridge_rsp="$obj_dir/bridge_objs.rsp"
+: > "$bridge_rsp"
 for f in canopus_protocol band_files_embed bridge; do
   o="$obj_dir/chaos_bridge_$f.o"
   "$cc" $cflags_target \
@@ -94,16 +101,16 @@ for f in canopus_protocol band_files_embed bridge; do
          -fno-unwind-tables -fno-asynchronous-unwind-tables \
          -ffunction-sections -fdata-sections -O1 -DBF_BRIDGE \
          -I"$src/bridge" -c "$src/bridge/$f.c" -o "$o"
-  bridge_objs="$bridge_objs $o"
+  printf '"%s"\n' "$(win "$o")" >> "$bridge_rsp"
 done
 
-# shellcheck disable=SC2086
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
        -u chaos_bridge_start -u chaos_bridge_stop \
        -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
        -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
        --wrap=bnep_register_frame_callback --wrap=bnep_init --wrap=bt_probe_connect_device \
-       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj" $bridge_objs "@$src/network/build/objects.rsp"
+       -T "$(win "$here/merge_sections.ld")" -o "$(win "$out")" "$(win "$lib")" "$(win "$corona_obj")" \
+       "@$(win "$bridge_rsp")" "@$(win "$src/network/build/objects.rsp")"
 
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then

@@ -41,7 +41,7 @@ fn cstr(p: *const u8) -> String { unsafe { std::ffi::CStr::from_ptr(p.cast()).to
 mod fw_api {
     use super::*;
     pub mod oflag { pub const RDONLY: u32 = 1; pub const WRONLY: u32 = 2; pub const CREAT: u32 = 4; }
-    pub mod trailing { pub const RADIO: u32 = 6; }
+    pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX: u32 = 2; }
     pub unsafe fn row_trailing(row: u32) -> u32 { row + 100 }
     pub unsafe fn obj_add_event(object: u32, callback: u32, event: u32, _: u32) {
         crate::ui(|u| u.events.push((object, callback, event)));
@@ -188,6 +188,7 @@ thread_local! { static UI: RefCell<Ui> = RefCell::new(Ui::default()); }
 fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R { UI.with(|u| f(&mut u.borrow_mut())) }
 
 mod page {
+    pub mod kit { pub use crate::checklist; }
     pub(crate) use crate::fw_api;
     pub(crate) use std::ptr::read_volatile;
     pub const DT_REG: u8 = 8;
@@ -219,7 +220,7 @@ mod page {
         for (slot, spec) in rows { prev = build_row(ctx, prev, *slot, spec); } Ok(())
     }
     pub unsafe fn put_str(out: *mut u8, bytes: &[u8]) { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()); }
-    pub fn render_req(pid: usize) { crate::ui(|u| u.renders.push(pid)); }
+    pub fn render_req(pid: u32) { crate::ui(|u| u.renders.push(pid as usize)); }
     pub unsafe fn nav_goto(pid: u32, _: u32) { crate::ui(|u| u.navigations.push(pid)); }
     pub fn page_rows_ptr(_: usize) -> *mut u32 { crate::ui(|u| u.slots.as_mut_ptr()) }
     pub unsafe fn row_ev_fn(slot: usize) -> u32 { 1000 + slot as u32 }
@@ -234,3 +235,10 @@ mod page {
         pub unsafe fn end(&mut self) { *self.ptr.add(self.len) = 0; }
     }
 }
+
+#[path = "../src/page/kit/checklist.rs"]
+pub mod checklist;
+use page::*;
+const MAX_PID: usize = 42;
+fn row_cb() -> u32 { 2000 }
+unsafe fn cstr_len(p: *const u8) -> usize { std::ffi::CStr::from_ptr(p.cast()).to_bytes().len() }
