@@ -55,6 +55,7 @@ mod bridge_cfg;
 mod screen_rotation;
 mod quickapp_animation;
 mod quickapp_splash;
+mod quickapp_exit;
 mod touch_palm;
 mod dimmer_timeout;
 mod log_level;

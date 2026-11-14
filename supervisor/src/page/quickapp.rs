@@ -11,7 +11,13 @@ static OPEN_ANIMATION: ToggleDef = ToggleDef {
 };
 static ROWS: &[RowModel] = &[
     RowModel::toggle("快应用开启动画\0".as_bytes(), &OPEN_ANIMATION),
+    RowModel::toggle("快应用关闭动画\0".as_bytes(), &CLOSE_ANIMATION),
 ];
+static CLOSE_ANIMATION: ToggleDef = ToggleDef {
+    get: crate::quickapp_animation::close_enabled,
+    toggle: crate::quickapp_animation::toggle_close,
+    status: Some(crate::quickapp_animation::close_status),
+};
 
 impl MenuSpec for QuickappPage {
     fn rows(&self) -> &'static [RowModel] { ROWS }

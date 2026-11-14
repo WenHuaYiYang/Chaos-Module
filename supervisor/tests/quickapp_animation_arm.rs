@@ -4,6 +4,7 @@
 #[path="../src/mem.rs"] mod mem;
 #[path="../src/quickapp_animation.rs"] mod quickapp_animation;
 #[path="../src/quickapp_splash.rs"] mod quickapp_splash;
+#[path="../src/quickapp_exit.rs"] mod quickapp_exit;
 mod fw_api {
     pub const HOME_APP_ID:u32=16;
     pub const DESC_ROOT:u32=0x30;
@@ -39,7 +40,10 @@ mod fw_api {
     pub unsafe fn background_image_set_source(_:u32,_:u32){}
     pub unsafe fn obj_child_count(o:u32)->i32{core::ptr::read_volatile((o+0x10)as *const i32)}
     pub unsafe fn obj_invalidate(_:u32){}
+    pub unsafe fn s541_frame_idle()->bool{core::ptr::read_volatile(0x2005001c as *const u32)!=0}
+    pub unsafe fn fw_img_free_by_path(p:u32){let f:unsafe extern "C" fn(u32)=core::mem::transmute(0x0c5890d1usize);f(p);}
 }
 #[no_mangle]pub unsafe extern "C" fn test_toggle(){quickapp_animation::toggle();}
 #[no_mangle]pub unsafe extern "C" fn test_tick(){quickapp_animation::tick();}
+#[no_mangle]pub unsafe extern "C" fn test_close_toggle(){quickapp_animation::toggle_close();}
 #[panic_handler]fn panic(_: &core::panic::PanicInfo<'_>)->!{loop{core::hint::spin_loop();}}

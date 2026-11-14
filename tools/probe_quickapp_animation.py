@@ -5,7 +5,7 @@ import argparse,struct,subprocess,tempfile
 from verify_honeycomb_abi import verify
 from probe_honeycomb_abi import Machine
 from elftools.elf.elffile import ELFFile
-from unicorn.arm_const import UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3
+from unicorn.arm_const import UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_SP
 ROOT=Path(__file__).resolve().parents[1]
 def main():
     p=argparse.ArgumentParser();p.add_argument('image',type=Path);args=p.parse_args()
@@ -17,7 +17,7 @@ def main():
         sysroot=Path(subprocess.check_output(['rustc','--print','sysroot'],text=True).strip())
         host=next(x.split(': ',1)[1] for x in subprocess.check_output(['rustc','-vV'],text=True).splitlines() if x.startswith('host:'))
         subprocess.run([str(sysroot/'lib/rustlib'/host/'bin/rust-lld'),'-flavor','gnu','-Ttext=0x10000000','--gc-sections',
-            '--entry=test_toggle','-u','test_tick',str(archive),'-o',str(exe)],check=True)
+            '--entry=test_toggle','-u','test_tick','-u','test_close_toggle',str(archive),'-o',str(exe)],check=True)
         with exe.open('rb') as f:
             e=ELFFile(f);pages=set()
             for s in e.iter_segments():
@@ -42,6 +42,8 @@ def main():
         m.hooks[0xca6cc98]=lambda u:calls.append(('show',u.reg_read(UC_ARM_REG_R0))) or 7
         m.hooks[0xc547698]=lambda u:calls.append(('create',u.reg_read(UC_ARM_REG_R0))) or 0
         m.hooks[0xc547764]=lambda u:calls.append(('foreground',u.reg_read(UC_ARM_REG_R0))) or 0
+        m.hooks[0xc5475f8]=lambda u:calls.append(('hide',u.reg_read(UC_ARM_REG_R0))) or 0
+        m.hooks[0xc54751c]=lambda u:calls.append(('destroy',u.reg_read(UC_ARM_REG_R0))) or 0
         # Context init uses native memset; animation builder runs to native driver seam.
         def memset(u):
             dst=u.reg_read(UC_ARM_REG_R0);m.u.mem_write(dst,bytes([u.reg_read(UC_ARM_REG_R1)&255])*u.reg_read(UC_ARM_REG_R2));return dst
@@ -49,6 +51,13 @@ def main():
         m.hooks[0xca6c65c]=lambda u:0 # native launch-mode state setup
         m.hooks[0xca6c678]=lambda u:0 # native post-launch notification
         m.hooks[0xca45c6c]=lambda u:animations.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        exits=[]
+        def out_animation(u):
+            assert (u.reg_read(UC_ARM_REG_R1),u.reg_read(UC_ARM_REG_R2),u.reg_read(UC_ARM_REG_R3))==(255,0,256)
+            assert word(u.reg_read(UC_ARM_REG_SP))==204
+            assert word(u.reg_read(UC_ARM_REG_SP)+4)==200
+            exits.append(u.reg_read(UC_ARM_REG_R0));return 0
+        m.hooks[0xca45db0]=out_animation
         m.hooks[0xca69934]=lambda u:0 # no splash icon in the initial forwarding cases
         original_table=bytes(m.u.mem_read(0x2cde7d18,60))
         assert struct.unpack_from('<I',original_table,0x18)[0]==0xca6cc99
@@ -124,7 +133,43 @@ def main():
         m.put(0x20050004,3100);m.call(syms['test_tick'])
         assert len(calls)==before+1 and word(cover+4)==0 # missing draw ack falls back to normal launch
         m.call(syms['test_toggle'])
+        # Closing is independently enabled while opening remains off.
+        m.put(0x20050000,16);m.put(0x20050004,4000)
+        m.call(syms['test_close_toggle']);before=len(calls);anim_before=len(animations)
+        launch(0x123);assert len(calls)==before+1 and len(animations)==anim_before
+        hide=word(app+0x5c);destroy=word(app+0x64)
+        assert hide!=0xc5475f9 and destroy!=0xc54751d
+        m.put(0x20050000,0x29);m.put(root+0x2c,0);m.put(0x2005001c,1)
+        m.u.mem_write(proxy+0x39,b'\x01')
+        snapshot=0x2004e000;allocations=[];captures=[];freed=[];cache_drops=[]
+        def allocate(u):
+            allocations.append((u.reg_read(UC_ARM_REG_R0),u.reg_read(UC_ARM_REG_R1),u.reg_read(UC_ARM_REG_R2)))
+            return snapshot
+        def snapshot_root(u):
+            captures.append(u.reg_read(UC_ARM_REG_R0));assert calls[-1][0]=='show';return 1
+        m.hooks[0xc587f38]=allocate;m.hooks[0xcac0878]=snapshot_root
+        m.hooks[0xcac0db8]=lambda u:freed.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        m.hooks[0xc5890d0]=lambda u:cache_drops.append(u.reg_read(UC_ARM_REG_R0)) or 0
+        m.call(hide,app);assert captures==[root] and calls[-1]==('hide',app)
+        m.call(destroy,app);assert len(captures)==1 and calls[-1]==('destroy',app)
+        m.call(syms['test_tick']);assert not exits # No close animation over another foreground app.
+        m.put(0x20050000,16);m.put(0x20050004,4100);m.call(syms['test_tick'])
+        assert exits==[cover] and allocations==[(336,480,15)]
+        assert word(cover+4)==0x20049000 and not freed
+        m.put(ev,cover,cover,25,0,0,0,0);m.call(word(0x20050010),ev)
+        m.put(0x20050004,4400);m.call(syms['test_tick']);assert word(cover+4)==0
+        m.put(0x2005001c,0);m.call(syms['test_tick']);assert not freed
+        m.put(0x2005001c,1);m.call(syms['test_tick']);assert freed==[snapshot] and cache_drops==[snapshot]
+        m.call(syms['test_close_toggle'])
+        assert word(app+0x5c)==0xc5475f9 and word(app+0x64)==0xc54751d
+        # Busy renderer must avoid snapshot APIs but still forward close and allow icon fallback.
+        m.call(syms['test_close_toggle']);m.put(0x20050000,16);launch(0x123)
+        m.put(0x20050000,0x29);m.put(0x2005001c,0);m.call(word(app+0x5c),app)
+        assert allocations==[(336,480,15)] and calls[-1]==('hide',app)
+        m.put(0x20050000,16);m.call(syms['test_tick']);assert exits==[cover,cover]
+        m.call(syms['test_close_toggle']);assert word(cover+4)==0 and freed==[snapshot]
         print('PASS real launch request vtable dispatch, native constructor, cold/warm forwarding, animation builder, restore and foreign-hook rejection')
         print('PASS cold launch: native cover animation -> first draw -> stock engine once -> content gate -> fade/remove')
+        print('PASS independent close toggle, capture before hide/destroy, home-only native OUT and GPU-idle resource retirement')
         print('HOST ONLY: actual engine timing and visible cold launch require device testing')
 if __name__=='__main__':main()
