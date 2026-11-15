@@ -4,6 +4,13 @@
 #include <stdint.h>
 #include <stddef.h>
 struct cc_pixels { const unsigned char *data; unsigned width,height,stride,size; };
+/* Keep bright wallpaper from competing with white glyphs. A small neutral
+ * floor separates dark tiles from the wallpaper without washing out the blur.
+ * Half saturation retains wallpaper hue with much less colored interference. */
+static unsigned cc_readable_channel(unsigned channel,unsigned luminance,unsigned sheen,unsigned rim) {
+    unsigned neutral=(channel+luminance+1u)/2u;
+    return 24u+(neutral*40u+127u)/255u+sheen+rim;
+}
 static unsigned cc_corner_alpha(unsigned x,unsigned y,unsigned w,unsigned h,unsigned r) {
     if (!r || (x>=r && x<w-r) || (y>=r && y<h-r)) return 255u;
     unsigned hits=0, rr=r*8u;
@@ -31,7 +38,18 @@ static int cc_glass_pixels(const struct cc_pixels *src,unsigned char *out,
         const unsigned char *p=src->data+(unsigned)sy*src->stride+(unsigned)sx*3u;
         unsigned char *q=out+y*stride+x*4u;
         unsigned a=cc_corner_alpha(x,y,w,h,radius);
-        for(unsigned c=0;c<3;++c) q[c]=(unsigned char)((p[c]*88u*a+12750u)/25500u);
+        unsigned luminance=(p[0]*19u+p[1]*183u+p[2]*54u+128u)>>8;
+        unsigned sheen=h>1?4u*(h-1u-y)/(h-1u):0;
+        /* One-pixel inner keyline, with coverage following the same rounded
+         * edge. It belongs to the immutable texture, never overlays the icon. */
+        unsigned inner=0;
+        if(x>0 && y>0 && x+1<w && y+1<h)
+            inner=cc_corner_alpha(x-1,y-1,w-2,h-2,radius?radius-1:0);
+        unsigned rim=a>inner?(18u*(a-inner)+127u)/255u:0;
+        for(unsigned c=0;c<3;++c) {
+            unsigned value=cc_readable_channel(p[c],luminance,sheen,rim);
+            q[c]=(unsigned char)((value*a+127u)/255u);
+        }
         q[3]=(unsigned char)a;
     }
     return 1;

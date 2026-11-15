@@ -98,8 +98,9 @@ static void cc_submit(uint32_t layer,uint32_t image,const int *area) {
     uint32_t descriptor[28];
     ((void (*)(void *))(uintptr_t)P67_NATIVE(0x0c5882b9u))(descriptor);
     descriptor[7]=image;
-    /* Preserve a little of the official blue/pressed fill below the glass. */
-    ((unsigned char *)descriptor)[76]=216u;
+    /* Stronger official blue/pressed-state contribution, while the bounded
+     * dark glass above it keeps white icons readable on bright wallpaper. */
+    ((unsigned char *)descriptor)[76]=160u;
     ((void (*)(uint32_t,const void *,const int *))(uintptr_t)
         P67_NATIVE(0x0c5882a1u))(layer,descriptor,area);
 }
