@@ -81,6 +81,7 @@ pub(crate) enum Pid {
     BlurParams = 52,
     ConnectPair = 53,
     AndroidPermissions = 54,
+    PluginPermissions = 55,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -180,4 +181,5 @@ pages! {
     BlurParams = 52, PAGE_BLUR_PARAMS, super::blur_params::PAGE;
     ConnectPair = 53, PAGE_CONNECT_PAIR, crate::connect_radio::PAGE;
     AndroidPermissions = 54, PAGE_ANDROID_PERMISSIONS, connect::ANDROID_PERMISSIONS;
+    PluginPermissions = 55, PAGE_PLUGIN_PERMISSIONS, connect::PLUGIN_PERMISSIONS;
 }

@@ -53,6 +53,7 @@
 #define CCF_POLICY_DENY 1u
 #define CCF_POLICY_ASK 2u
 extern uint32_t chaos_connect_android_policy(void),chaos_connect_android_mask(void);
+extern uint32_t chaos_connect_plugin_policy(void),chaos_connect_plugin_mask(void);
 extern uint32_t chaos_connect_now_ms(void);
 extern uint32_t chaos_connect_policy(void);
 extern uint32_t chaos_connect_take_decision(uint32_t token);
@@ -79,6 +80,8 @@ static uint8_t g_connected,auth_state;
 static uint32_t auth_token,auth_serial,auth_started,last_seen;
 static uint8_t android_client,android_forced,connect_auth,access_granted;
 static uint32_t connect_token,connect_started;
+static uint32_t client_policy(void){return android_client?chaos_connect_android_policy():chaos_connect_plugin_policy();}
+static uint32_t client_mask(void){return android_client?chaos_connect_android_mask():chaos_connect_plugin_mask();}
 static void publish_state(void){chaos_connect_state(g_connected|(uint32_t)g_dev_mode<<1|(uint32_t)auth_state<<2|
     (uint32_t)android_client<<5|(uint32_t)connect_auth<<6,connect_auth==1?connect_token:auth_token);}
 void cc_files_set_android(uint32_t value){android_forced=!!value;}
@@ -227,19 +230,20 @@ static uint8_t ccf_status_from_err(int32_t err)
     }
 }
 
-static int ccf_mobile_allowed(uint32_t mask){
-    return chaos_bridge_enabled()&&(!android_client||(access_granted&&chaos_connect_android_policy()!=1&&
-        (chaos_connect_android_mask()&mask)==mask));
+static int ccf_client_allowed(uint32_t mask){
+    return chaos_bridge_enabled()&&access_granted&&client_policy()!=CCF_POLICY_DENY&&
+        (client_mask()&mask)==mask;
 }
 static int ccf_write_allowed(const char *path)
 {
-    if(!ccf_mobile_allowed(0))return 0;
+    if(!ccf_client_allowed(0))return 0;
     if(!ccf_under(path,"/data") && (chaos_connect_policy()==1 ||
-       (android_client&&!(chaos_connect_android_mask()&8u))))return 0;
+       !(client_mask()&8u)))return 0;
     if (ccf_protected(path)||path[1]=='\0') return 0;
     /* The peer cannot edit the watch's own consent policy or rename its ancestors. */
     if(ccf_under(path,"/data/chaos/connect-permissions.cfg")||
        ccf_under(path,"/data/chaos/connect-permissions.tmp")||
+       ccf_under(path,"/data/chaos/connect-plugin.cfg")||ccf_under(path,"/data/chaos/connect-plugin.tmp")||
        ccf_under(path,"/data/chaos/connect-android.cfg")||ccf_under(path,"/data/chaos/connect-android.tmp")||
        ccf_under("/data/chaos/connect-permissions.cfg",path))return 0;
     if (g_dev_mode) return 1;
@@ -248,7 +252,7 @@ static int ccf_write_allowed(const char *path)
 
 static int ccf_read_allowed(const char *path)
 {
-    return ccf_mobile_allowed(1)&&!ccf_protected(path);
+    return ccf_client_allowed(1)&&!ccf_protected(path);
 }
 
 /* Owner-loop INFO audit. No flash writes or plugin changes; never log file contents.
@@ -269,8 +273,9 @@ static const char *audit_action(uint8_t op){
  case CCF_OP_CLOSE_READ:return "关闭读取文件";case CCF_OP_OPEN_WRITE:return "打开文件写入（上传/保存编辑）";
  case CCF_OP_WRITE:return "写入文件数据";case CCF_OP_COMMIT:return "校验并提交文件";
  case CCF_OP_ABORT:return "取消写入/清理临时文件";case CCF_OP_PING:return "连接检查";
+ case 0x50:return "启动NSH终端";case 0x51:return "NSH输入";case 0x52:return "读取NSH输出";case 0x53:return "关闭NSH终端";
  case 0x31:return "链路回显测速";case CCF_OP_SET_DEV:return "设置开发者模式";
- case CCF_OP_GET_DEV:return "查询开发者模式";case 0x42:return "查询Android权限";case 0x43:return "结束Android会话";default:return "未知请求";}
+ case CCF_OP_GET_DEV:return "查询开发者模式";case 0x42:return "查询客户端权限";case 0x43:return "结束客户端会话";default:return "未知请求";}
 }
 static void audit_begin(const struct cc_frame *f){
  const uint8_t *p=f->payload;uint32_t used=0,next=0;char path[CC_PATH_MAX];
@@ -302,7 +307,7 @@ static void ccf_send(uint8_t op,uint16_t req,uint8_t status,const uint8_t *paylo
  if(op==CCF_OP_READ&&status==0)g_read_transferred+=plen;
  if(op==0x31&&status==0)benchmark_bytes+=plen;
  if(status==0&&queued>=0){
-  if(op==CCF_OP_PING||op==0x42)return; /* Polling is presence, not a user file operation. */
+  if(op==CCF_OP_PING||op==0x42||op==0x52)return; /* Polling is presence, not a user file operation. */
   if(op==CCF_OP_READ&&audit_offset!=0&&audit_offset/65536==(audit_offset+plen)/65536&&audit_offset+plen<g_read_size&&plen==audit_length)return;
   if(op==CCF_OP_WRITE&&audit_offset!=0&&audit_offset/65536==(audit_offset+audit_length)/65536&&g_write_written<g_write_expected)return;
   if(op==0x31&&benchmark_bytes!=plen&&(benchmark_bytes-plen)/262144==benchmark_bytes/262144)return;
@@ -330,7 +335,9 @@ static void ccf_discard_write(void){
  if(g_write_temp[0])(void)cc_io_remove(g_write_temp);
  g_write_temp[0]=g_write_target[0]=0;g_write_expected=g_write_written=g_write_reported=0;g_write_crc=0xffffffffu;
 }
+#include "chaos_terminal.inc"
 void cc_files_reset(void){
+ ccf_terminal_stop();
  if(g_read_fd>=0){audit_used=0;audit_text("会话结束/重置：关闭读取文件");audit_path(g_read_target);chaos_connect_log(audit_context);}
  if(g_write_fd>=0){audit_used=0;audit_text("会话结束/重置：取消未提交写入并清理临时文件");audit_path(g_write_target);chaos_connect_log(audit_context);}
  ccf_close_read();ccf_discard_write();g_dev_mode=0;benchmark_bytes=0;
@@ -339,15 +346,16 @@ void cc_files_reset(void){
 int cc_files_tick(uint32_t now){
  if(!g_connected)return 0;
  if((uint32_t)(now-last_seen)>=15000u){chaos_connect_log("插件心跳超时：断开ChaosConnect并撤销开发者模式和待定授权");cc_files_reset();return 1;}
- if(android_client){
-  uint32_t connection_policy=chaos_connect_android_policy(),mask=chaos_connect_android_mask();
-  if(connection_policy==CCF_POLICY_DENY){if(access_granted||connect_auth==1)chaos_connect_log("手环撤销Android连接许可");access_granted=0;connect_auth=3;}
+ {
+  uint32_t connection_policy=client_policy(),mask=client_mask();
+  if(connection_policy==CCF_POLICY_DENY){if(access_granted||connect_auth==1)chaos_connect_log(android_client?"手环撤销Android连接许可":"手环撤销插件连接许可");access_granted=0;connect_auth=3;}
   if(connect_auth==1){
    uint32_t decision=chaos_connect_take_decision(connect_token);
-   if((uint32_t)(now-connect_started)>=60000u){connect_auth=4;chaos_connect_log("Android连接确认超时，拒绝访问");}
-   else if(decision||connection_policy==CCF_POLICY_ALLOW){access_granted=decision!=2;connect_auth=access_granted?2:3;chaos_connect_log(access_granted?"手环允许Android本次连接":"手环拒绝Android本次连接");}
+   if((uint32_t)(now-connect_started)>=60000u){connect_auth=4;chaos_connect_log(android_client?"Android连接确认超时，拒绝访问":"插件连接确认超时，拒绝访问");}
+   else if(decision||connection_policy==CCF_POLICY_ALLOW){access_granted=decision!=2;connect_auth=access_granted?2:3;chaos_connect_log(android_client?(access_granted?"手环允许Android本次连接":"手环拒绝Android本次连接"):(access_granted?"手环允许插件本次连接":"手环拒绝插件本次连接"));}
   }
   if(!access_granted){ccf_close_read();ccf_discard_write();g_dev_mode=0;auth_state=0;auth_token=0;}
+  if(!access_granted || !(mask&32u) || !chaos_bridge_enabled())ccf_terminal_stop();
   if(!(mask&1u))ccf_close_read();
   if(!(mask&2u))ccf_discard_write();
   if(!(mask&8u)){if(g_write_fd>=0&&!ccf_under(g_write_target,"/data"))ccf_discard_write();g_dev_mode=0;if(auth_state==1)auth_state=3;}
@@ -424,7 +432,7 @@ static void ccf_handle_hello(uint16_t req)
     uint32_t n = 0;
     out[n++] = CCF_PROTO_VERSION;
     ccf_put_u16(&out[n], g_chunk); n += 2u;
-    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u); /* status/authorization support */
+    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | 16u); /* status/authorization support */
     out[n++] = g_dev_mode;
     ccf_put_u16(&out[n], (uint16_t)CCF_MAX_PATH); n += 2u;
     ccf_put_u32(&out[n], CC_WINDOW); n += 4u;
@@ -652,7 +660,7 @@ static void ccf_handle_copy(uint16_t req,
         return;
     }
     for (;;) {
-        if(!ccf_mobile_allowed(3)||!ccf_read_allowed(from)||!ccf_write_allowed(to)){rc=-13;goto fail;}
+        if(!ccf_client_allowed(3)||!ccf_read_allowed(from)||!ccf_write_allowed(to)){rc=-13;goto fail;}
         int32_t got = cc_io_read(src, buf, sizeof(buf));
         uint32_t sent = 0;
         if (got < 0) {
@@ -675,7 +683,7 @@ static void ccf_handle_copy(uint16_t req,
     if (rc < 0) goto fail;
     (void)cc_io_close(src);
     src = -1;
-    if(!ccf_mobile_allowed(3)||!ccf_read_allowed(from)||!ccf_write_allowed(to)){rc=-13;goto fail;}
+    if(!ccf_client_allowed(3)||!ccf_read_allowed(from)||!ccf_write_allowed(to)){rc=-13;goto fail;}
     rc = cc_io_rename(temp, to);
     if (rc < 0) {
         (void)cc_io_remove(temp);
@@ -886,7 +894,7 @@ static void ccf_handle_commit(uint16_t req,
         ccf_send(CCF_OP_COMMIT, req, ccf_status_from_err(rc), 0, 0);
         return;
     }
-    if(!ccf_mobile_allowed(2)||!ccf_write_allowed(g_write_target)){ccf_discard_write();ccf_send(CCF_OP_COMMIT,req,CCF_ST_ACCESS,0,0);return;}
+    if(!ccf_client_allowed(2)||!ccf_write_allowed(g_write_target)){ccf_discard_write();ccf_send(CCF_OP_COMMIT,req,CCF_ST_ACCESS,0,0);return;}
     rc = cc_io_rename(g_write_temp, g_write_target);
     if (rc < 0) {
         ccf_discard_write();
@@ -928,34 +936,35 @@ void cc_files_dispatch(const struct cc_frame *frame)
     /* HELLO resets active transfers before its own audit context is constructed. */
     if(op==CCF_OP_HELLO){
      cc_files_reset();
-     android_client=android_forced||(plen==4&&p[0]=='C'&&p[1]=='C'&&p[2]=='A'&&p[3]=='1');
+     android_client=android_forced; /* Identity comes from the physical carrier, never HELLO bytes. */
      if(plen && !(plen==4&&p[0]=='C'&&p[1]=='C'&&p[2]=='A'&&p[3]=='1')){audit_begin(frame);ccf_send(op,req,CCF_ST_BAD,0,0);return;}
-     if(android_client){uint32_t cp=chaos_connect_android_policy();access_granted=cp==0;connect_auth=cp==0?2:cp==1?3:1;
-      if(connect_auth==1){connect_token=next_token();connect_started=chaos_connect_now_ms();}
-      chaos_connect_log("Android请求建立ChaosConnect会话，等待手环权限检查");}
-     else access_granted=1;
+     uint32_t cp=client_policy();access_granted=cp==0;connect_auth=cp==0?2:cp==1?3:1;
+     if(connect_auth==1){connect_token=next_token();connect_started=chaos_connect_now_ms();}
+     chaos_connect_log(android_client?"Android请求建立ChaosConnect会话，等待手环权限检查":"插件请求建立ChaosConnect会话，等待手环权限检查");
     }
     if(op!=CCF_OP_HELLO)(void)cc_files_tick(chaos_connect_now_ms());
     last_seen=chaos_connect_now_ms();
     if(op==CCF_OP_HELLO){g_connected=1;publish_state();}
     audit_begin(frame);
     if(!g_connected){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
-    if(android_client && op!=CCF_OP_HELLO && op!=CCF_OP_PING && op!=0x42 && op!=0x43){
-     uint32_t need=0,mask=chaos_connect_android_mask();
+    if(op!=CCF_OP_HELLO && op!=CCF_OP_PING && op!=0x42 && op!=0x43){
+     uint32_t need=0,mask=client_mask();
      switch(op){
       case CCF_OP_LIST:case CCF_OP_STAT:case CCF_OP_OPEN_READ:case CCF_OP_READ:case CCF_OP_COPY:need=1;break;
       case CCF_OP_MKDIR:case CCF_OP_OPEN_WRITE:case CCF_OP_WRITE:case CCF_OP_COMMIT:need=2;break;
       case CCF_OP_REMOVE:case CCF_OP_RMDIR:case CCF_OP_RENAME:need=4;break;
       case CCF_OP_SET_DEV:if(plen&&p[0])need=8;break;
+      case 0x50:case 0x51:case 0x52:case 0x53:need=32;break;
      }
      if(op==CCF_OP_COPY)need|=2;
-     if(!access_granted || chaos_connect_android_policy()==1 || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
+     if(!chaos_bridge_enabled() || !access_granted || client_policy()==CCF_POLICY_DENY || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
     }
     switch (op) {
+    case 0x50:case 0x51:case 0x52:case 0x53:ccf_terminal_dispatch(op,req,p,plen);break;
     case 0x42: {
      if(plen){ccf_send(op,req,CCF_ST_BAD,0,0);break;}
-     uint8_t out[16]={1,android_client,(uint8_t)chaos_connect_android_policy(),connect_auth};
-     ccf_put_u32(out+4,android_client?chaos_connect_android_mask():31u);ccf_put_u32(out+8,connect_token);out[12]=access_granted;
+     uint8_t out[16]={1,android_client,(uint8_t)client_policy(),connect_auth};
+     ccf_put_u32(out+4,client_mask());ccf_put_u32(out+8,connect_token);out[12]=access_granted;
      ccf_send(op,req,CCF_ST_OK,out,sizeof(out));break;
     }
     case 0x43:cc_files_reset();ccf_send(op,req,CCF_ST_OK,0,0);break;

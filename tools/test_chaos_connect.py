@@ -25,7 +25,7 @@ class ConnectTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.c.cc_files_reset();cls.work.cleanup()
     def setUp(self):
-        self.c.cc_files_reset();self.c.cc_test_service(1);self.c.cc_test_android(0,2,1);self.c.cc_test_fault(0,0);self.c.cc_test_policy(0);self.c.cc_test_time(100)
+        self.c.cc_files_reset();self.c.cc_test_plugin(0,31);self.c.cc_test_service(1);self.c.cc_test_android(0,2,1);self.c.cc_test_fault(0,0);self.c.cc_test_policy(0);self.c.cc_test_time(100)
         self.request(1);self.c.cc_test_clear_logs()
     def logs(self):
         out=[];buf=C.create_string_buffer(1024)
@@ -286,6 +286,110 @@ class ConnectTests(unittest.TestCase):
         self.android(1,31);self.assertEqual(self.access()[3],3)
         self.assertEqual(self.request(0x31,b'pairing is not consent')[0],3)
 
+    def plugin(self,policy=2,mask=1,payload=b''):
+        self.c.cc_test_android(0,0,31);self.c.cc_test_plugin(policy,mask);self.request(1,payload)
+        return self.access()
+    def test_plugin_connection_consent_is_independent_and_tokens_cannot_be_reused(self):
+        a=self.plugin();self.assertEqual(a[:5],(1,0,2,1,1));token=a[5]
+        self.assertGreater(token,0);self.assertEqual(a[6],0)
+        self.assertEqual(self.c.cc_test_token(),token);self.assertEqual((self.c.cc_test_state()>>6)&7,1)
+        for op,payload in [(2,path('/data')+struct.pack('<IB',0,16)),(0x40,b'\x01'),(0x31,b'echo')]:
+            self.assertEqual(self.request(op,payload)[0],3)
+        self.c.cc_test_decide(token+1,1);self.c.cc_files_tick(100);self.assertEqual(self.access()[6],0)
+        self.c.cc_test_decide(token,1);self.c.cc_files_tick(100);self.assertEqual(self.access()[6],1)
+        self.assertEqual(self.request(2,path('/data')+struct.pack('<IB',0,16))[0],0)
+        self.assertEqual(self.open_write('/data/plugin-blocked',0)[0],3)
+        self.request(1);new=self.access();self.assertNotEqual(new[5],token)
+        self.c.cc_test_decide(token,1);self.c.cc_files_tick(100);self.assertEqual(self.access()[6],0)
+        self.c.cc_test_decide(new[5],2);self.c.cc_files_tick(100);self.assertEqual(self.access()[3:7:3],(3,0))
+    def test_plugin_cannot_select_android_permissions_with_hello_bytes(self):
+        self.c.cc_test_android(0,0,31)
+        a=self.plugin(1,0,b'CCA1');self.assertEqual(a[:5],(1,0,1,3,0));self.assertEqual(a[6],0)
+        self.assertEqual(self.request(0x31,b'bypass')[0],3)
+        a=self.plugin(0,1,b'CCA1');self.assertEqual(a[1],0);self.assertEqual(a[4],1)
+        self.assertEqual(self.open_write('/data/plugin-spoof',0)[0],3)
+        # Conversely a restricted Android cannot claim the plugin's broader access.
+        self.c.cc_test_plugin(0,31);a=self.android(1,0);self.assertEqual(a[1],1);self.assertEqual(a[6],0)
+        self.assertEqual(self.request(3,path('/data'))[0],3)
+    def test_plugin_file_permissions_and_revocation_preserve_original_files(self):
+        self.plugin(0,31)
+        target=self.root/'data/plugin-permissions';target.write_bytes(b'old')
+        self.assertEqual(self.request(0x10,path('/data/plugin-permissions'))[0],0)
+        self.assertEqual(self.open_write('/data/plugin-permissions',3)[0],0)
+        self.assertEqual(self.request(0x21,struct.pack('<I',0)+b'new')[0],0)
+        self.c.cc_test_plugin(0,0);self.c.cc_files_tick(100)
+        self.assertEqual(self.request(0x11,struct.pack('<IH',0,3))[0],3)
+        self.assertEqual(self.request(0x22,struct.pack('<I',zlib.crc32(b'new')))[0],3)
+        self.assertEqual(target.read_bytes(),b'old');self.assertFalse(list((self.root/'data').glob('plugin-permissions*.part')))
+        self.c.cc_test_plugin(0,4) # Manage does not require WRITE.
+        self.assertEqual(self.request(7,path('/data/plugin-permissions')+path('/data/plugin-moved'))[0],0)
+        self.assertEqual(self.open_write('/data/plugin-created',0)[0],3)
+        self.assertEqual(self.request(5,path('/data/plugin-moved'))[0],0)
+        self.c.cc_test_plugin(0,2);self.assertEqual(self.open_write('/data/plugin-written',0)[0],0);self.request(0x23)
+        self.assertEqual(self.request(3,path('/data'))[0],3)
+        self.assertEqual(self.request(8,path('/data/absent')+path('/data/copied')+b'\x00')[0],3)
+        self.c.cc_test_plugin(0,31)
+        for target in ['/data/chaos/connect-plugin.cfg','/data/chaos/connect-plugin.tmp']:
+            self.assertEqual(self.open_write(target,0)[0],3)
+            self.assertEqual(self.request(7,path(target)+path('/data/moved'))[0],3)
+    def test_plugin_developer_and_connection_revocation_and_timeout(self):
+        self.plugin(0,1);self.c.cc_test_policy(0)
+        self.assertEqual(self.request(0x40,b'\x01')[0],3)
+        self.c.cc_test_plugin(0,31);self.assertEqual(self.request(0x40,b'\x01')[0],0)
+        self.assertEqual(self.open_write('/resource/plugin-system',3)[0],0)
+        self.request(0x21,struct.pack('<I',0)+b'new')
+        self.c.cc_test_plugin(0,7);self.c.cc_files_tick(100)
+        self.assertEqual(self.request(0x41)[1],b'\x00');self.assertFalse(list((self.root/'resource').glob('plugin-system*.part')))
+        self.c.cc_test_plugin(1,31);self.c.cc_files_tick(100)
+        self.assertEqual(self.access()[3],3);self.assertEqual(self.access()[6],0)
+        self.assertEqual(self.request(3,path('/data'))[0],3)
+        a=self.plugin(2,1);token=a[5]
+        for now in range(10100,60101,10000):
+            self.c.cc_test_time(now);self.request(0x30);self.c.cc_files_tick(now)
+        self.assertEqual(self.access()[3],4);self.assertEqual(self.access()[6],0)
+        self.c.cc_test_decide(token,1);self.c.cc_files_tick(60100);self.assertEqual(self.access()[6],0)
+
+    def test_terminal_permission_lease_stream_and_revocation_for_both_clients(self):
+        for android in [0,1]:
+            self.c.cc_test_android(android,0,31);self.c.cc_test_plugin(0,31);self.request(1)
+            starts=self.c.cc_test_terminal_counter(0)
+            self.assertEqual(self.request(0x50)[0],3)
+            self.assertEqual(self.c.cc_test_terminal_counter(0),starts)
+            if android:self.c.cc_test_android(1,0,33)
+            else:self.c.cc_test_plugin(0,33)
+            status,opened=self.request(0x50);self.assertEqual(status,0)
+            token,state,error=struct.unpack('<IBi',opened);self.assertGreater(token,0);self.assertEqual(state,2)
+            self.assertEqual(self.request(0x50)[1],opened) # Repeated open is idempotent.
+            self.assertEqual(self.c.cc_test_terminal_counter(0),starts+1)
+            self.assertEqual(self.request(0x51,struct.pack('<I',token)+b'ls /data\n')[0],0)
+            self.assertEqual(self.request(0x52,struct.pack('<IH',token,3))[1][9:],b'ls ')
+            self.assertEqual(self.request(0x52,struct.pack('<IH',token,2048))[1][9:],b'/data\n')
+            writes=self.c.cc_test_terminal_counter(2)
+            self.assertEqual(self.request(0x51,struct.pack('<I',token+1)+b'reboot\n')[0],11)
+            self.assertEqual(self.c.cc_test_terminal_counter(2),writes)
+            self.assertEqual(self.request(0x51,struct.pack('<I',token)+b'\x00')[0],1)
+            self.assertEqual(self.request(0x52,struct.pack('<IH',token,2049))[0],1)
+            stops=self.c.cc_test_terminal_counter(1)
+            if android:self.c.cc_test_android(1,0,1)
+            else:self.c.cc_test_plugin(0,1)
+            self.c.cc_files_tick(100)
+            self.assertEqual(self.c.cc_test_terminal_counter(1),stops+1)
+            self.assertEqual(self.request(0x51,struct.pack('<I',token)+b'reboot\n')[0],3)
+            if android:self.c.cc_test_android(1,0,33)
+            else:self.c.cc_test_plugin(0,33)
+            status,opened=self.request(0x50);self.assertEqual(status,0)
+            newer=struct.unpack_from('<I',opened)[0];self.assertNotEqual(token,newer)
+            self.assertEqual(self.request(0x53,struct.pack('<I',token))[0],11)
+            stops=self.c.cc_test_terminal_counter(1);self.c.cc_files_reset()
+            self.assertEqual(self.c.cc_test_terminal_counter(1),stops+1)
+    def test_terminal_waiting_confirmation_and_disabled_gate_never_spawn(self):
+        self.android(2,32);starts=self.c.cc_test_terminal_counter(0)
+        self.assertEqual(self.request(0x50)[0],3)
+        self.assertEqual(self.c.cc_test_terminal_counter(0),starts)
+        self.android(0,32);self.c.cc_test_service(0)
+        self.assertEqual(self.request(0x50)[0],3)
+        self.assertEqual(self.c.cc_test_terminal_counter(0),starts)
+
 
 class MemoryLogTests(unittest.TestCase):
     def test_android_radio_stream_and_pairing_lifecycle(self):
@@ -305,7 +409,7 @@ class MemoryLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-permission-') as work:
             binary=Path(work)/'permissions'
             subprocess.run(['rustc','--edition=2021',str(ROOT/'supervisor/tests/connect_permission_harness.rs'),'-o',str(binary)],check=True)
-            for case in ['default','invalid','persist','mailbox','prompt','android','android-load','android-invalid']:
+            for case in ['nsh','default','invalid','persist','mailbox','prompt','android','android-load','android-invalid','plugin','plugin-load','plugin-invalid']:
                 subprocess.run([str(binary),case],check=True)
     def test_ring_wrap_pagination_clear_and_utf8(self):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-log-') as work:

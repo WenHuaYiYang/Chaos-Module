@@ -76,8 +76,8 @@ fn dup2_is_child_only_and_active_start_is_idempotent() {
         // worker 的空 actions 链先 destroy 一次, 再是 session 的 actions, 最后 slave close
         assert_eq!(m.events[..3], ["actions_destroy", "actions_destroy", "close:6"]);
         assert_eq!(m.spawns.len(), 2); assert_eq!(m.closed, [6]);
-        assert_eq!(m.spawns[0].0, b"chaos.web.nsh.worker"); assert!(m.spawns[0].2);
-        assert_eq!(m.spawns[1].0, b"chaos.web.nsh"); assert!(!m.spawns[1].2);
+        assert_eq!(m.spawns[0].0, &WORKER_NAME[..WORKER_NAME.len()-1]); assert!(m.spawns[0].2);
+        assert_eq!(m.spawns[1].0, &TASK_NAME[..TASK_NAME.len()-1]); assert!(!m.spawns[1].2);
     });
     step(&mut session); with(|m| assert_eq!(m.written, b"abc"));
 }
@@ -116,7 +116,7 @@ fn rx_overflow_keeps_pumping_and_reports_exact_dropped_count_in_short_receives()
     with(|m| { assert!(m.reads.is_empty()); assert_eq!(m.waits.len(), 6); });
     assert_eq!(DROPPED.load(Ordering::Acquire), 1808);
     let output = drain(); assert!(output[..RX_CAP].iter().all(|&b| b == b'a'));
-    assert_eq!(&output[RX_CAP..], b"\n[Web NSH: dropped 1808 output bytes]\n");
+    assert_eq!(&output[RX_CAP..], [OVERFLOW_PREFIX,b"1808 output bytes]\n"].concat());
     assert_eq!(receive(&mut []), 0); assert_eq!(DROPPED.load(Ordering::Acquire), 0);
 }
 
@@ -315,9 +315,13 @@ fn stop_gives_up_after_three_reissues_instead_of_blocking_forever() {
     stop();
     let mut steps = 0;
     while state() == State::Stopping && steps < 400 { step(&mut session); steps += 1; }
-    assert_eq!(state(), State::Failed);
-    assert!(session.is_none());
-    assert_eq!(error(), ETIMEDOUT);
+    if ABANDON_ON_TIMEOUT {
+        assert_eq!(state(), State::Failed);assert!(session.is_none());assert_eq!(error(), ETIMEDOUT);
+    } else {
+        assert_eq!(state(), State::Stopping);assert!(session.is_some());assert_eq!(start(), Err(EBUSY));
+        with(|m| {assert_eq!(m.spawns.len(),2);m.wait_results.push_back(m.child_result);});
+        step(&mut session);assert!(session.is_none());assert_eq!(state(),State::Exited);
+    }
     assert_eq!(start(), Ok(()));
 }
 

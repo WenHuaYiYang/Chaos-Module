@@ -52,6 +52,7 @@ mod blur_params;
 mod corona_blur;
 mod notification_icon;
 mod web_nsh;
+mod connect_nsh;
 mod btpan;
 
 mod text;

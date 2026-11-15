@@ -9,6 +9,10 @@ static STATE:AtomicU32=AtomicU32::new(0);
 static TOKEN:AtomicU32=AtomicU32::new(0);
 static DECISION:AtomicU32=AtomicU32::new(0);
 static mut LOADED:bool=false;
+static PLUGIN_POLICY:AtomicU32=AtomicU32::new(ASK);
+static PLUGIN_MASK:AtomicU32=AtomicU32::new(1);
+const PLUGIN_PATH:&[u8]=b"/data/chaos/connect-plugin.cfg\0";
+const PLUGIN_TEMP:&[u8]=b"/data/chaos/connect-plugin.tmp\0";
 static ANDROID_POLICY:AtomicU32=AtomicU32::new(ASK);
 static ANDROID_MASK:AtomicU32=AtomicU32::new(1);
 const ANDROID_PATH:&[u8]=b"/data/chaos/connect-android.cfg\0";
@@ -17,6 +21,7 @@ pub(crate) const READ:u32=1;
 pub(crate) const WRITE:u32=2;
 pub(crate) const MANAGE:u32=4;
 pub(crate) const DEVELOPER:u32=8;
+pub(crate) const NSH:u32=32;
 pub(crate) const CONTROL:u32=16; // Reserved: no control opcode is implemented yet.
 
 const PATH:&[u8]=b"/data/chaos/connect-permissions.cfg\0";
@@ -24,10 +29,17 @@ const TEMP:&[u8]=b"/data/chaos/connect-permissions.tmp\0";
 
 pub(crate) unsafe fn load(){
     if LOADED{return;}LOADED=true;
+    let fd=fw_api::open(PLUGIN_PATH.as_ptr(),fw_api::oflag::RDONLY,0);
+    if fd>=0 {
+        let mut b=[0;7];let n=fw_api::read(fd,b.as_mut_ptr(),7);fw_api::close(fd);
+        if n==7 && &b[..4]==b"CCL1" && b[4]<=2 && b[5]&!63==0 && b[6]==(b[4]^b[5]^0xa5) {
+            PLUGIN_POLICY.store(b[4]as u32,Ordering::Release);PLUGIN_MASK.store(b[5]as u32,Ordering::Release);
+        }
+    }
     let fd=fw_api::open(ANDROID_PATH.as_ptr(),fw_api::oflag::RDONLY,0);
     if fd>=0 {
         let mut b=[0;7];let n=fw_api::read(fd,b.as_mut_ptr(),7);fw_api::close(fd);
-        if n==7 && &b[..4]==b"CCA1" && b[4]<=2 && b[5]&!31==0 && b[6]==(b[4]^b[5]^0xa5) {
+        if n==7 && &b[..4]==b"CCA1" && b[4]<=2 && b[5]&!63==0 && b[6]==(b[4]^b[5]^0xa5) {
             ANDROID_POLICY.store(b[4]as u32,Ordering::Release);ANDROID_MASK.store(b[5]as u32,Ordering::Release);
         }
     }
@@ -73,7 +85,7 @@ pub(crate) fn decide(token:u32,allow:bool){
 pub(crate) fn android_policy()->u32 {ANDROID_POLICY.load(Ordering::Acquire)}
 pub(crate) fn android_mask()->u32 {ANDROID_MASK.load(Ordering::Acquire)}
 pub(crate) unsafe fn set_android(policy:u32,mask:u32) {
-    load();if policy>ASK || mask&!31!=0 {return;}
+    load();if policy>ASK || mask&!63!=0 {return;}
     let b=[b'C',b'C',b'A',b'1',policy as u8,mask as u8,(policy^mask^0xa5)as u8];
     let fd=fw_api::open(ANDROID_TEMP.as_ptr(),fw_api::oflag::WRONLY|fw_api::oflag::CREAT,0o640);
     let mut ok=false;
@@ -84,4 +96,18 @@ pub(crate) unsafe fn set_android(policy:u32,mask:u32) {
 }
 #[no_mangle] pub extern "C" fn chaos_connect_android_policy()->u32 {android_policy()}
 #[no_mangle] pub extern "C" fn chaos_connect_android_mask()->u32 {android_mask()}
-pub(crate) fn prompt_is_connection()->bool {state()&(1<<5)!=0 && (state()>>6)&7==1}
+pub(crate) fn plugin_policy()->u32 {PLUGIN_POLICY.load(Ordering::Acquire)}
+pub(crate) fn plugin_mask()->u32 {PLUGIN_MASK.load(Ordering::Acquire)}
+pub(crate) unsafe fn set_plugin(policy:u32,mask:u32) {
+    load();if policy>ASK || mask&!63!=0 {return;}
+    let b=[b'C',b'C',b'L',b'1',policy as u8,mask as u8,(policy^mask^0xa5)as u8];
+    let fd=fw_api::open(PLUGIN_TEMP.as_ptr(),fw_api::oflag::WRONLY|fw_api::oflag::CREAT,0o640);
+    let mut ok=false;
+    if fd>=0 {ok=fw_api::write(fd,b.as_ptr(),7)==7;ok=fw_api::close(fd)==0 && ok;}
+    if ok {ok=fw_api::capture_rename(PLUGIN_TEMP.as_ptr(),PLUGIN_PATH.as_ptr())==0;}
+    if ok {PLUGIN_POLICY.store(policy,Ordering::Release);PLUGIN_MASK.store(mask,Ordering::Release);connect_log::line("插件权限已保存，由手环实时执行");}
+    else {fw_api::fs_remove(PLUGIN_TEMP.as_ptr());connect_log::line("插件权限保存失败，保持原策略");}
+}
+#[no_mangle] pub extern "C" fn chaos_connect_plugin_policy()->u32 {plugin_policy()}
+#[no_mangle] pub extern "C" fn chaos_connect_plugin_mask()->u32 {plugin_mask()}
+pub(crate) fn prompt_is_connection()->bool {(state()>>6)&7==1}
