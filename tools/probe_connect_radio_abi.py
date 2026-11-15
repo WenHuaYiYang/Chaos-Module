@@ -6,11 +6,11 @@ from pathlib import Path
 import hashlib
 image=IMAGE.read_bytes();require(hashlib.sha256(image).hexdigest()==SHA256,'wrong firmware')
 m=Machine(image);adapter=PARAM;uuid=PARAM+0x800;callbacks=PARAM+0x900
-records=[]
+records=[];scan_mode=[1];bond_mode=[0]
 def ipc():
     require(m.reg(0)==adapter,'adapter changed');message,command=m.reg(1),m.reg(2)
     records.append((command,bytes(m.u.mem_read(message+60,32))))
-    m.u.mem_write(message+12,b'\0');return 0
+    m.u.mem_write(message+12,bytes([scan_mode[0] if command==38 else bond_mode[0] if command==92 else 0]));return 0
 m.hooks[0xc3ac47c]=ipc
 seen=[]
 m.hooks[0xc3b1434]=lambda:seen.append((m.reg(0),m.reg(1),m.reg(2))) or 0x20090000
@@ -29,15 +29,32 @@ command,payload=records[-1]
 require(command==0xf4 and payload[4:24]==u and struct.unpack_from('<H',payload,24)[0]==19 and payload[26]==1,'SPP server UUID/SCN/max-connection IPC')
 require(m.call(0xc3b1588,adapter,0x20090000,19)==0,'server stop')
 require(records[-1][0]==0xf5 and struct.unpack_from('<H',records[-1][1],4)[0]==19,'SPP stop IPC')
+for value in range(3):
+    scan_mode[0]=value
+    require(m.call(0xc3af680,adapter)==value,'get_scan_mode returns enum, not status')
 m.call(0xc3af64c,adapter,2,1);require(records[-1][0]==37 and records[-1][1][:2]==b'\x02\x01','discoverable/bondable mode ABI')
 address=PARAM+0xa00;m.u.mem_write(address,b'\x01\x02\x03\x04\x05\x06')
 m.call(0xc3b1624,adapter,0x20090000,address,77)
 require(records[-1][0]==0xf7 and records[-1][1][4:10]==b'\x01\x02\x03\x04\x05\x06' and struct.unpack_from('<H',records[-1][1],10)[0]==77,'SPP disconnect address/port IPC')
+for value in range(3):
+    bond_mode[0]=value
+    require(m.call(0xc3afda0,adapter,address,1)==value,'bond-state query returns enum')
+    require(records[-1][0]==92 and records[-1][1][:7]==b'\x01\x02\x03\x04\x05\x06\x01','bond-state BR/EDR address/transport')
 m.call(0xc3affa2,adapter,address,1)
 require(records[-1][0]==94 and records[-1][1][:7]==b'\x01\x02\x03\x04\x05\x06\x01','BREDR bond ABI')
 # Stock miwear owns channel 5. Our private service leaves it alone on channel 19.
 alias=0x2cd4b9c0-0x2c0c0000
 require(struct.unpack_from('<4I',image,alias)==(0,0,0xc712295,0xc71222d),'stock SPP callback slots')
+
+# The stock miwear callback really denies an unknown peer when its gate is 1.
+# A bounded module pairing window clears only this RAM gate, never its address.
+m.hooks[0xc1f0d20]=lambda:0;m.hooks[0xc3a8f98]=lambda:PARAM+0x1900
+m.hooks[0xc3a8f5c]=lambda:0 if bytes(m.u.mem_read(m.reg(0),6))==bytes(m.u.mem_read(m.reg(1),6)) else 1
+m.put(0x20126738,adapter);m.u.mem_write(0x201264a6,b'ABCDEF')
+for gate,accept in [(1,0),(0,1),(1,0)]:
+    m.u.mem_write(0x201264a4,bytes([gate]));m.call(0xc709e90,0,address)
+    require(records[-1][0]==0x61 and records[-1][1][6]==accept,'stock pair allow-list gate')
+    require(bytes(m.u.mem_read(0x201264a6,6))==b'ABCDEF','pair target address was changed')
 
 # Real native pipe wrappers. Heap, libuv registration/submission and callbacks
 # are leaves; descriptor layout and callback arguments execute firmware bytes.
@@ -69,5 +86,5 @@ require(read[-1]==(pipe,0xc3a9885,0xc3a98c9),'native allocation/read callback wi
 uvbuf=PARAM+0x1500;m.put(uvbuf,payload);m.put(uvbuf+4,17);calls.clear()
 m.call(0xc3a98c8,pipe,17,uvbuf)
 require(calls==[(pipe,payload,17)] and payload in freed,'borrowed read buffer/signature')
-print('PASS actual .043: SPP registration, callback slots, private UUID, channel19/max1, stop/disconnect, discoverability, BREDR bond, UV read/write lifetimes')
+print('PASS actual .043: SPP registration, callback slots, private UUID, channel19/max1, stop/disconnect, scan-mode enum/status distinction, BREDR bond/query, stock pair gate, UV read/write lifetimes')
 print('NOT VERIFIED: radio/service execution, Android pairing or wireless throughput')

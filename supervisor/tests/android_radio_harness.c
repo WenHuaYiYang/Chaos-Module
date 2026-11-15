@@ -5,7 +5,11 @@
 #include <string.h>
 #include "../bridge/chaos_connect.h"
 static unsigned wanted=1,started=1,now=100,accept_packets=1,received,stops,closes,writes,commands[256],server_calls;
-static int fail_command;
+#define CHAOS_CONNECT_RADIO_HOST 1
+static unsigned system_gate=1,bond_mode;
+static unsigned radio_system_pair_gate(void){return system_gate;}
+static void radio_set_system_pair_gate(unsigned value){system_gate=value;}
+static int fail_command;static unsigned scan_mode=1;
 static void *loop_slot=(void *)0x1234;
 #define BT_LOOP ((uintptr_t)&loop_slot)
 static uint32_t lock(void){return 0;}
@@ -26,7 +30,8 @@ static int server(void *a,void *h,uint16_t scn,const void *uuid,uint8_t max){
 static int stop(void *a,void *h,uint16_t scn){(void)a;(void)h;assert(scn==19);++stops;return 0;}
 static int disconnect(void *a,void *h,const uint8_t *peer,uint16_t port){(void)a;(void)h;assert(peer[0]==1&&port>=77);return 0;}
 static int ipc(void *a,void *m,uint32_t command){assert(a==(void *)0x1111&&command<256);++commands[command];uint8_t *b=m;
-    b[12]=command==(unsigned)fail_command?1:0;if(command==38){b[60]=1;b[61]=1;}
+    b[12]=command==(unsigned)fail_command?1:0;if(command==38){b[12]=(uint8_t)scan_mode;memset(b+60,0xcd,8);}
+    if(command==92){b[12]=(uint8_t)bond_mode;assert(b[66]==1);}
     if(command==94)assert(b[66]==1);return 0;
 }
 static void *open_pipe(void *loop,const char *path,void *ready,void *cookie){(void)ready;(void)cookie;assert(loop==loop_slot&&!strcmp(path,"/spp/peer"));return (void *)0x3333;}
@@ -45,15 +50,20 @@ default:assert(0);return 0;}}
 static void step(unsigned enabled){wanted=started=enabled;cc_radio_service(enabled);cc_radio_tick(enabled);}
 int main(void){
     step(1);cc_radio_log_owner();assert(server_calls==1&&!radio_pair_until);chaos_connect_pair_start();step(1);
-    assert(server_calls==1&&commands[37]==1&&commands[38]==1&&radio_pair_until);
+    assert(server_calls==1&&commands[37]==1&&commands[38]==1&&radio_pair_until&&system_gate==0);
     chaos_connect_pair_scan();step(1);assert(commands[30]==1);
     uint8_t device[64]={1,2,3,4,5,6};memcpy(device+12,"Phone",6);radio_gap_device(0,device);
     char name[32];assert(chaos_connect_pair_name(0,name,32)==5&&!strcmp(name,"Phone"));
-    chaos_connect_pair_device(0);step(1);assert(commands[0x69]==1&&commands[94]==1);
+    chaos_connect_pair_device(0);step(1);assert(commands[0x69]==1&&!commands[94]);
+    now+=800;step(1);assert(commands[94]==1);
+    bond_mode=1;now+=4000;step(1);assert(commands[94]==1);bond_mode=0;
     radio_gap_pair(0,device);step(1);assert(commands[0x61]==1);
     radio_gap_display(0,device,1,0,123456);step(1);assert(commands[0x62]==1);
-    radio_gap_bond(0,device,1,1);step(1);assert(!radio_bonded);
-    radio_gap_bond(0,device,1,2);step(1);assert(radio_bonded&&!radio_pair_until&&commands[37]==3);
+    radio_gap_bond(0,device,1,1,0);step(1);assert(!radio_bonded);
+    radio_gap_bond(0,device,0,2,0);step(1);assert(!radio_bonded&&radio_pair_until);
+    radio_gap_bond(0,device,1,2,1);step(1);assert(!radio_bonded&&radio_pair_until);
+    unsigned confirms=commands[0x62];radio_gap_display(0,device,1,3,123456);step(1);assert(commands[0x62]==confirms);
+    radio_gap_bond(0,device,1,2,0);step(1);assert(radio_bonded&&!radio_pair_until&&system_gate==1);
     radio_spp_proxy(0,device,0,77,2048,"/spp/peer");step(1);radio_pipe_ready(radio_pipe,0,0);
     assert(radio_ready);uint32_t generation=radio_generation;assert(cc_radio_live((void *)(uintptr_t)generation));
     uint8_t frame[32],packet[256],stream[260];int n=cc_encode(frame,sizeof(frame),0,1,0,1,0,0);n=cc_pb_wrap(packet,sizeof(packet),frame,n,0x12340001);assert(n>0);
@@ -67,6 +77,15 @@ int main(void){
     radio_spp_proxy(0,device,0,78,2048,"/spp/peer");step(1);radio_pipe_ready(radio_pipe,0,0);
     uint8_t invalid[4]={255,255,255,127};radio_read(radio_pipe,invalid,4);step(1);assert(closes==2&&!radio_ready);
     chaos_connect_pair_start();step(1);now+=60001;step(1);assert(!radio_pair_until);
+    for(unsigned mode=0;mode<=2;++mode){scan_mode=mode;chaos_connect_pair_start();step(1);
+        assert(!radio_error && radio_pair_until && radio_old_mode[0]==mode && radio_old_mode[1]==1);
+        now+=60001;step(1);assert(!radio_pair_until);
+    }
+    unsigned modes=commands[37];scan_mode=1;chaos_connect_pair_start();step(1);now+=1001;step(1);
+    assert(commands[37]>=modes+2&&radio_pair_until);now+=60000;step(1);
+    fail_command=37;chaos_connect_pair_start();step(1);
+    assert((chaos_connect_radio_status()&0x80000000u) && radio_error_stage==7);
+    fail_command=0;step(1);
     wanted=started=0;step(0);assert(stops==1&&!radio_server);
     radio_spp_proxy(0,device,0,79,2048,"/spp/peer");assert(!radio_path_pending);
     puts("Android radio: pairing window/outgoing bond, callback states, UUID, fragmented/coalesced stream, backpressure, generation, shutdown passed");

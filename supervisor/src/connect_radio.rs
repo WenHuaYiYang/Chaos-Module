@@ -10,6 +10,7 @@ extern "C" {
     fn chaos_connect_pair_device(index:u32);
     fn chaos_connect_pair_name(index:u32,out:*mut u8,capacity:u32)->u32;
     fn chaos_connect_radio_status()->u32;
+    fn chaos_connect_pair_diagnostics(out:*mut u32);
 }
 static WORKER_STARTED:AtomicBool=AtomicBool::new(false);
 static WORKER_ERROR:AtomicI32=AtomicI32::new(0);
@@ -22,6 +23,7 @@ pub(crate) fn ensure_worker(){
     WORKER_ERROR.store(if pid>0{0}else{pid.min(-1)},Ordering::Release);
 }
 static mut STATUS:[u8;96]=[0;96];
+static mut DIAGNOSTICS:[u8;160]=[0;160];
 static mut NAMES:[[u8;64];6]=[[0;64];6];
 static mut TICKS:u32=0;
 pub(crate) unsafe fn start(){
@@ -34,12 +36,26 @@ unsafe fn status()->*const u8 {
     let value=chaos_connect_radio_status();let p=core::ptr::addr_of_mut!(STATUS).cast();let mut w=W::new(p,96);
     let error=WORKER_ERROR.load(Ordering::Acquire);
     if error<0{w.s("蓝牙任务启动失败：".as_bytes()).n(error.unsigned_abs());}
-    else if value&0x80000000!=0 {w.s("蓝牙错误：".as_bytes()).n(value&0xffff);}
+    else if value&0x80000000!=0 {
+        let stage=match (value>>16)&255 {1=>"蓝牙客户端",2=>"注册串口应用",3=>"注册配对回调",4=>"注册蓝牙服务",
+            5=>"查询可见性",6=>"开启配对窗口",7=>"恢复可见性",8=>"扫描设备",9=>"连接手机",10=>"发起配对",
+            11=>"配对确认",12=>"连接数据流",13=>"接收数据",14=>"发送数据",_=>"蓝牙协议"};
+        w.s(stage.as_bytes()).s("错误：".as_bytes()).n(value&0xffff);
+    }
+    else if value&16!=0 {w.s("正在配对，请在手机确认".as_bytes());}
     else if value&8!=0 {w.s("手机蓝牙已连接，等待协议授权".as_bytes());}
     else if value&2!=0 {w.s("配对窗口已开启（60秒）".as_bytes());}
     else if value&4!=0 {w.s("已完成配对，可在手机连接ChaosConnect".as_bytes());}
     else if value&1!=0 {w.s("服务就绪，等待已配对手机".as_bytes());}
     else {w.s("正在准备蓝牙服务".as_bytes());}w.end();p
+}
+unsafe fn signed(w:&mut W,value:u32){let v=value as i32;if v<0{w.c(b'-');}w.n(v.unsigned_abs());}
+unsafe fn diagnostics()->*const u8{
+    let mut v=[0u32;8];chaos_connect_pair_diagnostics(v.as_mut_ptr());
+    let p=core::ptr::addr_of_mut!(DIAGNOSTICS).cast();let mut w=W::new(p,160);
+    w.s(b"ACL=");signed(&mut w,v[0]);w.s(b" bond=");signed(&mut w,v[1]);
+    w.s(b" state=").n(v[3]).s(b" transport=").n(v[2]).s(b" reason=").n(v[4]).s(b" attempts=").n(v[6]);
+    if v[5]!=u32::MAX{w.s(b" type=").n(v[5]).s(b" key=").n(v[7]);}w.end();p
 }
 unsafe fn name(index:usize)->*const u8{
     let p=core::ptr::addr_of_mut!(NAMES[index]).cast();
@@ -54,6 +70,7 @@ peer!(select3,name3,3);peer!(select4,name4,4);peer!(select5,name5,5);
 static ROWS:&[RowModel]=&[
     RowModel::action("扫描可配对手机\0".as_bytes(),scan,0,None),
     RowModel::display_sub("蓝牙状态\0".as_bytes(),RowSub::Dyn(status)),
+    RowModel::display_sub("配对诊断\0".as_bytes(),RowSub::Dyn(diagnostics)),
     RowModel{label:"设备1\0".as_bytes(),sub:RowSub::Dyn(name0),kind:RowKind::Fn(select0),trailing:0,refresh:None},
     RowModel{label:"设备2\0".as_bytes(),sub:RowSub::Dyn(name1),kind:RowKind::Fn(select1),trailing:0,refresh:None},
     RowModel{label:"设备3\0".as_bytes(),sub:RowSub::Dyn(name2),kind:RowKind::Fn(select2),trailing:0,refresh:None},
@@ -72,9 +89,9 @@ impl Page for PairPage{
     fn needs_tick(&self)->bool{true}
     fn tick(&self){unsafe{
         TICKS=TICKS.wrapping_add(1);if TICKS%5!=0{return;}
-        for slot in 1..8 {
+        for slot in 1..9 {
             let row=read_volatile(page_rows_ptr(Pid::ConnectPair as usize).add(slot));
-            if row!=0{let text=if slot==1{status()}else{name(slot-2)};fw_api::row_update(row,fw_api::NONE_PTR,fw_api::NONE_PTR,text,0,0);}
+            if row!=0{let text=if slot==1{status()}else if slot==2{diagnostics()}else{name(slot-3)};fw_api::row_update(row,fw_api::NONE_PTR,fw_api::NONE_PTR,text,0,0);}
         }
     }}
 }
