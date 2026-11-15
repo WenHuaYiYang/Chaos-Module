@@ -402,8 +402,12 @@ static void p67_blur_poll_rearm(void) {
  }
 }
 /* Safe owner poll registers observers, but never captures, fences, or frees. */
+#ifndef P67_BLUR_EXTRA_DEMAND
+#define P67_BLUR_EXTRA_DEMAND() 0
+#endif
 static void p67_blur_watch(int demand) {
  uint32_t display,epoch;
+ demand = demand || P67_BLUR_EXTRA_DEMAND();
  if(p67_blur_busy || p67_blur_polling) return;
  if(demand && !p67_blur_demand && !p67_blur_entry_scoped && !p67_blur_pending)
   p67_blur_request();

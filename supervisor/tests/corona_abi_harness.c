@@ -42,6 +42,7 @@ static void chaos_corona_display_rebind(void) {
 /* Callback integrity is exercised against real p67 objects in launcher harness. */
 static void chaos_corona_launcher_rebind(void) {}
 static void chaos_corona_rearm_missing_source(void) {}
+static void cc_buttons_poll(void) {}
 
 static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
     const char *paths[] = {bg->launcher, bg->control_center, bg->notifications, bg->widgets};

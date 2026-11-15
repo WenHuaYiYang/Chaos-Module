@@ -437,14 +437,23 @@ unsafe fn zone3_toggle() {
     }
 }
 static ZONE3_DEF: ToggleDef = ToggleDef { get: zone3_get, toggle: zone3_toggle, status: None };
+unsafe fn zone4_get() -> bool { crate::blur_zone::on(4) }
+unsafe fn zone4_toggle() {
+    if crate::blur_zone::set(4, !crate::blur_zone::on(4)) {
+        crate::background_home::remount();
+    }
+}
+static ZONE4_DEF: ToggleDef = ToggleDef { get: zone4_get, toggle: zone4_toggle, status: None };
 
 static ZONE_ROWS: &[RowModel] = &[
-    RowModel { label: "适用于两种模糊\0".as_bytes(), sub: RowSub::Static("包括通知图标去黑底\0".as_bytes()),
+    RowModel { label: "模糊区域设置\0".as_bytes(), sub: RowSub::Static("按钮底板仅在模糊V2下生效\0".as_bytes()),
                kind: RowKind::Display, trailing: 0, refresh: None },
     RowModel::toggle("启动器\0".as_bytes(), &ZONE0_DEF),
     RowModel::toggle("控制中心\0".as_bytes(), &ZONE1_DEF),
     RowModel::toggle("小部件\0".as_bytes(), &ZONE2_DEF),
     RowModel::toggle("通知中心\0".as_bytes(), &ZONE3_DEF),
+    RowModel { label: "控制中心按钮\0".as_bytes(), sub: RowSub::Static("仅模糊V2：圆角暗色模糊底板\0".as_bytes()),
+               kind: RowKind::Toggle(&ZONE4_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
     RowModel { label: "关闭通知区域恢复原图标\0".as_bytes(), sub: RowSub::Static("同时撤销通知图标去黑底\0".as_bytes()),
                kind: RowKind::Display, trailing: 0, refresh: None },
 ];

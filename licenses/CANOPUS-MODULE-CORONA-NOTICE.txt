@@ -109,3 +109,13 @@ f956598298494f103f80e99d8f3259026a0092fa7762504d9e551152156057ee  supervisor/tes
 4e0df389e0e948afc12c830165dda191aa295ae30ad1f5bdec08cb653a712cbf  supervisor/tests/corona/p67_blur_provider_harness.c
 f38fb199a35f678e9d4117e513284713a689326628f73f044271274b2731aac7  supervisor/tests/corona/p67_launcher_harness.c
 b242f957ca9884a56737d156999238c7bf4925d4913e9cc11780d947ef265a78  supervisor/tests/corona/test_p67_battery_pixels.c
+
+2026-11-15: V2 control-center button glass integration
+  supervisor/corona_vendor/src/p67_blur.inc now has a default-zero
+  P67_BLUR_EXTRA_DEMAND extension at the owner watch entry. Chaos supplies
+  demand for the independent button region even when the original four
+  background regions are disabled. This file is no longer verbatim upstream.
+  Original reviewed hash remains in tools/test_corona_blur.py ADAPTED; the
+  current hash is pinned in supervisor/tests/corona/upstream.sha256.
+  supervisor/control_center_buttons.inc integrates native button DRAW/DELETE
+  ownership and V2 pixel crops. This integration remains AGPL-3.0-only.

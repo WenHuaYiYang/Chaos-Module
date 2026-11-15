@@ -4,7 +4,7 @@
  * See corona_vendor/LICENSE and licenses/CANOPUS-MODULE-CORONA-NOTICE.txt.
  *
  * Adapted for Chaos on 2026-11-03. The six upstream p67 implementations are
- * included verbatim, including all four draw/scroll/delete hooks and the
+ * retained with the documented V2 demand extension, including draw/scroll/delete hooks and the
  * control-center battery/edit-container handling. Host integration also routes
  * the filter call to SysPatch IIR when V2 is selected. Two provider/draw files
  * have gated V2 8-bit color/full-resolution output extensions.
@@ -120,7 +120,13 @@ static void chaos_corona_launcher_position(void *event) {
 
 /* Sole implementation entry: includes launcher -> native provider/state
  * machine, then all three panels and the control-center battery hooks. */
+static unsigned chaos_corona_enabled, chaos_corona_in_call, chaos_cc_buttons_requested;
+static int chaos_cc_buttons_demand(void) {
+    return chaos_corona_enabled && chaos_v2_algorithm && chaos_cc_buttons_requested;
+}
+#define P67_BLUR_EXTRA_DEMAND() chaos_cc_buttons_demand()
 #include "corona_vendor/src/p67_backgrounds.inc"
+#include "control_center_buttons.inc"
 #include "corona_display_rebind.inc"
 #include "corona_launcher_rebind.inc"
 
@@ -128,7 +134,12 @@ uint32_t rh_platform_launcher_scroll_callback(void) {
     return (uint32_t)(uintptr_t)p67_scroll;
 }
 
-static unsigned chaos_corona_enabled, chaos_corona_in_call;
+void chaos_blur_control_buttons_set(uint32_t enabled) {
+    enabled=!!enabled;
+    if(enabled==chaos_cc_buttons_requested) return;
+    chaos_cc_buttons_requested=enabled;
+    if(enabled) p67_blur_reset();
+}
 /* 0x201102D9u 是固件 launcher 的“滚动/手势进行中”标记：手势开始时被置 1，
  * 由固件自己的滚动结束回调清零。手势被打断（例如滑动途中切走应用）时它可能
  * 一直保持 1，于是上游 poll 在门口就 return，背景钩子再也装不回去 —— 现象就是
@@ -253,6 +264,7 @@ void chaos_corona_backgrounds_poll(void) {
     chaos_corona_launcher_rebind();
     rh_platform_backgrounds_poll();
     chaos_corona_rearm_missing_source();
+    cc_buttons_poll();
     chaos_corona_in_call = 0;
 }
 
@@ -261,6 +273,7 @@ void chaos_corona_backgrounds_poll(void) {
  * polling the upstream owner until both subscriptions and buffers are gone. */
 uint32_t chaos_corona_backgrounds_pending(void) {
     unsigned i;
+    if(cc_cleanup_pending()) return 1u;
     if (chaos_corona_in_call || p67_busy || p67_blur_busy || p67_blur_polling ||
         p67_blur_native_capturing || p67_blur_native_power_depth ||
         p67_blur_native_outputs[0].retired || p67_blur_native_outputs[1].retired ||
@@ -347,6 +360,10 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     chaos_text_kv(&w, "cleanup_armed", p67_blur_cleanup_armed);
     chaos_text_kv(&w, "observer", p67_blur_display);
     chaos_text_kv(&w, "observer_repairs", chaos_corona_observer_repairs);
+    chaos_text_kv(&w, "cc_buttons", cc_resources());
+    chaos_text_kv(&w, "cc_button_draws", cc_draws);
+    chaos_text_kv(&w, "cc_button_updates", cc_updates);
+    chaos_text_kv(&w, "cc_button_errors", cc_failures);
     chaos_text_kv(&w, "root", p67_blur_root);
     chaos_text_kv(&w, "root_sub", p67_blur_root_registered);
     chaos_text_kv(&w, "frame52", p67_blur_frame52);

@@ -46,6 +46,7 @@ mod background_pages;
 mod background_surfaces;
 mod background_assets;
 mod blur_zone;
+mod cc_buttons_config;
 mod corona_blur;
 mod notification_icon;
 mod web_nsh;

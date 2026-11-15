@@ -36,6 +36,7 @@ HARNESSES = (
     "p67_battery_harness.c", "test_p67_battery_pixels.c",
 )
 ADAPTED = {
+    'src/p67_blur.inc': 'ce1e31d34756631222bc2f377b76763f0b6639c1988f8a82cf40fd78fa082927',
     'src/p67_blur_native.inc': '57118c0874dc4773185a77902f02e2ff1d886c62ff52b58d3e992e644329c031',
     'src/p67_launcher.inc': '34b660d317cbc63c9e910976209d39873b1be96a3f3b227eec19d2fc9a5a40a9',
 }
@@ -68,7 +69,7 @@ def verify_sources(upstream: Path | None) -> None:
     for relative, digest in pinned.items():
         require(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == digest,
                 f"pinned upstream checksum mismatch: {relative}")
-    print(f"pinned provenance: {len(entries)} files OK (two adapters have gated V2 color extensions)", flush=True)
+    print(f"pinned provenance: {len(entries)} files OK (V2 adapters retain upstream provenance)", flush=True)
 
 
 def rust_function(source: str, name: str) -> str:
@@ -210,7 +211,12 @@ def run_harnesses() -> None:
         binary = temp / "display_rebind.test"
         subprocess.run(flags + [str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
-    print("Corona host harnesses: 10 runs passed (ASan + UBSan)", flush=True)
+        source = temp / "tests/p67_extra_demand_harness.c"
+        shutil.copy2(TESTS / source.name, source)
+        binary = temp / "extra_demand.test"
+        subprocess.run(flags + [str(source), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+    print("Corona host harnesses: 11 runs passed (ASan + UBSan)", flush=True)
 
 
 def run_owner_harness() -> None:

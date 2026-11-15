@@ -1,6 +1,6 @@
 #![allow(dead_code,static_mut_refs)]
 use std::cell::RefCell;
-#[derive(Default)] struct State {files:[u8;2],mounts:u32,algorithm:u32,mask:u32,busy:bool}
+#[derive(Default)] struct State {files:[u8;2],mounts:u32,algorithm:u32,mask:u32,busy:bool,buttons:bool}
 thread_local! {static STATE:RefCell<State>=RefCell::new(State::default());}
 fn state<T>(f:impl FnOnce(&mut State)->T)->T{STATE.with(|s|f(&mut s.borrow_mut()))}
 mod fw_api {
@@ -13,12 +13,14 @@ mod fw_api {
     pub unsafe fn close(_:i32){}
 }
 mod background_home {pub unsafe fn remount(){super::state(|s|s.mounts+=1);}}
+mod cc_buttons_config {pub unsafe fn enabled()->bool{true}}
 #[path="../src/corona_blur.rs"] mod controller;
 #[no_mangle] extern "C" fn chaos_blur_select_algorithm(v:u32)->i32 {
     state(|s|{if s.busy{return -2145;}s.algorithm=v;0})
 }
 #[no_mangle] extern "C" fn chaos_corona_backgrounds_commit(_:u32,mask:u32)->i32{state(|s|s.mask=mask);0}
 #[no_mangle] extern "C" fn chaos_corona_backgrounds_poll(){}
+#[no_mangle] extern "C" fn chaos_blur_control_buttons_set(v:u32){state(|s|s.buttons=v!=0);}
 #[no_mangle] extern "C" fn chaos_corona_backgrounds_pending()->u32{0}
 #[no_mangle] extern "C" fn chaos_corona_backgrounds_idle()->i32{1}
 #[no_mangle] extern "C" fn chaos_corona_backgrounds_owned()->u32{1}
@@ -31,6 +33,7 @@ mod background_home {pub unsafe fn remount(){super::state(|s|s.mounts+=1);}}
     state(|s|{assert_eq!(s.files,[1,0]);assert_eq!(s.algorithm,1);assert_eq!(s.mask,15);});
     controller::toggle_v2();
     assert!(controller::enabled());assert!(controller::v2_enabled());
+    controller::backgrounds_poll();state(|s|assert!(s.buttons));
     state(|s|{assert_eq!(s.files,[1,1]);s.busy=true;});
     assert_eq!(controller::backgrounds_commit(true,5),-2145);
     state(|s|{assert_eq!(s.algorithm,1);s.busy=false;});
@@ -38,6 +41,7 @@ mod background_home {pub unsafe fn remount(){super::state(|s|s.mounts+=1);}}
     state(|s|{assert_eq!(s.algorithm,1);assert_eq!(s.mask,5);});
     controller::toggle_v2();
     assert!(!controller::v2_enabled());state(|s|assert_eq!(s.files,[1,0]));
+    controller::backgrounds_poll();state(|s|assert!(!s.buttons));
     controller::set_enabled(false);controller::set_v2_enabled(false);
     assert!(!controller::active());state(|s|assert_eq!(s.files,[0,0]));
 }}

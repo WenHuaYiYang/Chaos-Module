@@ -12,6 +12,7 @@ const V2_CONFIG: &[u8] = b"/data/chaos/blur_v2.cfg\0";
 
 extern "C" {
     fn chaos_blur_select_algorithm(v2: u32) -> i32;
+    fn chaos_blur_control_buttons_set(enabled: u32);
     fn chaos_corona_backgrounds_commit(enabled: u32, region_mask: u32) -> i32;
     fn chaos_corona_backgrounds_poll();
     fn chaos_corona_backgrounds_pending() -> u32;
@@ -125,6 +126,7 @@ pub(crate) unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 
 }
 
 pub(crate) unsafe fn backgrounds_poll() {
+    chaos_blur_control_buttons_set((v2_enabled() && crate::cc_buttons_config::enabled()) as u32);
     let _ = chaos_blur_select_algorithm(1);
     chaos_corona_backgrounds_poll();
 }
