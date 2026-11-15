@@ -34,6 +34,11 @@ static int p67_surface_idle(struct surface_stub *surface) { ++surface_idle_queri
 static uint32_t chaos_corona_commits, chaos_corona_commit_fails;
 static unsigned latch_rescues;
 static void chaos_corona_latch_rescue(void) { ++latch_rescues; }
+static unsigned display_repairs;
+static void chaos_corona_display_rebind(void) {
+    assert(chaos_corona_in_call == 1 && display_repairs == polls);
+    ++display_repairs;
+}
 /* Callback integrity is exercised against real p67 objects in launcher harness. */
 static void chaos_corona_launcher_rebind(void) {}
 static void chaos_corona_rearm_missing_source(void) {}
@@ -62,6 +67,7 @@ static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
 
 static void rh_platform_backgrounds_poll(void) {
     assert(chaos_corona_in_call == 1);
+    assert(display_repairs == polls + 1);
     ++polls;
     if (reenter_poll) {
         unsigned saved_commits = commits, saved_polls = polls;

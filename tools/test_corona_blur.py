@@ -187,6 +187,7 @@ def run_harnesses() -> None:
         temp = Path(directory)
         shutil.copytree(VENDOR / "src", temp / "src")
         shutil.copy2(ROOT / "supervisor/corona_launcher_rebind.inc", temp / "src/corona_launcher_rebind.inc")
+        shutil.copy2(ROOT / "supervisor/corona_display_rebind.inc", temp / "src/corona_display_rebind.inc")
         shutil.copytree(VENDOR / "include", temp / "include")
         (temp / "tests").mkdir()
         flags = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
@@ -204,7 +205,12 @@ def run_harnesses() -> None:
         subprocess.run(flags + ["-DHARNESS_NATIVE_DIAGNOSTICS=1",
                        str(temp / "tests/p67_blur_harness.c"), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
-    print("Corona host harnesses: 9 runs passed (ASan + UBSan)", flush=True)
+        source = temp / "tests/p67_display_rebind_harness.c"
+        shutil.copy2(TESTS / source.name, source)
+        binary = temp / "display_rebind.test"
+        subprocess.run(flags + [str(source), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+    print("Corona host harnesses: 10 runs passed (ASan + UBSan)", flush=True)
 
 
 def run_owner_harness() -> None:
