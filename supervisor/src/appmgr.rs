@@ -98,10 +98,8 @@ static mut KEEP_N: usize = 0;
 // 切换隐藏方式时的包名快照: 文件会被逐条重写, 不能边遍历 E_PKG 边搬。
 static mut BOOT_APPLIED: u32 = 0;
 static mut BOOT_TRIES: u32 = 0;
-static mut BOOT_WAIT: u32 = 0;
 // 运行期看门狗: 换绑/重连、手机重发 rpk_info、新装应用都会触发固件重注册,
 // 普通隐藏的隐藏位只在运行期(新节点 bit0 默认 0), 需要有人持续补回来。
-static mut WATCH_WAIT: u32 = 0;
 static mut WATCH_SIG: u32 = 0;
 static mut WATCH_SEEN: u32 = 0;
 static mut WATCH_BUSY: u32 = 0;

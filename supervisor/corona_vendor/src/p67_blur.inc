@@ -1,10 +1,19 @@
 /* Active, owned static blur. Draw callers only read the immutable source. */
 #include "resource_hook_p67_blur.h"
+#ifndef P67_BLUR_INTERACTION_BUSY
+#define P67_BLUR_INTERACTION_BUSY() 0
+#endif
 #ifndef P67_BLUR_AVAILABLE
 #define P67_BLUR_AVAILABLE 0
 #endif
 #ifndef P67_BLUR_COPY
 #define P67_BLUR_COPY(plane, identity) 0
+#endif
+#ifndef P67_BLUR_COPY_UNCHANGED
+#define P67_BLUR_COPY_UNCHANGED() 0
+#endif
+#ifndef P67_BLUR_DID_PUBLISH
+#define P67_BLUR_DID_PUBLISH() ((void)0)
 #endif
 #ifndef P67_BLUR_PUBLISH
 #define P67_BLUR_PUBLISH(plane, epoch) 0
@@ -265,6 +274,9 @@ static void p67_blur_display_unbind(void) {
  if(valid) (void)P67_BLUR_DISPLAY_REMOVE(display,p67_blur_display_event);
 }
 
+#ifndef P67_BLUR_FRAME_READY
+#define P67_BLUR_FRAME_READY() ((void)0)
+#endif
 static void p67_blur_display_event(void *event) {
  uint32_t display=*(uint32_t *)event;
  unsigned code=*(uint16_t *)((char *)event+8)&0x7fffu;
@@ -275,6 +287,7 @@ static void p67_blur_display_event(void *event) {
  if(code==36) { p67_blur_display=0; p67_blur_display_generation=++p67_blur_display_serial; p67_blur_drop(); return; }
  if(p67_blur_busy || p67_blur_polling) return;
  if(code==53) {
+  if(p67_blur_demand && P67_BLUR_INTERACTION_BUSY()) return;
   epoch=p67_blur_epoch; generation=p67_blur_display_generation;
   request=p67_blur_request_serial;
   if(p67_blur_capture_allowed() &&
@@ -299,6 +312,7 @@ static void p67_blur_display_event(void *event) {
  }
  if(code!=52) return;
  ++p67_blur_frame52;
+ P67_BLUR_FRAME_READY();
  if(!P67_BLUR_AVAILABLE) {
   if(p67_blur_armed || p67_blur_cleanup_armed) {
    p67_blur_armed=0; p67_blur_request_wake=0; p67_blur_cleanup_armed=0;
@@ -323,6 +337,9 @@ static void p67_blur_display_event(void *event) {
   p67_blur_busy=0;
   return;
  }
+ /* Preserve pending work and the immutable old source during a gesture.
+  * Do not consume the START budget or execute COPY/fences/filter/publish. */
+ if(P67_BLUR_INTERACTION_BUSY()) return;
  if(!p67_blur_capture_allowed()) return;
  visible=!!P67_BLUR_VISIBLE();
  if(visible && !p67_blur_visible && !p67_blur_entry_scoped && !p67_blur_pending)
@@ -363,6 +380,15 @@ static void p67_blur_display_event(void *event) {
  if(!p67_blur_display_valid()) { p67_blur_core_gate=4; goto done; }
  if(!p67_blur_root_registered) { p67_blur_core_gate=5; goto done; }
  if(identity!=p67_blur_root || identity!=P67_BLUR_WATCHFACE()) { p67_blur_core_gate=6; goto done; }
+ /* Equal raw pixels + equal material epoch reuse the immutable output.
+  * Snapshot/identity checks still run, so animated faces and app/root changes
+  * are observed without lowering the configured sampling cadence. */
+ if(p67_blur_source && P67_BLUR_COPY_UNCHANGED()) {
+  if(request==p67_blur_request_serial) {
+   p67_blur_pending=0; p67_blur_armed=0; p67_blur_request_wake=0;
+  }
+  p67_blur_core_gate=10; goto done;
+ }
  (void)rh_blur_filter_rgb565(p67_blur_plane,p67_blur_work,P67_BLUR_WIDTH,P67_BLUR_HEIGHT,2,2,P67_BLUR_DARKEN_PERCENT);
  next=P67_BLUR_PUBLISH(p67_blur_plane,epoch);
  if(!next) {
@@ -380,6 +406,7 @@ static void p67_blur_display_event(void *event) {
  if(p67_blur_core_gate) { P67_BLUR_RETIRE(next); goto done; }
  ++p67_blur_publishes;
  old=p67_blur_source; p67_blur_source=next;
+ P67_BLUR_DID_PUBLISH();
  if(old && old!=next) P67_BLUR_RETIRE(old);
  if(request==p67_blur_request_serial) {
   p67_blur_pending=0; p67_blur_armed=0; p67_blur_request_wake=0;
@@ -394,7 +421,7 @@ static void p67_blur_poll_rearm(void) {
  p67_blur_cleanup_armed=0;
  if(!P67_BLUR_AVAILABLE) return;
  if(p67_blur_demand) {
-  if(p67_blur_capture_allowed() && p67_blur_pending) {
+  if(p67_blur_capture_allowed() && p67_blur_pending && !P67_BLUR_INTERACTION_BUSY()) {
    p67_blur_armed=1; p67_blur_request_wake=0; p67_wake_pending=1;
   }
  } else if(p67_blur_cleanup_pending()) {
@@ -402,8 +429,12 @@ static void p67_blur_poll_rearm(void) {
  }
 }
 /* Safe owner poll registers observers, but never captures, fences, or frees. */
+#ifndef P67_BLUR_EXTRA_DEMAND
+#define P67_BLUR_EXTRA_DEMAND() 0
+#endif
 static void p67_blur_watch(int demand) {
  uint32_t display,epoch;
+ demand = demand || P67_BLUR_EXTRA_DEMAND();
  if(p67_blur_busy || p67_blur_polling) return;
  if(demand && !p67_blur_demand && !p67_blur_entry_scoped && !p67_blur_pending)
   p67_blur_request();

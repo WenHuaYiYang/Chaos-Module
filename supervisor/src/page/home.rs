@@ -1,9 +1,61 @@
 //! 页0：主页与实时状态（CPU / 存储 / 内存）。
+//!
+//! 信息架构: 状态区(CPU/存储/内存, 自绘) ->
+//! 「常用」应用管理/表盘管理/设置/文件管理器 ->「工具」系统美化/快应用动画/截屏录屏/NSH/实验性 ->「信息」ChaosConnect/关于。
 
 use crate::page::*;
 use crate::page::Page;
+use crate::page::frame;
+use crate::page::kit::{menu_click, MenuSpec, RowModel};
+static mut STAT_CADENCE: crate::cadence::Cadence = crate::cadence::Cadence::new();
 
 pub(crate) struct InfoPage;
+
+static mut CHARGE_TEXT: [u8; 80] = [0; 80];
+unsafe fn charge_text() -> *const u8 {
+    let p = core::ptr::addr_of_mut!(CHARGE_TEXT) as *mut u8;
+    let timestamp = fw_api::last_charge_timestamp();
+    let mut w = W::new(p, 80);
+    if timestamp > 0 {
+        if let Some((tm, now)) = fw_api::charge_time_local(timestamp as i64) {
+            fn two(w: &mut W, n: u32) { unsafe { if n < 10 { w.c(b'0'); } w.n(n); } }
+            w.n((tm[5] + 1900) as u32).c(b'-');
+            two(&mut w, (tm[4] + 1) as u32); w.c(b'-');
+            two(&mut w, tm[3] as u32); w.c(b' ');
+            two(&mut w, tm[2] as u32); w.c(b':'); two(&mut w, tm[1] as u32);
+            if now >= timestamp as i64 {
+                w.s("（".as_bytes()).n(((now - timestamp as i64) / 86400) as u32).s("天前）".as_bytes());
+            } else { w.s("（系统时间异常）".as_bytes()); }
+            w.end();
+            return p;
+        }
+    }
+    w.s("暂无记录".as_bytes()); w.end(); p
+}
+
+/// 菜单区行模型。槽位从 3 起: 0/1 留给数据行、2 是 CPU 行 —— tick 按槽号原地刷,
+/// 导航使用3..13，充电时间单独使用15，避免互相覆盖。
+static HOME_ROWS: &[RowModel] = &[
+    RowModel::section(b"\xe5\xb8\xb8\xe7\x94\xa8\x00"),          // 常用
+    RowModel::nav(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\x00", Pid::AppMgr as u32),      // 应用管理
+    RowModel::nav(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\x00", Pid::WfMgr as u32),       // 表盘管理
+    RowModel::nav(b"\xe8\xae\xbe\xe7\xbd\xae\x00", Pid::Settings as u32),                            // 设置
+    RowModel::nav("文件管理器\0".as_bytes(), Pid::Files as u32),
+    RowModel::section(b"\xe5\xb7\xa5\xe5\x85\xb7\x00"),          // 工具
+    RowModel::nav(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\x00", Pid::Beautify as u32),    // 系统美化
+    RowModel::nav("快应用动画\0".as_bytes(),Pid::QuickappAnimation as u32),
+    RowModel::nav(b"\xe6\x88\xaa\xe5\xb1\x8f\xe4\xb8\x8e\xe5\xbd\x95\xe5\xb1\x8f\x00", Pid::Capture as u32), // 截屏与录屏
+    RowModel::nav(b"NSH\xe7\xbb\x88\xe7\xab\xaf\x00", Pid::Nsh as u32),                              // NSH终端
+    RowModel::nav(b"\xe5\xae\x9e\xe9\xaa\x8c\xe6\x80\xa7\xe5\x8a\x9f\xe8\x83\xbd\x00", Pid::Exp as u32), // 实验性功能
+    RowModel::section(b"\xe4\xbf\xa1\xe6\x81\xaf\x00"),          // 信息
+    RowModel::nav(b"ChaosConnect\0", Pid::Connect as u32),
+    RowModel::nav(b"\xe5\x85\xb3\xe4\xba\x8e\x00", Pid::About as u32),                               // 关于
+];
+
+impl MenuSpec for InfoPage {
+    fn rows(&self) -> &'static [RowModel] { HOME_ROWS }
+    fn first_slot(&self) -> usize { 3 }
+}
 
 /// 读缓存里的占用百分比(0=存储 1=内存)。render 建条时用, 不碰 procfs。
 unsafe fn stat_pct(i: usize) -> u32 {
@@ -54,58 +106,49 @@ impl Page for InfoPage {
             write_volatile(hp.add(3), d1.row);
             write_volatile(hp.add(4), d1.value);
             write_volatile(hp.add(5), d1.bar);
-            // 导航入口
-            build_rows(ctx, d1.row, &[
-                (3, RowSpec::clickable(b"\xe5\xba\x94\xe7\x94\xa8\xe7\xae\xa1\xe7\x90\x86\0")), // 应用管理(页1, Shell++ 移植)
-                (4, RowSpec::clickable(b"\xe8\xa1\xa8\xe7\x9b\x98\xe7\xae\xa1\xe7\x90\x86\0")), // 表盘管理(页10)
-                (5, RowSpec::clickable(b"\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbe\x8e\xe5\x8c\x96\0")), // 系统美化(页13: 字体/图标/模糊)
-                (8, RowSpec::clickable("NSH终端\0".as_bytes())),
-                (9, RowSpec::clickable("实验性功能\0".as_bytes())),
-                (6, RowSpec::clickable("设置\0".as_bytes())),
-                (7, RowSpec::clickable("关于\0".as_bytes())),   // 时间/日期/亮度/震动/缓存/版本(页14)
-            ])?;
+            // 菜单区: 常用/工具/信息 三组(行链锚在内存数据行下面)
+            let menu_anchor = if d1.row != 0 { d1.row } else { ctx.title };
+            let charge = build_row(ctx, menu_anchor, 15,
+                &RowSpec::display("上次充电时间\0".as_bytes(), charge_text()));
+            if charge == 0 { return Err(PageError::RowFailed(15)); }
+            frame::build(self, ctx, charge)?;
             // 主页行的字体不再在这里特殊处理: 逐对象补写(font_tree)会按每个标签
             // 自己的行盒选脸, 覆盖所有页面。这里再无条件写 28px 基准 face 反而
             // 会和它打架(实测: 主页导航行 28px 观感正常, 但同一规则套到列表行就偏大)。
             // 让下一拍 tick 立即刷(周期是 20 拍, 置 19 后 +1 正好命中), 见上面那段注释
             st_wr!(STAT_TICK, 19);
+            // 开机/重启后进主页即恢复上次的屏幕方向（display 未就绪时留到下次）。
+            crate::screen_rotation::ensure_applied();
+            crate::touch_palm::ensure_applied();
             let _ = cpu;
             Ok(())
         }
     }
 
     fn on_click(&self, idx: usize) {
-        unsafe {
-            match idx {
-                // 3 = 应用管理(页1, Shell++ 移植, 见 appmgr.rs)。
-                // (2026-10-15) 原文件管理入口已注释退役:
-                //   3 => {
-                //       let rp = core::ptr::addr_of_mut!(PATH_STACK) as *mut u8;
-                //       write_volatile(rp.add(0), b'/');
-                //       write_volatile(rp.add(1), 0u8);
-                //       write_volatile(core::ptr::addr_of_mut!(DIR_WIN_SAVE).cast::<u32>(), 0);
-                //       nav_goto(1, 0);
-                //   }
-                3 => nav_goto(1, 0),   // 应用管理
-                4 => nav_goto(10, 0),  // 表盘管理
-                5 => nav_goto(13, 0),  // 系统美化
-                8 => nav_goto(crate::terminal_ui::PAGE_PID, 0), // NSH终端
-                9 => nav_goto(crate::btpan::PAGE_EXP_PID, 0), // 实验性功能(页35)
-                6 => nav_goto(14, 0),  // 设置(时间/日期/亮度/震动/缓存/版本)
-                7 => nav_goto(18, 0), // 关于(页18, 调试入口)
-                _ => {} // 行0-2 是数据行
-            }
-        }
+        // 导航派发全部在行模型里(Nav); 数据行槽 0..2 不在模型里, kit 派发会跳过。
+        unsafe { menu_click(self, idx) }
     }
+    fn is_switch_row(&self,idx:usize)->bool{crate::page::kit::menu_is_switch(self,idx)}
+    fn on_switch(&self,idx:usize){unsafe{crate::page::kit::menu_switch(self,idx);}}
 
-    fn needs_tick(&self) -> bool { true }
+    fn needs_tick(&self) -> bool { unsafe {
+        // Page dispatch already selects the live page. A stale APP_FG after
+        // pause/resume must not suppress the first procfs sample forever.
+        fw_api::screen_is_on() &&
+            (st_rd!(STAT_TICK) % 20 == 19 || STAT_CADENCE.due(fw_api::capture_now_ms(), 1000))
+    } }
 
     fn tick(&self) {
         unsafe {
             // 每 20 拍(亮屏 1s)刷新三行实时数据。原先 10 拍(0.5s)一轮要读 5 次 procfs,
             // 现在一轮 3 次、频率减半 —— UI 线程上的文件系统开销降到约 1/3。
             // 存储/内存这类占用率 1 秒一次足够; 跟手靠的是滑动本身, 不是这三个数。
-            let tk = st_rd!(STAT_TICK).wrapping_add(1);
+            let now = fw_api::capture_now_ms();
+            let old = st_rd!(STAT_TICK);
+            if old % 20 != 19 && !STAT_CADENCE.due(now, 1000) { return; }
+            STAT_CADENCE.take(now, 0);
+            let tk = if old % 20 == 19 { 20 } else { ((old / 20 + 1) % 60) * 20 };
             st_wr!(STAT_TICK, tk);
             if tk % 20 != 0 { return; }
             // 息屏 / AOD 一律不刷(续航): 这三行数值只有亮屏时才有人看,
@@ -133,6 +176,13 @@ impl Page for InfoPage {
                 diff
             }
             let rows = page_rows_ptr(0);
+            if tk % 1200 == 0 {
+                let charge = read_volatile(rows.add(15));
+                if charge != 0 {
+                    fw_api::row_update(charge, fw_api::NONE_PTR, fw_api::NONE_PTR,
+                        charge_text(), 0, 0);
+                }
+            }
             let upd: unsafe extern "C" fn(u32, *const u8, *const u8, *const u8, i32, u8) -> i32 =
                 fw_api::row_update;
             // 行2(CPU): 数值只写值标签, 不走 row_update。row_update 每次都会把

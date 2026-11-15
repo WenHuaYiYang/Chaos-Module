@@ -129,7 +129,6 @@ unsafe fn refresh_msg_row() {
     }
 }
 
-
 // ---- 列表分批建立 ----
 // 打开页面时一次建几十行会长时间占住 UI 线程；这里先建首屏几行, 其余的每次 tick 续几行。
 // kind: 1 = 页1(无复选框), 2 = 页30(带复选框)。副标题用调用方传进来的状态文案。
@@ -143,8 +142,11 @@ static mut LB_DELAY: u32 = 0;
 // 列表第 v 行对应的应用下标(批量页跳过排除项后, 行号 != 视图号)
 static mut LB_APP: [u16; crate::appmgr::APP_MAX] = [0xFFFF; crate::appmgr::APP_MAX];
 
-const LB_FIRST_CHUNK: u32 = 0;
-const LB_TICK_CHUNK: u32 = 5;
+/// 进页动画期间不建行: render 里先建首屏几行(一次突发, 被转场遮住),
+/// 转场完成(LB_DELAY 拍)后每拍只续建 2 行 —— 旧版每拍 5 行, 每拍阻塞
+/// 十几毫秒, 正好撞上进页转场, 用户看到的就是"进页很卡"。
+const LB_FIRST_CHUNK: u32 = 4;
+const LB_TICK_CHUNK: u32 = 2;
 
 pub(crate) fn list_building() -> bool { unsafe { LB_V < LB_N } }
 
@@ -168,7 +170,8 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32) {
         let ep_ = core::ptr::addr_of_mut!(P_EXCL_LB) as *mut u32;
         while z < crate::appmgr::APP_MAX { core::ptr::write_volatile(sp_.add(z), 0); core::ptr::write_volatile(ep_.add(z), 0); z += 1; }
     }
-    LB_DELAY = 3;
+    // 8 拍 ≈ 400ms: 让固件的进页转场动画先跑完, 行的续建从动画之后才开始。
+    LB_DELAY = 8;
     {
         let a = core::ptr::addr_of_mut!(LB_APP) as *mut u16;
         let mut i = 0usize;
@@ -176,8 +179,7 @@ unsafe fn list_begin(kind: u32, prev: u32, content: u32) {
     }
     let expected = if kind == 2 { crate::appmgr::batch_total() as u32 } else { LB_N };
     crate::appmgr::set_ui_rows(expected);
-    crate::log::kv("应用总数 ", crate::appmgr::count() as u32);
-    crate::log::kv("可见列表条目数 ", LB_N);
+
     list_build_chunk(LB_FIRST_CHUNK);
 }
 
@@ -205,9 +207,9 @@ unsafe fn list_build_chunk(limit: u32) {
         let sub_ph: &[u8] = b"\xc2\xa0\0";
         let r = fw_api::row_create(LB_CONTENT, crate::appmgr::entry_primary(i),
             sub_ph.as_ptr(), trailing);
-        if r == 0 { crate::log::kv("列表行创建失败, 已建 ", LB_V); LB_V = LB_N; break; }
+        if r == 0 {  LB_V = LB_N; break; }
         write_volatile(rows.add(v), r);
-        fw_api::obj_add_event(r, row_ev_fn(v + 12), 7, 0);
+        fw_api::obj_add_event(r, row_cb(), 7, v as u32 + 12);
         fw_api::obj_set_size_wh(r, 320, 100);
         fw_api::obj_set_local_style_prop(r, crate::fw_api::fwaddr::p65_style::PAD_3, 10, 0);
         cardify(r);
@@ -251,6 +253,11 @@ unsafe fn list_build_chunk(limit: u32) {
 impl Page for AppMgrPage {
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用管理\0".as_bytes()); }
+    }
+
+    /// 进页重读注册表: 改写后的状态每次进入都取磁盘真值。
+    fn on_enter(&self) {
+        unsafe { crate::appmgr::invalidate(); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
@@ -304,17 +311,17 @@ impl Page for AppMgrPage {
         // 页1 顶部按钮槽位: 0=批量, 3=重新应用隐藏; 槽1 是开关(只走 on_switch)
         unsafe {
             if idx == 0 {
-                nav_goto(30, 0);            // 批量操作
+                nav_goto(Pid::Batch as u32, 0);            // 批量操作
             } else if idx == 3 {
                 crate::appmgr::request_reapply();
-                render_req(1);
+                render_req(Pid::AppMgr as u32);
             } else if idx >= 12 {
                 let v = idx - 12;
                 if v < crate::appmgr::ui_rows() as usize {
                     let e = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
                     if e != 0xFFFF && e < crate::appmgr::APP_MAX {
                         crate::appmgr::detail_open(e);
-                        nav_goto(29, 0);    // 应用详情
+                        nav_goto(Pid::Detail as u32, 0);    // 应用详情
                     }
                 }
             }
@@ -327,7 +334,7 @@ impl Page for AppMgrPage {
         if idx == 1 {
             unsafe {
                 crate::appmgr::toggle_apply_mode();
-                render_req(1);
+                render_req(Pid::AppMgr as u32);
             }
         }
     }
@@ -347,7 +354,7 @@ impl Page for AppMgrPage {
             }
             if crate::appmgr::mode_pending() {
                 crate::appmgr::do_mode_apply();
-                render_req(1);
+                render_req(Pid::AppMgr as u32);
             } else if crate::appmgr::reapply_pending() {
                 crate::appmgr::do_reapply();
             } else if crate::appmgr::batch_pending() {
@@ -374,7 +381,6 @@ impl Page for AppMgrPage {
     }
 }
 
-
 static mut AM_MSG_ROW: u32 = 0;
 static mut AM_HDR_ROW: u32 = 0;
 
@@ -389,18 +395,42 @@ unsafe fn cstr_static(p: *const u8) -> &'static [u8] {
 pub(crate) struct AppDetailPage;
 pub(super) static PAGE_DETAILP: AppDetailPage = AppDetailPage;
 
+unsafe extern "C" fn uninstall_cancel(event: u32) {
+    if crate::confirm_pop::click(crate::confirm_pop::SLOT_APP, event) != 0 {
+        render_req(Pid::Detail as u32);
+    }
+}
+
+unsafe extern "C" fn uninstall_confirm(event: u32) {
+    if crate::confirm_pop::click(crate::confirm_pop::SLOT_APP, event) == 0 { return; }
+    if crate::appmgr::detail_valid() {
+        // 既有入口保留二次确认状态机，此处已由弹窗取得确认。
+        if !crate::appmgr::detail_confirm() { crate::appmgr::detail_uninstall_click(); }
+        if crate::appmgr::detail_uninstall_click() {
+            nav_back();
+            render_req(Pid::AppMgr as u32);
+            return;
+        }
+    }
+    render_req(Pid::Detail as u32);
+}
+
 static mut DT_LBL_SHOW: [u8; 24] = [0; 24];
 static mut DT_LBL_HIDE: [u8; 24] = [0; 24];
 static mut DT_LBL_UN: [u8; 32] = [0; 32];
 static mut DT_LBL_UN2: [u8; 32] = [0; 32];
 
 impl Page for AppDetailPage {
+    fn on_enter(&self) { unsafe { crate::appmgr::detail_scan_resume(); } }
+    fn on_pause(&self) { unsafe { crate::appmgr::detail_scan_cancel(); } }
+    fn on_screen_off(&self) { unsafe { crate::appmgr::detail_scan_cancel(); } }
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用详情\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
+            crate::confirm_pop::reset(crate::confirm_pop::SLOT_APP);
             if !crate::appmgr::detail_valid() {
                 let r = build_row(ctx, ctx.title, 0,
                     &RowSpec::tap("应用不存在, 返回\0".as_bytes(), core::ptr::null()));
@@ -456,31 +486,29 @@ impl Page for AppDetailPage {
             }
             if idx == 2 {
                 crate::appmgr::detail_toggle_hide();
-                render_req(29);
+                render_req(Pid::Detail as u32);
             } else if idx == 3 {
                 crate::appmgr::detail_toggle_excl();
-                render_req(29);
+                render_req(Pid::Detail as u32);
             } else if idx == 4 {
                 crate::appmgr::detail_launch();
             } else if idx == 5 {
-                if crate::appmgr::detail_uninstall_click() {
-                    // 已卸载: 回到应用管理列表
-                    nav_back();
-                    render_req(1);
-                } else {
-                    render_req(29);
+                if !crate::confirm_pop::shown(crate::confirm_pop::SLOT_APP) {
+                    crate::confirm_pop::build(crate::confirm_pop::SLOT_APP, 0,
+                        core::ptr::null(), 0, uninstall_cancel as *const () as u32,
+                        uninstall_confirm as *const () as u32);
                 }
             }
         }
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() || crate::appmgr::excl_has_req() }
+        unsafe { crate::appmgr::has_req() || crate::appmgr::excl_has_req() || crate::appmgr::detail_scan_pending() }
     }
 
     fn tick(&self) {
         unsafe {
-            let mut dirty = false;
+            let mut dirty = crate::appmgr::detail_scan_step();
             if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
                 dirty = true;
@@ -491,7 +519,7 @@ impl Page for AppDetailPage {
             }
             if dirty {
                 crate::appmgr::detail_refresh();
-                render_req(29);
+                render_req(Pid::Detail as u32);
             }
         }
     }
@@ -578,21 +606,21 @@ impl Page for BatchPage {
         unsafe {
             if idx == 1 {
                 crate::appmgr::sel_toggle_all();
-                if !refresh_list_rows(true) { render_req(30); }
+                if !refresh_list_rows(true) { render_req(Pid::Batch as u32); }
                 refresh_batch_count_row();
             } else if idx == 2 {
                 crate::appmgr::batch_request_sel(true);
-                render_req(30);
+                render_req(Pid::Batch as u32);
             } else if idx == 3 {
                 crate::appmgr::batch_request_sel(false);
-                render_req(30);
+                render_req(Pid::Batch as u32);
             } else if idx == 4 {
                 if crate::appmgr::sel_del_confirmed() {
                     crate::appmgr::batch_request_del();
                 } else {
                     crate::appmgr::sel_del_arm();
                 }
-                render_req(30);
+                render_req(Pid::Batch as u32);
             } else if idx == 5 {
                 crate::appmgr::sel_del_disarm();
                 nav_back();
@@ -601,7 +629,7 @@ impl Page for BatchPage {
                 if v < crate::appmgr::ui_rows() as usize {
                     let e = core::ptr::read_volatile((core::ptr::addr_of!(LB_APP) as *const u16).add(v)) as usize;
                     if e != 0xFFFF && e < crate::appmgr::APP_MAX { crate::appmgr::sel_toggle(e); }
-                    if !refresh_list_rows(true) { render_req(30); }
+                    if !refresh_list_rows(true) { render_req(Pid::Batch as u32); }
                     refresh_batch_count_row();
                 }
             }
@@ -634,6 +662,5 @@ impl Page for BatchPage {
         }
     }
 }
-
 
 pub(super) static PAGE_APPMGR: AppMgrPage = AppMgrPage;

@@ -1,0 +1,90 @@
+/* Shared V2 material atlas and cached rounded masks for real-time GPU sprites. */
+#ifndef CHAOS_CC_BUTTON_PIXELS_H
+#define CHAOS_CC_BUTTON_PIXELS_H
+#include <stdint.h>
+#include <stddef.h>
+#include "blur_color.h"
+#define CC_ATLAS_W 168u
+#define CC_ATLAS_H 240u
+struct cc_pixels { const unsigned char *data; unsigned width,height,stride,size; };
+static unsigned cc_corner_alpha(unsigned x,unsigned y,unsigned w,unsigned h,unsigned r) {
+    if(!r || (x>=r && x<w-r) || (y>=r && y<h-r)) return 255u;
+    unsigned hits=0,rr=r*8u;
+    for(unsigned sy=1;sy<8;sy+=2) for(unsigned sx=1;sx<8;sx+=2) {
+        unsigned px=x*8u+sx,py=y*8u+sy;
+        unsigned dx=px<rr?rr-px:px>(w-r)*8u?px-(w-r)*8u:0;
+        unsigned dy=py<rr?rr-py:py>(h-r)*8u?py-(h-r)*8u:0;
+        hits+=dx*dx+dy*dy<=rr*rr;
+    }
+    return (hits*255u+8u)/16u;
+}
+static int cc_build_atlas_styled(const struct cc_pixels *source,uint32_t *atlas,const struct chaos_blur_color *style) {
+    if(!source || !source->data || !atlas || !chaos_blur_color_valid(style)) return 0;
+    int small=source->width==84 && source->height==120;
+    if((!small && (source->width!=336 || source->height!=480)) ||
+       source->stride<source->width*3 || source->stride>2048 || source->size<source->stride*source->height) return 0;
+    static struct chaos_blur_color_lut lut; /* serialized UI owner; avoid 772B on its stack */
+    chaos_blur_color_prepare(&lut,style);
+    for(unsigned y=0;y<CC_ATLAS_H;++y)for(unsigned x=0;x<CC_ATLAS_W;++x) {
+        unsigned char sample[3];
+        const unsigned char *p;
+        if(small) {
+            // Same pixel-centre interpolation as the full background, sampled
+            // at half resolution. Runs only on source/parameter changes.
+            int fx=(int)x*128-96,fy=(int)y*128-96;
+            if(fx<0)fx=0;if(fy<0)fy=0;
+            if(fx>83*256)fx=83*256;if(fy>119*256)fy=119*256;
+            unsigned sx=(unsigned)fx>>8,sy=(unsigned)fy>>8,ax=(unsigned)fx&255,ay=(unsigned)fy&255;
+            unsigned nx=sx<83?sx+1:sx,ny=sy<119?sy+1:sy;
+            for(unsigned c=0;c<3;++c) {
+                unsigned top=source->data[sy*source->stride+sx*3+c]*(256-ax)+source->data[sy*source->stride+nx*3+c]*ax;
+                unsigned bottom=source->data[ny*source->stride+sx*3+c]*(256-ax)+source->data[ny*source->stride+nx*3+c]*ax;
+                sample[c]=(unsigned char)((top*(256-ay)+bottom*ay+32768)>>16);
+            }
+            p=sample;
+        } else p=source->data+y*2u*source->stride+x*6u;
+        unsigned char adjusted[3];chaos_blur_color_apply_lut(p,adjusted,&lut);
+        uint32_t packed=0xff000000u;
+        for(unsigned c=0;c<3;++c) packed|=(uint32_t)adjusted[c]<<(c*8u);
+        atlas[y*CC_ATLAS_W+x]=packed;
+    }
+    return 1;
+}
+/* Compatibility helper for the original 75% saturation material. */
+static inline int cc_build_atlas(const struct cc_pixels *source,uint32_t *atlas,unsigned brightness) {
+    struct chaos_blur_color style={brightness,75,100,0,0,0,0};
+    return brightness<=100 && cc_build_atlas_styled(source,atlas,&style);
+}
+static int cc_prepare_mask(unsigned char *out,unsigned w,unsigned h,unsigned stride,unsigned size,unsigned radius) {
+    if(!out || !w || !h || w>160 || h>128 || stride<w*4 || stride>1024 || size<stride*h) return 0;
+    if(radius>w/2)radius=w/2;if(radius>h/2)radius=h/2;
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
+        unsigned char *p=out+y*stride+x*4;p[0]=p[1]=p[2]=0;
+        p[3]=(unsigned char)cc_corner_alpha(x,y,w,h,radius);
+    }
+    return 1;
+}
+static int cc_copy_atlas(const uint32_t *atlas,unsigned char *out,unsigned w,unsigned h,
+                         unsigned stride,unsigned size,int left,int top,unsigned scale) {
+    if(!atlas || !out || ((uintptr_t)out&3u) || (stride&3u) || !w || !h || w>160 || h>128 || stride<w*4 || stride>1024 || size<stride*h ||
+       (scale!=1 && scale!=2) || left < -1024 || left>1024 || top < -2048 || top>2048) return 0;
+    unsigned columns[160];
+    for(unsigned x=0;x<w;++x) {
+        int sx=(left+(int)(x*scale))/2;if(sx<0)sx=0;if(sx>167)sx=167;columns[x]=(unsigned)sx;
+    }
+    for(unsigned y=0;y<h;++y) {
+        int sy=(top+(int)(y*scale))/2;if(sy<0)sy=0;if(sy>239)sy=239;
+        const uint32_t *line=atlas+(unsigned)sy*CC_ATLAS_W;
+        for(unsigned x=0;x<w;++x) {
+            unsigned char *q=out+y*stride+x*4;unsigned a=q[3];
+            uint32_t pixel=line[columns[x]];
+            if(!a) continue;
+            /* Fully covered interior is one word copy. Only rounded-edge
+             * pixels need premultiplication; alpha geometry is never rerun. */
+            if(a==255u) { *(uint32_t *)(void *)q=pixel;continue; }
+            for(unsigned c=0;c<3;++c) q[c]=(unsigned char)((((pixel>>(c*8u))&255u)*a+127u)/255u);
+        }
+    }
+    return 1;
+}
+#endif

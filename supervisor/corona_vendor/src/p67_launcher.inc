@@ -22,6 +22,9 @@ static uint32_t p67_owner, p67_page, p67_draw_owner, p67_generation;
 static int p67_busy, p67_wake_pending;
 static void p67_event(void *event);
 static void p67_scroll(void *event);
+#ifndef P67_BLUR_INTERACTION_EVENT
+#define P67_BLUR_INTERACTION_EVENT(code) ((void)(code))
+#endif
 
 struct p67_lookup { uint32_t wanted, found, count; };
 static int p67_find_live(uint32_t object, void *cookie) {
@@ -70,10 +73,18 @@ static void p67_draw_background(uint32_t layer, const char *path, const int32_t 
     if (!source) return;
     if (rh_background_is_blur(path)) {
         uint32_t descriptor[28];
-        const int32_t source_area[4] = {0, 0, P67_BLUR_WIDTH - 1u, P67_BLUR_HEIGHT - 1u};
+        int32_t source_area[4] = {0, 0, P67_BLUR_WIDTH - 1u, P67_BLUR_HEIGHT - 1u};
         ((void (*)(void *))(uintptr_t)P67_NATIVE(0x0c5882b9u))(descriptor);
         descriptor[7] = source;
         descriptor[12] = descriptor[13] = 4u * 256u;
+#ifdef CHAOS_BLUR_V2_COLOR
+        /* Select by immutable source header, including during algorithm changes. */
+        if(P67_U32(source+4u)==(336u|(480u<<16)) && ((P67_U32(source)>>8)&255u)==15u) {
+            descriptor[12]=descriptor[13]=256u;
+            ((unsigned char *)descriptor)[76]=(unsigned char)((chaos_v2_params[BP_BG_OPACITY]*255u+50u)/100u);
+            source_area[2]=335;source_area[3]=479;
+        }
+#endif
         descriptor[16] = descriptor[17] = 0;
         p67_blur_draw_seen();
         ((void (*)(uint32_t, const void *, const int32_t *))(uintptr_t)
@@ -113,6 +124,8 @@ static void p67_event(void *event) {
     int32_t area[4] = {0, 0, 335, 479};
     uint32_t layer;
     if (obj != target || *(uint32_t *)((unsigned char *)event + 12) != p67_generation) return;
+    if(obj==p67_draw_owner && load32(P67_ROOT_SLOT)==obj)
+        P67_BLUR_INTERACTION_EVENT(code);
     if (code == 36u) {
         /* Invalidate the pair before any native operation. Do not mutate the
          * currently dispatching subscription or walk the deleting subtree.
@@ -163,6 +176,8 @@ static void p67_scroll(void *event) {
         entry_binding=page && p67_draw_owner && p67_generation &&
             load32(P67_ROOT_SLOT)==p67_draw_owner &&
             (code != 9u || (p67_live(p67_owner) && p67_live(page) && p67_live(p67_draw_owner)));
+        if (entry_binding)
+            P67_BLUR_INTERACTION_EVENT(code);
         if (entry_binding)
             p67_blur_session_event(&p67_launcher_session,1u,p67_generation,page,code,
                 (int32_t)P67_U32(page + 32u),480,*((uint32_t *)event + 1)==p67_owner);

@@ -25,12 +25,21 @@ root=$(cd "$here/.." && pwd)
 src=$(cd "${1:-$root/supervisor}" && pwd)
 
 out=${2:-"$src/chaos_sup.ko"}
+# 绝对路径两种形式都认: MSYS 的 /c/... 与 Windows 的 C:/...
+# (build.py 从 Windows 调用时传的就是后者, 只认 /* 会误拼出 pwd+C:/... 的双前缀)
 case $out in
-  /*) ;;
+  /*|[A-Za-z]:[\\/]*) ;;
   *) out="$(pwd)/$out" ;;
 esac
 
 cd "$src"
+CHAOS_FIRMWARE=${CHAOS_FIRMWARE:-10p-3.101.043}
+export CHAOS_FIRMWARE
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$src/target}/$CHAOS_FIRMWARE"
+obj_dir="$CARGO_TARGET_DIR/thumbv8m.main-none-eabi/release"
+python3 "$here/firmware_symbols.py" --repo "$root" prepare --target "$CHAOS_FIRMWARE" --out "$obj_dir/firmware"
+export CHAOS_SYMBOL_DIR="$obj_dir/firmware"
+python3 "$here/pack_embedded_assets.py" "$root"
 
 # 关于页的“编译时间”：以前没人设这个变量，option_env! 拿不到就显示 unknown。
 # 这里给本地构建兜底；CI 会显式传同一个变量，保证发布产物时间可追溯。
@@ -44,7 +53,9 @@ RUSTFLAGS="-C target-cpu=cortex-m33 -C target-feature=-fpregs" \
   cargo +nightly build --release --target thumbv8m.main-none-eabi \
     -Z build-std=core,compiler_builtins
 
-lib=$(ls target/thumbv8m.main-none-eabi/release/lib*.a | head -n 1)
+# 不能从旧输出目录随意取第一个.a，否则会混入其他模块/旧版本。
+lib="$obj_dir/libchaos_sup.a"
+[ -s "$lib" ] || { echo "error: missing $lib" >&2; exit 1; }
 host=$(rustc +nightly -vV | sed -n 's/^host: //p')
 lld="$(rustc +nightly --print sysroot)/lib/rustlib/$host/bin/rust-lld"
 echo "rust-lld: $lld"
@@ -68,39 +79,50 @@ case "$cc" in
   *gcc) cflags_target="-mcpu=cortex-m33 -mthumb -mfloat-abi=soft" ;;
   *)    cflags_target="--target=thumbv8m.main-none-eabi -mcpu=cortex-m33 -mthumb -mfloat-abi=soft" ;;
 esac
-obj_dir="$src/target/thumbv8m.main-none-eabi/release"
 corona_obj="$obj_dir/chaos_corona_blur.o"
 "$cc" $cflags_target \
        -ffreestanding -fno-builtin -fno-stack-protector \
        -fno-unwind-tables -fno-asynchronous-unwind-tables \
        -ffunction-sections -fdata-sections -O2 \
-       -I"$src" -I"$src/corona_vendor/include" \
+       -I"$src" -I"$src/corona_vendor/include" -include "$CHAOS_SYMBOL_DIR/firmware.h" \
        -c "$src/corona_blur.c" -o "$corona_obj"
 
 # Network features are part of the Rust UI; their C implementation is required.
 python3 "$here/build_network.py" --source "$src/network"
 
-# Native CanopusConnect file bridge. It is deliberately a C provider: the
-# CPC2/L2 paths came from the audited Canopus target pack, while the file
-# protocol is the embedded band_files source.
-bridge_objs=""
-for f in canopus_protocol band_files_embed bridge; do
+# ChaosConnect private file protocol and audited p67 encrypted L2 carrier.
+# rust-lld 是 Windows 原生程序: 不认 MSYS 的 /c/ 形式路径, 也拆不动带空格的
+# 命令行参数 —— 全部输入统一经 cygpath 转 C:/ 形式, bridge 四个 .o 与 network
+# 的 37 个 .o 一样走响应文件(每行一个带引号路径)。
+win() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; return; fi
+  # MinGit ships sh without cygpath. Native rust-lld does not translate paths
+  # inside response files, so handle its /e/... drive form explicitly.
+  case "$1" in
+    /[A-Za-z]/*) p=${1#/}; drive=${p%%/*}; printf '%s:/%s' "$drive" "${p#*/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+bridge_rsp="$obj_dir/bridge_objs.rsp"
+: > "$bridge_rsp"
+for f in chaos_connect chaos_files chaos_io bridge; do
   o="$obj_dir/chaos_bridge_$f.o"
   "$cc" $cflags_target \
          -ffreestanding -fno-builtin -fno-stack-protector \
          -fno-unwind-tables -fno-asynchronous-unwind-tables \
-         -ffunction-sections -fdata-sections -O1 -DBF_BRIDGE \
-         -I"$src/bridge" -c "$src/bridge/$f.c" -o "$o"
-  bridge_objs="$bridge_objs $o"
+         -ffunction-sections -fdata-sections -O2 \
+         -I"$src/bridge" -include "$CHAOS_SYMBOL_DIR/firmware.h" -c "$src/bridge/$f.c" -o "$o"
+  printf '"%s"\n' "$(win "$o")" >> "$bridge_rsp"
 done
 
-# shellcheck disable=SC2086
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
+       -u chaos_firmware_target \
        -u chaos_bridge_start -u chaos_bridge_stop \
        -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
        -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
        --wrap=bnep_register_frame_callback --wrap=bnep_init --wrap=bt_probe_connect_device \
-       -T "$here/merge_sections.ld" -o "$out" "$lib" "$corona_obj" $bridge_objs "@$src/network/build/objects.rsp"
+       -T "$(win "$here/merge_sections.ld")" -o "$(win "$out")" "$(win "$lib")" "$(win "$corona_obj")" \
+       "@$(win "$bridge_rsp")" "@$(win "$src/network/build/$CHAOS_FIRMWARE/objects.rsp")"
 
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then
