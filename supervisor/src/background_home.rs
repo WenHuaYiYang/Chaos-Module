@@ -38,6 +38,13 @@ static mut CORONA_BG_ACTIVE: u32 = 0;
 static mut CORONA_BG_MASK: u32 = 0;
 static mut CORONA_VITALITY_SEEN: bool = false;
 static mut CORONA_VITALITY_RECOVER: bool = false;
+
+/// 只读输出恢复阶段：0=普通运行，1=等待退出活力指标，2=等待安全下架，3=等待资源回收。
+pub(crate) unsafe fn corona_recovery_debug() -> u32 {
+    if CORONA_VITALITY_RECOVER {
+        if st_rd!(CORONA_BG_ACTIVE) == 2 { 3 } else { 2 }
+    } else if CORONA_VITALITY_SEEN { 1 } else { 0 }
+}
 // 所有权看门狗：连续几拍发现 corona 已经不再持有原生 owner（被 DELETE/手势
 // 摘掉但没人重新 commit）时，把状态归零让下一拍重新 commit。丢了所有权还继续
 // 认定 CORONA_BG_ACTIVE==1，表现就是"模糊不动了，换什么档位都是透明"。

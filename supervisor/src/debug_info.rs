@@ -19,6 +19,9 @@ pub(crate) unsafe fn blur_refresh() -> *const u8 {
     w.s(b"mode=").n(crate::background_home::mode()).c(b'\n');
     w.s(b"cov=").n(active).s(b" mask=").n(mask).c(b'\n');
     w.s(b"hold=").n(hold).s(b" fail=").n(fail).s(b" lost=").n(lost).c(b'\n');
+    w.s(b"top=").n(crate::fw_api::top_app_id())
+        .s(b" recovery=").n(crate::background_home::corona_recovery_debug())
+        .s(b" quiet=").n(if crate::font_apply::quiet() { 1 } else { 0 }).c(b'\n');
     let mut diag = [0u8; 1536];
     let n = crate::corona_blur::diagnostics(&mut diag);
     if n != 0 { w.s(&diag[..n]); } else { w.s(b"diagnostics unavailable\n"); }

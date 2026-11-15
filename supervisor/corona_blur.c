@@ -136,6 +136,8 @@ static unsigned chaos_corona_enabled, chaos_corona_in_call;
  * 60 次调用后才清零，避免打断真实手势。 */
 static unsigned chaos_corona_latch_calls;
 static uint32_t chaos_corona_latch_clears, chaos_corona_commits, chaos_corona_commit_fails;
+/* Last owner-side idle gate, not a second native query from diagnostics. */
+static uint32_t chaos_corona_idle_wait;
 
 static void chaos_corona_latch_rescue(void) {
     if (!P67_U8(0x201102d9u)) { chaos_corona_latch_calls = 0; return; }
@@ -152,10 +154,14 @@ static void chaos_corona_latch_rescue(void) {
 
 int chaos_corona_backgrounds_idle(void) {
     unsigned i;
-    if (chaos_corona_in_call || p67_busy || load32(P67_IMAGE_SLOT) ||
-        P67_U8(0x201102d9u) || !p67_blur_native_idle()) return 0;
+    chaos_corona_idle_wait = 0;
+    if (chaos_corona_in_call) { chaos_corona_idle_wait = 1; return 0; }
+    if (p67_busy) { chaos_corona_idle_wait = 2; return 0; }
+    if (load32(P67_IMAGE_SLOT)) { chaos_corona_idle_wait = 3; return 0; }
+    if (P67_U8(0x201102d9u)) { chaos_corona_idle_wait = 4; return 0; }
+    if (!p67_blur_native_idle()) { chaos_corona_idle_wait = 5; return 0; }
     for (i = 0; i < 3u; ++i)
-        if (!p67_surface_idle(&p67_surfaces[i])) return 0;
+        if (!p67_surface_idle(&p67_surfaces[i])) { chaos_corona_idle_wait = 6u + i; return 0; }
     return 1;
 }
 
@@ -299,7 +305,7 @@ static void chaos_text_kv(struct chaos_text *w, const char *key, uint32_t value)
 }
 uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     struct chaos_text w = {out, 0, capacity, 0};
-    unsigned i, surfaces = 0;
+    unsigned i, surfaces = 0, refs = 0, moving = 0, dirty = 0, swapped = 0, busy = 0;
     if (!out || capacity < 2u) return 0u;
     chaos_text_kv(&w, "enabled", chaos_corona_enabled);
     chaos_text_kv(&w, "algorithm", chaos_v2_algorithm);
@@ -319,8 +325,39 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     chaos_text_kv(&w, "copy", p67_blur_copies);
     chaos_text_kv(&w, "pub", p67_blur_publishes);
     chaos_text_kv(&w, "draws", p67_blur_draws);
-    for (i = 0; i < 3u; ++i) surfaces |= p67_surfaces[i].owner ? (1u << i) : 0u;
+    for (i = 0; i < 3u; ++i) {
+        surfaces |= p67_surfaces[i].owner ? (1u << i) : 0u;
+        refs |= (p67_surfaces[i].owner || p67_surfaces[i].page ||
+                 p67_surfaces[i].root || p67_surfaces[i].list) ? (1u << i) : 0u;
+        moving |= p67_surfaces[i].moving ? (1u << i) : 0u;
+        dirty |= p67_surfaces[i].dirty ? (1u << i) : 0u;
+        swapped |= p67_surfaces[i].swapped ? (1u << i) : 0u;
+        busy |= p67_surfaces[i].busy ? (1u << i) : 0u;
+    }
     chaos_text_kv(&w, "surf", surfaces);
+    chaos_text_kv(&w, "surf_refs", refs);
+    chaos_text_kv(&w, "surf_moving", moving);
+    chaos_text_kv(&w, "surf_dirty", dirty);
+    chaos_text_kv(&w, "surf_swapped", swapped);
+    chaos_text_kv(&w, "surf_busy", busy);
+    chaos_text_kv(&w, "last_idle_wait", chaos_corona_idle_wait);
+    chaos_text_kv(&w, "cleanup", chaos_corona_backgrounds_pending());
+    chaos_text_kv(&w, "cleanup_armed", p67_blur_cleanup_armed);
+    chaos_text_kv(&w, "observer", p67_blur_display);
+    chaos_text_kv(&w, "root", p67_blur_root);
+    chaos_text_kv(&w, "root_sub", p67_blur_root_registered);
+    chaos_text_kv(&w, "frame52", p67_blur_frame52);
+    chaos_text_kv(&w, "input", p67_blur_native_input);
+    chaos_text_kv(&w, "out0", p67_blur_native_outputs[0].descriptor);
+    chaos_text_kv(&w, "out1", p67_blur_native_outputs[1].descriptor);
+    chaos_text_kv(&w, "retired", p67_blur_retired ? 1u : 0u);
+    chaos_text_kv(&w, "out_retired", p67_blur_native_outputs[0].retired |
+                  (p67_blur_native_outputs[1].retired << 1));
+    chaos_text_kv(&w, "battery_obj", p67_battery_obj);
+    chaos_text_kv(&w, "battery_buffer", p67_battery_buffer);
+    chaos_text_kv(&w, "battery_mask", p67_battery_mask_buffer);
+    chaos_text_kv(&w, "battery_refs", (p67_battery_root ? 1u : 0u) |
+                  (p67_battery_status ? 2u : 0u) | (p67_battery_mask_root ? 4u : 0u));
     chaos_text_kv(&w, "commit", chaos_corona_commits);
     chaos_text_kv(&w, "cfail", chaos_corona_commit_fails);
     chaos_text_kv(&w, "latchclr", chaos_corona_latch_clears);
@@ -328,7 +365,12 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     chaos_text_kv(&w, "idle_error", p67_blur_native_idle_error);
     chaos_text_kv(&w, "native_error", p67_blur_native_error);
     chaos_text_kv(&w, "render_bits", p67_blur_native_render_bits);
+    chaos_text_kv(&w, "display", p67_blur_native_display_seen);
+    chaos_text_kv(&w, "layer", p67_blur_native_layer_seen);
     chaos_text_kv(&w, "wf_slot", p67_blur_native_root_seen);
+    chaos_text_kv(&w, "wf_current", load32(0x20119778u));
+    chaos_text_kv(&w, "gpu", (uint32_t)p67_blur_native_last_gpu);
+    chaos_text_kv(&w, "capture_rc", (uint32_t)p67_blur_native_capture_result);
     if (w.failed) return 0u;
     out[w.used] = 0;
     return w.used;
