@@ -1,7 +1,7 @@
-/* ChaosConnect p67/3.101.043 transport. Only the private authenticated PB
- * namespace is consumed; every other packet is forwarded unchanged.
- * Xiaomi SAR/L2 is the existing Bluetooth carrier, not a new L2CAP PSM.
- * VFS work stays on the owner loop; native send stays on the BT loop. */
+/* ChaosConnect p67/3.101.043 transports. Private authenticated Xiaomi PB
+ * traffic is consumed and other namespaces pass through unchanged. Android
+ * adds a dedicated standard SPP/RFCOMM carrier, sharing the CCN1 owner queue.
+ * Pair/service IPC runs in an isolated task; VFS on owner; stream I/O on BT. */
 #include "chaos_connect.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -28,7 +28,7 @@ typedef int (*crypto_fn)(void *,int,uint16_t,const void *,void *);
 typedef int (*send_fn)(void *,const struct l2_packet *);
 typedef int (*init_fn)(void *,void *);
 typedef int (*timer_start_fn)(void *,void (*)(void *),uint64_t,uint64_t);
-struct request {volatile uint32_t state;uint32_t epoch,id;uint16_t handle,len;void *session;uint8_t data[CC_MAX_WIRE];};
+struct request {volatile uint32_t state;uint32_t epoch,id;uint16_t handle,len;uint32_t android;void *session;uint8_t data[CC_MAX_WIRE];};
 static struct request rx[RX_SLOTS],tx[TX_SLOTS];
 static uint8_t probe[CC_MAX_WIRE],plain[CC_MAX_FRAME],send_copy[CC_MAX_WIRE];
 static volatile uint32_t rx_read,rx_write,tx_read,tx_write,epoch,started,reset_pending,wanted;
@@ -39,7 +39,7 @@ static uint32_t notice_prefix;
 static uint8_t notice_wire[128];
 static uint16_t handle;
 static void *session;
-static uint32_t packet_id,request_epoch,prefix;
+static uint32_t packet_id,request_epoch,prefix,client_android;
 static uint32_t owner_init,bt_init,owner_period,bt_period;
 static uint64_t owner_timer[(TIMER_SIZE+7)/8],bt_timer[(TIMER_SIZE+7)/8];
 static void *boot_timer;
@@ -48,12 +48,13 @@ static void unlock(uint32_t p){__asm__ volatile("msr primask, %0"::"r"(p):"memor
 static void barrier(void){__asm__ volatile("dmb":::"memory");}
 static int ptr(uint32_t p){return !(p&3)&&((p>=0x20000000&&p<=0x2400ffff)||(p>=0x30000000&&p<=0x3fffffff));}
 static void copy(void *d,const void *s,uint32_t n){uint8_t *a=d;const uint8_t *b=s;for(uint32_t i=0;i<n;i++)a[i]=b[i];}
+uint32_t chaos_bridge_enabled(void){return wanted&&started;}
 static void original(uint16_t h,uint8_t ch,uint8_t op,void *p,uint16_t n){FN(L2_RX,rx_fn)(h,ch,op,p,n);}
 /* UI-safe gate: no timer, LVGL, VFS, or radio calls from the switch callback. */
 void chaos_bridge_set_enabled(uint32_t enabled){
     uint32_t mask=lock();enabled=enabled!=0;
     if(wanted!=enabled){
-        if(!enabled&&session){notice_handle=handle;notice_session=session;notice_prefix=prefix;notice_attempts=0;notice_pending=1;}
+        if(!enabled&&session&&!client_android){notice_handle=handle;notice_session=session;notice_prefix=prefix;notice_attempts=0;notice_pending=1;}
         wanted=enabled;started=0;epoch++;reset_pending=1;barrier();
     }
     unlock(mask);
@@ -70,8 +71,22 @@ static void receive(uint16_t h,uint8_t ch,uint8_t op,void *p,uint16_t n){
     if(!wanted||!started||received_epoch!=epoch){unlock(mask);return;}
     if(rx[slot].state){unlock(mask);return;} /* Peer is bounded by HELLO's window. */
     rx[slot].state=1;rx[slot].epoch=epoch;rx_write=(slot+1)%RX_SLOTS;unlock(mask);
-    rx[slot].handle=h;rx[slot].session=s;rx[slot].id=id;rx[slot].len=size;copy(rx[slot].data,frame,size);barrier();rx[slot].state=2;
+    rx[slot].android=0;rx[slot].handle=h;rx[slot].session=s;rx[slot].id=id;rx[slot].len=size;copy(rx[slot].data,frame,size);barrier();rx[slot].state=2;
 }
+
+static int chaos_bridge_android_receive(uint32_t generation,const uint8_t *data,unsigned length){
+    uint32_t received_epoch=epoch;
+    const uint8_t *frame;uint32_t size,id;
+    if(!wanted||!started||cc_pb_unwrap(data,length,&frame,&size,&id)!=1)return 0;
+    struct cc_frame f;if(cc_decode(frame,size,&f)||f.flags||f.status||f.req!=(id&0xffffu))return 0;
+    uint32_t mask=lock(),slot=rx_write;
+    if(!wanted||!started||received_epoch!=epoch||rx[slot].state){unlock(mask);return 0;}
+    rx[slot].state=1;rx[slot].epoch=epoch;rx_write=(slot+1)%RX_SLOTS;unlock(mask);
+    rx[slot].android=1;rx[slot].handle=0;rx[slot].session=(void *)(uintptr_t)generation;
+    rx[slot].id=id;rx[slot].len=size;copy(rx[slot].data,frame,size);barrier();rx[slot].state=2;return 1;
+}
+#include "android_radio.inc"
+static int live_session(unsigned android,uint16_t h,void *s){return android?cc_radio_live(s):FN(L2_SESSION,session_fn)(h)==s;}
 static void attach(int remove){
     uint32_t mask=lock();volatile uint32_t *head=(void *)(uintptr_t)L2_CONNECTIONS;
     uint32_t node=head[1];
@@ -102,7 +117,7 @@ int cc_reply(uint8_t flags,uint8_t op,uint8_t status,uint16_t req,const void *da
     if(!wanted||!started||request_epoch!=epoch){unlock(mask);return -1;}
     if(tx[slot].state){unlock(mask);return -1;}tx[slot].state=1;tx_write=(slot+1)%TX_SLOTS;unlock(mask);
     int wire=cc_pb_wrap(tx[slot].data,sizeof(tx[slot].data),plain,len,flags==CC_EVENT?(packet_id&0xffff0000u):packet_id);
-    tx[slot].handle=handle;tx[slot].session=session;tx[slot].epoch=request_epoch;tx[slot].len=wire>0?wire:0;
+    tx[slot].android=client_android;tx[slot].handle=handle;tx[slot].session=session;tx[slot].epoch=request_epoch;tx[slot].len=wire>0?wire:0;
     barrier();tx[slot].state=2;return wire>0?0:-1;
 }
 static int bt_start(uint32_t period);
@@ -120,19 +135,20 @@ static void send_disabled_notice(void){
     }
 }
 static void bt_tick(void *unused){
-    (void)unused;send_disabled_notice();
+    (void)unused;cc_radio_tick(wanted&&started);send_disabled_notice();
     if(!wanted||!started){(void)bt_start(notice_pending?10:1000);return;}
     for(unsigned i=0;i<TX_SLOTS;i++){
         if(!wanted||!started)break;
         uint32_t slot=tx_read;if(tx[slot].state!=2)break;
-        if(tx[slot].len&&tx[slot].epoch==epoch&&FN(L2_SESSION,session_fn)(tx[slot].handle)==tx[slot].session){
+        if(tx[slot].len&&tx[slot].epoch==epoch&&live_session(tx[slot].android,tx[slot].handle,tx[slot].session)){
             struct l2_packet p={0};p.channel=1;p.opcode=2;p.len=tx[slot].len;p.payload=send_copy;
             copy(send_copy,tx[slot].data,p.len);
             /* Native send encrypts in place and synchronously copies into SAR;
              * retry from immutable plaintext, never encrypt a queued slot twice. */
-            if(FN(L2_SEND,send_fn)(tx[slot].session,&p)!=0)break;
+            if(tx[slot].android){if(cc_radio_send((uint32_t)(uintptr_t)tx[slot].session,send_copy,p.len)!=0)break;}
+            else if(FN(L2_SEND,send_fn)(tx[slot].session,&p)!=0)break;
         }barrier();tx[slot].state=0;tx_read=(slot+1)%TX_SLOTS;
-    }(void)bt_start(tx[tx_read].state==2?2:10);
+    }(void)bt_start(tx[tx_read].state==2?2:(radio_pair_until?100:(radio_path_pending||radio_close_request?20:1000)));
 }
 static int bt_start(uint32_t period){
     void *loop=*(void *volatile *)(uintptr_t)BT_LOOP;if(!loop)return -1;if(bt_period==period)return 0;
@@ -140,21 +156,22 @@ static int bt_start(uint32_t period){
     if(FN(TIMER_START,timer_start_fn)(bt_timer,bt_tick,period,period))return -1;bt_period=period;return 0;
 }
 static void poll(void){
+    cc_radio_log_owner();
     if(reset_pending){cc_files_reset();reset_pending=0;session=0;prefix=0;}
-    if(!wanted||!started){attach(1);return;}attach(0);
-    if(session&&FN(L2_SESSION,session_fn)(handle)!=session){cc_files_reset();session=0;prefix=0;}
+    if(!wanted||!started){attach(1);return;}attach(0);if(!bt_init)(void)bt_start(20);
+    if(session&&!live_session(client_android,handle,session)){cc_files_reset();session=0;prefix=0;}
     extern uint32_t chaos_connect_now_ms(void);
     if(cc_files_tick(chaos_connect_now_ms())){session=0;prefix=0;}
     for(unsigned served=0;served<RX_SLOTS&&tx_free()>=3;served++){
         if(!wanted||!started)break;
         uint32_t slot=rx_read;if(rx[slot].state!=2)break;
         struct request *r=&rx[slot];struct cc_frame f;
-        if(wanted&&started&&r->epoch==epoch&&r->len&&FN(L2_SESSION,session_fn)(r->handle)==r->session&&cc_decode(r->data,r->len,&f)==0){
-            int fresh=session!=r->session||handle!=r->handle||prefix!=(r->id&0xffff0000u);
+        if(wanted&&started&&r->epoch==epoch&&r->len&&live_session(r->android,r->handle,r->session)&&cc_decode(r->data,r->len,&f)==0){
+            int fresh=client_android!=r->android||session!=r->session||handle!=r->handle||prefix!=(r->id&0xffff0000u);
             if(!fresh||f.op==1){
-                if(fresh){cc_files_reset();session=r->session;handle=r->handle;prefix=r->id&0xffff0000u;}
+                if(fresh){cc_files_reset();client_android=r->android;cc_files_set_android(client_android);session=r->session;handle=r->handle;prefix=r->id&0xffff0000u;}
                 request_epoch=r->epoch;packet_id=r->id;
-                uint16_t chunk=native_chunk(handle);
+                uint16_t chunk=client_android?CC_CHUNK:native_chunk(handle);
                 if(chunk){cc_files_set_chunk(chunk);cc_files_dispatch(&f);}
                 else (void)cc_reply(CC_RESPONSE,f.op,12,f.req,0,0);
             }

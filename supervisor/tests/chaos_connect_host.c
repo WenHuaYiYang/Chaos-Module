@@ -12,6 +12,13 @@
 #include <errno.h>
 static uint8_t replies[32][CC_MAX_FRAME];static unsigned lengths[32],used;
 static char logs[256][1024];static unsigned log_count;
+static uint32_t service_enabled=1;
+uint32_t chaos_bridge_enabled(void){return service_enabled;}
+void cc_test_service(uint32_t enabled){service_enabled=enabled;}
+static uint32_t android_policy=2,android_mask=1;
+uint32_t chaos_connect_android_policy(void){return android_policy;}
+uint32_t chaos_connect_android_mask(void){return android_mask;}
+void cc_test_android(uint32_t forced,uint32_t pol,uint32_t mask){cc_files_set_android(forced);android_policy=pol;android_mask=mask;}
 static uint32_t policy,now_ms=100,decision_token,decision,state_flags,state_token;
 uint32_t chaos_connect_policy(void){return policy;}
 uint32_t chaos_connect_now_ms(void){return now_ms;}

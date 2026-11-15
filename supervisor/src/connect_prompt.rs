@@ -39,10 +39,12 @@ pub(crate) unsafe fn tick(){
     let existing=rd32(fw::MSGBOX_SINGLETON as *const u32);
     if safe_ptr(existing)&&fw::obj_is_child_of(TOP,existing){TOP=0;return;}
     let mb=fw::msgbox_create(TOP,0);
-    if !safe_ptr(mb){TOP=0;permission::decide(token,false);crate::connect_log::line("授权弹窗创建失败，拒绝开发者模式请求");return;}
+    if !safe_ptr(mb){TOP=0;permission::decide(token,false);crate::connect_log::line("授权弹窗创建失败，拒绝请求");return;}
     OBJECT=mb;TOKEN=token;
     BUTTONS=[0;10];BUTTONS[0]=(deny as *const ()as u32)|1;BUTTONS[5]=(allow as *const ()as u32)|1;
-    fw::msgbox_fill(mb,5,0,"是否允许插件启用开发者模式？\0".as_ptr(),0,core::ptr::addr_of!(BUTTONS).cast(),2);
+    fw::msgbox_fill(mb,5,0,if permission::prompt_is_connection(){"是否允许 Android ChaosConnect 连接？\n可用权限由手环设置决定。\0".as_ptr()}
+        else if permission::state()&(1<<5)!=0 {"是否允许 Android 启用开发者模式？\0".as_ptr()}
+        else {"是否允许插件启用开发者模式？\0".as_ptr()},0,core::ptr::addr_of!(BUTTONS).cast(),2);
     fw::obj_add_event(mb,deleted as *const ()as u32,36,0);
-    crate::connect_log::line("已弹出开发者模式授权提醒，等待用户选择");
+    crate::connect_log::line("已弹出ChaosConnect授权提醒，等待用户选择");
 }

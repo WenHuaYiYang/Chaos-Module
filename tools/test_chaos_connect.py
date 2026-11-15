@@ -25,7 +25,7 @@ class ConnectTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.c.cc_files_reset();cls.work.cleanup()
     def setUp(self):
-        self.c.cc_files_reset();self.c.cc_test_fault(0,0);self.c.cc_test_policy(0);self.c.cc_test_time(100)
+        self.c.cc_files_reset();self.c.cc_test_service(1);self.c.cc_test_android(0,2,1);self.c.cc_test_fault(0,0);self.c.cc_test_policy(0);self.c.cc_test_time(100)
         self.request(1);self.c.cc_test_clear_logs()
     def logs(self):
         out=[];buf=C.create_string_buffer(1024)
@@ -234,7 +234,67 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(self.c.cc_files_tick(0x10),0)
         self.assertEqual(self.c.cc_files_tick((0xfffffff0+15000)&0xffffffff),1)
 
+    def access(self):
+        status,payload=self.request(0x42);self.assertEqual(status,0)
+        return struct.unpack('<BBBBIIBBBB',payload)
+    def android(self,policy=2,mask=1):
+        self.c.cc_test_android(1,policy,mask);self.request(1)
+        return self.access()
+    def test_android_physical_transport_cannot_skip_connection_consent(self):
+        a=self.android();self.assertEqual(a[:5],(1,1,2,1,1));self.assertGreater(a[5],0);self.assertEqual(a[6],0)
+        token=a[5]
+        for op,p in [(2,path('/data')+struct.pack('<IB',0,16)),(0x20,path('/data/blocked')+struct.pack('<IB',0,1)),(0x40,b'\x01'),(0x31,b'echo')]:
+            self.assertEqual(self.request(op,p)[0],3)
+        self.assertEqual(self.access()[5],token)
+        # Even a malicious raw peer sending the old plugin HELLO still waits.
+        self.request(1);new=self.access();self.assertEqual(new[1:4],(1,2,1));self.assertNotEqual(new[5],token)
+        self.c.cc_test_decide(token,1);self.c.cc_files_tick(100);self.assertEqual(self.access()[6],0)
+        self.c.cc_test_decide(new[5],1);self.c.cc_files_tick(100);self.assertEqual(self.access()[6],1)
+        self.assertEqual(self.request(2,path('/data')+struct.pack('<IB',0,16))[0],0)
+        self.assertEqual(self.open_write('/data/not-granted',0)[0],3)
+    def test_android_independent_permissions_revoke_active_file_transactions(self):
+        self.android(0,31)
+        target=self.root/'data/mobile';target.write_bytes(b'old')
+        self.assertEqual(self.request(0x10,path('/data/mobile'))[0],0)
+        self.assertEqual(self.open_write('/data/mobile',3)[0],0);self.request(0x21,struct.pack('<I',0)+b'new')
+        self.c.cc_test_android(1,0,0);self.c.cc_files_tick(100)
+        self.assertEqual(self.request(0x11,struct.pack('<IH',0,3))[0],3)
+        self.assertEqual(self.request(0x22,struct.pack('<I',zlib.crc32(b'new')))[0],3)
+        self.assertEqual(target.read_bytes(),b'old');self.assertFalse(list((self.root/'data').glob('mobile*.part')))
+        self.c.cc_test_android(1,0,3)
+        self.assertEqual(self.request(5,path('/data/mobile'))[0],3)
+        self.assertEqual(self.request(7,path('/data/mobile')+path('/data/renamed'))[0],3)
+        self.assertEqual(self.request(0x40,b'\x01')[0],3)
+        self.c.cc_test_android(1,0,4);self.assertEqual(self.request(7,path('/data/mobile')+path('/data/renamed'))[0],0)
+    def test_android_developer_and_connection_revocation_preserve_policy(self):
+        self.android(0,31);self.assertEqual(self.request(0x40,b'\x01')[0],0)
+        self.assertEqual(self.open_write('/resource/mobile',3)[0],0)
+        self.c.cc_test_android(1,0,7);self.c.cc_files_tick(100)
+        self.assertEqual(self.request(0x41)[1],b'\x00')
+        self.assertEqual(self.request(0x22,struct.pack('<I',0))[0],1)
+        for p in ['/data/chaos/connect-android.cfg','/data/chaos/connect-android.tmp']:
+            self.assertEqual(self.open_write(p,7)[0],3)
+        self.c.cc_test_android(1,1,31);self.c.cc_files_tick(100)
+        self.assertEqual(self.access()[3],3);self.assertEqual(self.access()[6],0)
+        self.assertEqual(self.request(3,path('/data'))[0],3)
+    def test_android_connection_timeout_and_deny_are_distinct_from_pairing(self):
+        a=self.android();token=a[5]
+        for now in range(10100,60101,10000):
+            self.c.cc_test_time(now);self.request(0x30);self.c.cc_files_tick(now)
+        self.assertEqual(self.access()[3],4);self.assertEqual(self.access()[6],0)
+        self.c.cc_test_decide(token,1);self.c.cc_files_tick(60100);self.assertEqual(self.access()[6],0)
+        self.android(1,31);self.assertEqual(self.access()[3],3)
+        self.assertEqual(self.request(0x31,b'pairing is not consent')[0],3)
+
+
 class MemoryLogTests(unittest.TestCase):
+    def test_android_radio_stream_and_pairing_lifecycle(self):
+        with tempfile.TemporaryDirectory(prefix='chaos-connect-radio-') as work:
+            binary=Path(work)/'radio'
+            subprocess.run(['clang','-std=c11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=address,undefined',
+                '-I'+str(ROOT/'supervisor/bridge'),str(ROOT/'supervisor/tests/android_radio_harness.c'),str(ROOT/'supervisor/bridge/chaos_connect.c'),'-o',str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
+
     def test_switch_gate_changes_before_save_or_maintenance(self):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-switch-') as work:
             binary=Path(work)/'switch'
@@ -245,7 +305,7 @@ class MemoryLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-permission-') as work:
             binary=Path(work)/'permissions'
             subprocess.run(['rustc','--edition=2021',str(ROOT/'supervisor/tests/connect_permission_harness.rs'),'-o',str(binary)],check=True)
-            for case in ['default','invalid','persist','mailbox','prompt']:
+            for case in ['default','invalid','persist','mailbox','prompt','android','android-load','android-invalid']:
                 subprocess.run([str(binary),case],check=True)
     def test_ring_wrap_pagination_clear_and_utf8(self):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-log-') as work:

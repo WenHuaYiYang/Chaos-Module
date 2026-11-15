@@ -128,3 +128,12 @@ PING响应8字节：`connected:u8, developer:u8, policy:u8, authorization:u8, to
 新授权token首次到来时（UI维护上下文）调用`screen_turn_on("chaos-connect",26)`唤醒熄屏，并执行系统`vibrate(0x0D)`一次；同token等待系统弹窗释放或用户确认时不反复提醒。震动遵守系统震动设置，授权超时与拒绝规则保留。
 
 固件依据：`0x0CA7323C`读取screen manager的+0x1BC，在OFF路径保留r0/r1传递给`0x0CA717B8`；stock wakelock调用点`0x0CA6E9FC`设置r1=26。ARM探针执行真实screen_turn_on入口，display-owner helper为替身；同时执行真实`0x0C4C8904`验证仅更新row+0x40副标签，row+0x3C主标签不变。亮屏、震动和物理显示仍需真机验收。
+
+## 2026-11-15 Android权限与标准蓝牙
+
+新增独立的 Android 连接确认、五项权限和普通蓝牙 SPP/RFCOMM 入口，原插件载波保留。
+Android `CCA1` HELLO、能力位0x08、GET_ACCESS(0x42)、物理载波来源强制门禁、
+配对窗口/主动向所选手机建bond、固件ABI和验证边界见
+[Android连接与权限](CHAOSCONNECT-ANDROID.md)。
+新增 `/data/chaos/connect-android.cfg` 与 `.tmp` 同样受远程改写/移动保护。
+手机端的真实无线配对与速度仍待硬件验收；本轮不声称已完成远程操控前端。

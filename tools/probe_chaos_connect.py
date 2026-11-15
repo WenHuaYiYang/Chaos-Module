@@ -18,7 +18,7 @@ def main():
             out=tmp/(Path(src).stem+'.o');objects.append(str(out))
             subprocess.run(['clang','--target=arm-none-eabi','-mcpu=cortex-m33','-mthumb','-mfloat-abi=soft','-ffreestanding','-fno-builtin','-ffunction-sections','-fdata-sections','-O2','-I'+str(ROOT/'supervisor/bridge'),'-c',str(ROOT/src),'-o',str(out)],check=True)
         elf=tmp/'probe.elf';sysroot=Path(subprocess.check_output(['rustc','--print','sysroot'],text=True).strip());host=next(x.split(': ',1)[1] for x in subprocess.check_output(['rustc','-vV'],text=True).splitlines() if x.startswith('host:'));lld=sysroot/'lib/rustlib'/host/'bin/rust-lld'
-        subprocess.run([str(lld),'-flavor','gnu','-Ttext=0x10000000','--gc-sections','--entry=chaos_bridge_start','-u','chaos_bridge_stop','-u','chaos_bridge_set_enabled','-u','test_dispatches','-u','test_resets','-u','test_chunk',*objects,'-o',str(elf)],check=True)
+        subprocess.run([str(lld),'-flavor','gnu','-Ttext=0x10000000','--gc-sections','--entry=chaos_bridge_start','-u','chaos_bridge_stop','-u','chaos_bridge_set_enabled','-u','test_dispatches','-u','test_resets','-u','test_chunk','-u','test_android',*objects,'-o',str(elf)],check=True)
         with elf.open('rb') as stream:
             e=ELFFile(stream);pages=set()
             for s in e.iter_segments():
@@ -40,6 +40,9 @@ def main():
         m.hooks[0xc587ed0]=lambda u:0x2005e000
         m.hooks[0xc588128]=lambda u:0
         m.hooks[0xc2e3994]=lambda u:0;m.hooks[0xc2e3b84]=lambda u:0
+        # SPP adapter/socket lifecycle is exercised in its separate ABI probe
+        # and production host harness; this probe isolates the legacy carrier.
+        m.hooks[0xc3af1a8]=lambda u:0
         original=[]
         m.hooks[0xc7d6e6c]=lambda u:original.append((u.reg_read(UC_ARM_REG_R1),bytes(m.u.mem_read(u.reg_read(UC_ARM_REG_R3),word(u.reg_read(UC_ARM_REG_SP)))))) or 0
         # Real L2 crypto wrapper calls real AES-CTR wrapper. Only AES primitive
@@ -130,6 +133,24 @@ def main():
         call(syms['chaos_bridge_stop'])
         # A third-party handler is never overwritten.
         m.put(conn+12,0x10070001);call(syms['chaos_bridge_set_enabled'],1);call(syms['chaos_bridge_start']);call(syms['owner_tick']);assert word(conn+12)==0x10070001
+        # Standard SPP uses the same real ARM stream parser and owner queue.
+        # Even an empty legacy HELLO is forced to Android by physical provenance.
+        raw_pipe=0x2005f000
+        m.put(syms['radio_pipe'],raw_pipe);m.put(syms['radio_ready'],1);m.put(syms['radio_generation'],71)
+        raw=packet(frame(1,1),0x9abc0001);stream=struct.pack('<I',len(raw))+raw
+        m.u.mem_write(buf,stream);before_raw=word(syms['test_dispatches'])
+        for at in range(len(stream)):call(syms['radio_read'],raw_pipe,buf+at,1)
+        call(syms['owner_tick'])
+        assert word(syms['test_dispatches'])==before_raw+1 and word(syms['test_android'])==1
+        raw_writes=[]
+        m.hooks[0xc3a9bfc]=lambda u:raw_writes.append(bytes(m.u.mem_read(u.reg_read(UC_ARM_REG_R1),u.reg_read(UC_ARM_REG_R2)))) or 0
+        call(syms['bt_tick']);assert len(raw_writes)==1
+        record=raw_writes[0];assert struct.unpack_from('<I',record)[0]==len(record)-4 and b'CCN1' in record[4:]
+        call(syms['radio_written'],raw_pipe,0,0)
+        call(syms['chaos_bridge_set_enabled'],0)
+        m.u.mem_write(buf,stream);call(syms['radio_read'],raw_pipe,buf,len(stream));call(syms['owner_tick'])
+        assert word(syms['test_dispatches'])==before_raw+1
+        print('PASS production ARM SPP stream/owner queue, physical Android provenance, framed reply, immediate disabled gate')
         # Execute the actual .043 msgbox factory/constructor used by the consent
         # overlay. Only lower LVGL allocation/style/list primitives are seams.
         # mode=0 must skip page lifecycle attachment (0xc4c9eb4's null branch),

@@ -8,6 +8,7 @@ fn with<T>(f:impl FnOnce(&mut Fixture)->T)->T{f(FIX.lock().unwrap().as_mut().unw
 #[macro_export]macro_rules! st_wr{($e:expr,$v:expr)=>{core::ptr::write_volatile(core::ptr::addr_of_mut!($e),$v)};}
 mod state{pub static mut BRIDGE_STATE:u32=0;}
 mod connect_log{pub unsafe fn line(_: &str){}}
+mod connect_radio{pub fn ensure_worker(){}}
 mod connect_permission{
     pub unsafe fn load(){}
     pub fn disconnect(){super::with(|f|{assert!(!f.gate);f.revoked=true;f.events.push("revoke".into());});}

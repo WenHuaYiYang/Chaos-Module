@@ -25,8 +25,12 @@ int cc_pb_wrap(uint8_t *out,uint32_t cap,const uint8_t *frame,uint32_t len,uint3
 int cc_reply(uint8_t flags,uint8_t op,uint8_t status,uint16_t req,const void *data,uint32_t len);
 void cc_files_dispatch(const struct cc_frame *frame);
 void cc_files_reset(void);
+/* Physical transport provenance is mandatory: raw Android cannot impersonate
+ * the legacy already-authenticated Xiaomi plugin by sending an empty HELLO. */
+void cc_files_set_android(uint32_t android_client);
 void cc_files_set_chunk(uint16_t chunk);
 /* Owner-loop maintenance; returns 1 when the plugin presence lease expired. */
 int cc_files_tick(uint32_t now);
+uint32_t chaos_bridge_enabled(void);
 void chaos_bridge_set_enabled(uint32_t enabled);
 #endif

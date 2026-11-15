@@ -87,6 +87,7 @@ pub(crate) unsafe fn tick() {
     load();
     let state = st_rd!(BRIDGE_STATE);
     if ENABLED != 0 {
+        crate::connect_radio::ensure_worker();
         if state == 0 {
             let rc = chaos_bridge_start();
             st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
