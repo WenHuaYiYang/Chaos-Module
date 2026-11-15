@@ -10,7 +10,7 @@ static void submit(uint32_t layer,const void *p,const int *area) {
     const uint32_t *d=p;
     assert(layer==99 && d[7]==77);
     assert(d[12]==expected_scale && d[13]==expected_scale && d[16]==0 && d[17]==0);
-    assert(((const unsigned char *)p)[76]==192);
+    assert(((const unsigned char *)p)[76]==191);
     assert(area[0]==-10 && area[1]==70);
     assert((unsigned)(area[2]-area[0]+1)==expected_w);
     assert((unsigned)(area[3]-area[1]+1)==expected_h);
@@ -20,6 +20,7 @@ static uintptr_t native(uint32_t address) {
     if(address==0x0c5882b9u)return (uintptr_t)initialize;
     assert(address==0x0c5882a1u);return (uintptr_t)submit;
 }
+#define CC_PARAM(i) ((i)==3?75u:0u)
 #define P67_NATIVE(address) native(address)
 #include CHAOS_CC_SUBMIT_SOURCE
 int main(void) {

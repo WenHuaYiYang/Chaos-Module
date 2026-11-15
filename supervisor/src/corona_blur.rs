@@ -126,6 +126,7 @@ pub(crate) unsafe fn backgrounds_commit(enabled: bool, region_mask: u32) -> i32 
 }
 
 pub(crate) unsafe fn backgrounds_poll() {
+    crate::blur_params::apply();
     chaos_blur_control_buttons_set((v2_enabled() && crate::cc_buttons_config::enabled()) as u32);
     let _ = chaos_blur_select_algorithm(1);
     chaos_corona_backgrounds_poll();

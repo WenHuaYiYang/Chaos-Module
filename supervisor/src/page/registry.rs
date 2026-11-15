@@ -78,6 +78,7 @@ pub(crate) enum Pid {
     ConnectDevPolicy = 49,
     Files = 50,
     FileDetail = 51,
+    BlurParams = 52,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -174,4 +175,5 @@ pages! {
     ConnectDevPolicy = 49, PAGE_CONNECT_DEV_POLICY, connect::POLICY;
     Files = 50, PAGE_FILES, super::file_manager::FILES;
     FileDetail = 51, PAGE_FILE_DETAIL, super::file_manager::DETAIL;
+    BlurParams = 52, PAGE_BLUR_PARAMS, super::blur_params::PAGE;
 }

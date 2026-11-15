@@ -7,11 +7,19 @@
 #include "control_center_button_pixels.h"
 #define CC_BUTTON_LIMIT 16u
 #define CC_BUTTON_CLASS 0x2cdb9d6cu
-struct cc_button { uint32_t object,root,generation,image,stamp; unsigned ready,w,h,radius,scale,original_opa,tinted; int x,y; };
+struct cc_button { uint32_t object,root,generation,image,stamp; unsigned ready,w,h,radius,scale,original_opa,applied_opa,tinted; int x,y; };
 static struct cc_button cc_buttons[CC_BUTTON_LIMIT];
 static uint32_t cc_serial,cc_draws,cc_updates,cc_failures;
 static unsigned cc_working;
 static unsigned cc_scan_ticks;
+#ifndef CC_PARAM
+static uint32_t cc_default_params[6]={12,70,44,75,38,500};
+#define CC_PARAM(i) cc_default_params[i]
+#define CC_PARAM_EPOCH() 1u
+#endif
+static uint32_t cc_atlas[CC_ATLAS_W*CC_ATLAS_H] __attribute__((aligned(64)));
+static uint32_t cc_atlas_source,cc_atlas_params,cc_atlas_serial,cc_frame_updates,cc_last_capture;
+static unsigned cc_atlas_ready;
 static void cc_button_event(void *event);
 
 #ifndef CHAOS_CC_BUTTONS_HOST
@@ -70,7 +78,10 @@ static void cc_set_opacity(uint32_t object,unsigned opacity) {
         P67_NATIVE(0x0c5883f9u))(object,opacity,0);
 }
 static int cc_fence(void) { return p67_blur_native_fence() && cc_idle(); }
-static int cc_moving(void) { return p67_surfaces[0].moving; }
+extern uint32_t chaos_blur_monotonic_ms(void),chaos_blur_screen_on(void);
+static uint32_t cc_now(void) { return chaos_blur_monotonic_ms(); }
+static unsigned cc_awake(void) { return chaos_blur_screen_on(); }
+static void cc_request_source(void) { p67_blur_request();p67_wake_pending=1; }
 static uint32_t cc_alloc(unsigned w,unsigned h) {
     return ((uint32_t (*)(uint32_t,uint32_t,uint32_t,uint32_t))(uintptr_t)
         P67_NATIVE(0x0c587f39u))(w,h,16,0);
@@ -95,8 +106,8 @@ static int cc_buffer(uint32_t image,unsigned w,unsigned h,unsigned char **out,un
 static void cc_sync(uint32_t image) {
     /* A reused descriptor may have cached header/decoded metadata. */
     ((void (*)(uint32_t))(uintptr_t)P67_NATIVE(0x0c5890d1u))(image);
-    p67_blur_native_clean();
 }
+static void cc_flush(void) { p67_blur_native_clean(); }
 static int cc_source(struct cc_pixels *pixels,uint32_t *stamp) {
     struct p67_blur_pixel_view view;
     if(!p67_blur_source || !p67_blur_native_descriptor((uint32_t)p67_blur_source,15,&view)) return 0;
@@ -116,7 +127,7 @@ static void cc_submit(uint32_t layer,uint32_t image,const int *area) {
     descriptor[16]=descriptor[17]=0;
     /* Stronger official blue/pressed-state contribution, while the bounded
      * dark glass above it keeps white icons readable on bright wallpaper. */
-    ((unsigned char *)descriptor)[76]=192u;
+    ((unsigned char *)descriptor)[76]=(unsigned char)((CC_PARAM(3)*255u+50u)/100u);
     ((void (*)(uint32_t,const void *,const int *))(uintptr_t)
         P67_NATIVE(0x0c5882a1u))(layer,descriptor,source_area);
 }
@@ -160,12 +171,96 @@ static void cc_detach(struct cc_button *b) {
     uint32_t object=b->object,generation=b->generation;
     b->ready=0;b->object=0;
     if(!object || !cc_live(object)) return;
-    if(b->tinted && cc_opacity(object)==96u) cc_set_opacity(object,b->original_opa);
+    if(b->tinted && cc_opacity(object)==b->applied_opa) cc_set_opacity(object,b->original_opa);
     b->tinted=0;
     if(!cc_live(object)) return;
     uint32_t *record=cc_record(object);
     if(record && record[1]==generation && record[2]==0) cc_remove(object);
     if(cc_live(object)) cc_invalidate(object);
+}
+static void cc_update_pixels(int frame) {
+    struct cc_pixels source;uint32_t stamp=0;
+    uint32_t root=cc_root_slot();
+    /* Retirement must work even after demand or the source disappeared. */
+    unsigned fenced=0;
+    if(!frame) for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
+        struct cc_button *b=&cc_buttons[i];
+        if(!b->object && b->image) {
+            if(!fenced) {if(!cc_fence())return;fenced=1;}
+            uint32_t old=b->image;b->image=0;b->ready=0;cc_free(old);
+        }
+    }
+    if(!cc_wanted() || !cc_awake() || !root || !cc_source(&source,&stamp)) return;
+    int atlas_dirty=!cc_atlas_ready || cc_atlas_source!=stamp || cc_atlas_params!=CC_PARAM_EPOCH();
+    uint32_t changed[CC_BUTTON_LIMIT]={0},generations[CC_BUTTON_LIMIT]={0};
+    unsigned visible=0,flushed=0;
+    for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
+        struct cc_button *b=&cc_buttons[i];
+        if(!b->object) continue;
+        if(b->root!=root || !cc_attached(b->object,root)) continue;
+        int area[4];cc_coords(b->object,area);
+        int w=area[2]-area[0]+1,h=area[3]-area[1]+1;
+        if(w<1 || h<1 || w>160 || h>128 || area[0]>335 || area[1]>479 || area[2]<0 || area[3]<0) continue;
+        ++visible;
+        if(frame && !b->ready) continue;
+        unsigned radius=frame?b->radius:cc_radius(b->object);
+        unsigned tint=(CC_PARAM(4)*255u+50u)/100u;
+        int shape=!b->ready || b->w!=(unsigned)w || b->h!=(unsigned)h || b->radius!=radius;
+        if(frame && shape) continue;
+        uint32_t object=b->object,generation=b->generation,current_stamp;
+        if(!frame && b->tinted && b->applied_opa!=tint) {
+            if(cc_opacity(b->object)==b->applied_opa) cc_set_opacity(b->object,tint);
+            if(b->object!=object || b->generation!=generation) continue;
+            b->applied_opa=tint;
+        }
+        if(!shape && !atlas_dirty && b->stamp==cc_atlas_serial && (!frame || (b->x==area[0] && b->y==area[1]))) continue;
+        if(!fenced) {if(!cc_fence())break;fenced=1;}
+        if(!cc_wanted() || cc_root_slot()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
+        if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
+        if(atlas_dirty) {
+            if(!cc_build_atlas(&source,cc_atlas,CC_PARAM(2))) {++cc_failures;break;}
+            cc_atlas_source=stamp;cc_atlas_params=CC_PARAM_EPOCH();++cc_atlas_serial;
+            cc_atlas_ready=1;atlas_dirty=0;
+        }
+        if(b->image && (b->w!=(unsigned)w || b->h!=(unsigned)h)) {
+            uint32_t old=b->image;b->image=0;b->ready=0;cc_free(old);
+            if(b->object!=object || b->generation!=generation) continue;
+        }
+        unsigned scale=!(w&1) && !(h&1)?2u:1u;
+        unsigned tw=(unsigned)w/scale,th=(unsigned)h/scale;
+        if(!b->image) {if(frame)continue;b->image=cc_alloc(tw,th);}
+        if(b->object!=object || b->generation!=generation || !b->image) {++cc_failures;continue;}
+        unsigned char *out;unsigned stride,size;
+        if(!cc_buffer(b->image,tw,th,&out,&stride,&size) ||
+           (shape && !cc_prepare_mask(out,tw,th,stride,size,radius/scale)) ||
+           !cc_copy_atlas(cc_atlas,out,tw,th,stride,size,area[0],area[1],scale)) {
+            b->ready=0;++cc_failures;continue;
+        }
+        if(shape) cc_sync(b->image);
+        if(b->object!=object || b->generation!=generation) continue;
+        b->w=(unsigned)w;b->h=(unsigned)h;b->x=area[0];b->y=area[1];
+        b->radius=radius;b->scale=scale;b->stamp=cc_atlas_serial;b->ready=1;
+        ++cc_updates;if(frame)++cc_frame_updates;changed[i]=object;generations[i]=generation;
+        if(!frame && !b->tinted) {
+            b->original_opa=cc_opacity(object);b->applied_opa=tint;b->tinted=1;
+            cc_set_opacity(object,tint);
+        }
+    }
+    for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) if(changed[i]) {
+        if(!flushed) {cc_flush();flushed=1;}
+        if(cc_buttons[i].object==changed[i] && cc_buttons[i].generation==generations[i] &&
+           cc_root_slot()==root) cc_invalidate(changed[i]);
+    }
+    /* Source capture is bounded separately from sprite updates. Replenish the
+     * existing safe START budget; never capture a framebuffer containing icons. */
+    if(!frame && visible) {
+        uint32_t now=cc_now();
+        if(now-cc_last_capture>=CC_PARAM(5)) {cc_last_capture=now;cc_request_source();}
+    }
+}
+static void cc_buttons_frame(void) {
+    if(cc_working || !cc_wanted() || !cc_resources() || !cc_idle()) return;
+    cc_working=1;cc_update_pixels(1);cc_working=0;
 }
 static void cc_buttons_poll(void) {
     if(!cc_wanted() && !cc_resources()) return;
@@ -176,7 +271,10 @@ static void cc_buttons_poll(void) {
         for(unsigned i=0;i<CC_BUTTON_LIMIT;++i)
             if(cc_buttons[i].image && !cc_buttons[i].object) complete=0;
             else if(cc_buttons[i].object && !cc_buttons[i].ready) complete=0;
-        if(complete && ++cc_scan_ticks<=8u) return;
+        if(complete && ++cc_scan_ticks<=8u) {
+            if(!cc_working && cc_idle()) {cc_working=1;cc_update_pixels(0);cc_working=0;}
+            return;
+        }
     }
     if(cc_working || !cc_idle()) return;
     cc_working=1;
@@ -208,57 +306,8 @@ static void cc_buttons_poll(void) {
         uint32_t *record=cc_record(object);
         if(!added || !record || record[1]!=generation || record[2]!=0) cc_detach(b);
     }
-    /* One fence per changed batch, not one fence or snapshot per button/frame. */
-    struct cc_pixels source;uint32_t stamp=0;
-    int have_source=root && cc_source(&source,&stamp),fenced=0;
-    for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
-        struct cc_button *b=&cc_buttons[i];
-        if(!b->object) {
-            if(b->image) {
-                if(!fenced) { if(!cc_fence()) break;fenced=1; }
-                uint32_t old=b->image;b->image=0;b->ready=0;cc_free(old);
-            }
-            continue;
-        }
-        if(!have_source || !cc_attached(b->object,root)) continue;
-        int area[4];cc_coords(b->object,area);
-        int w=area[2]-area[0]+1,h=area[3]-area[1]+1;
-        if(w<1 || h<1 || w>160 || h>128) continue;
-        unsigned radius=cc_radius(b->object);
-        if(b->ready && b->stamp==stamp &&
-           b->w==(unsigned)w && b->h==(unsigned)h && b->radius==radius) continue;
-        /* Position-only movement never regenerates pixels. Source publication
-         * or shape changes update the cache only outside native panel motion. */
-        if(cc_moving()) continue;
-        uint32_t object=b->object,generation=b->generation,current_stamp;
-        if(!fenced) { if(!cc_fence()) break;fenced=1; }
-        if(!cc_wanted() || cc_root_slot()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
-        if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
-        if(b->image && (b->w!=(unsigned)w || b->h!=(unsigned)h)) {
-            uint32_t old=b->image;b->image=0;b->ready=0;cc_free(old);
-            if(b->object!=object || b->generation!=generation) continue;
-        }
-        unsigned scale=!(w&1) && !(h&1)?2u:1u;
-        unsigned tw=(unsigned)w/scale,th=(unsigned)h/scale;
-        if(!b->image) b->image=cc_alloc(tw,th);
-        if(b->object!=object || b->generation!=generation || !b->image) { ++cc_failures;continue; }
-        unsigned char *out;unsigned stride,size;
-        int x=area[0]<0?0:area[0]>336-w?336-w:area[0];
-        int y=area[1]<0?0:area[1]>480-h?480-h:area[1];
-        if(!cc_buffer(b->image,tw,th,&out,&stride,&size) ||
-           !cc_glass_pixels_scaled(&source,out,tw,th,stride,size,x,y,radius/scale,scale)) {
-            b->ready=0;++cc_failures;continue;
-        }
-        cc_sync(b->image);
-        if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
-        b->w=(unsigned)w;b->h=(unsigned)h;b->x=area[0];b->y=area[1];
-        b->radius=radius;b->scale=scale;b->stamp=stamp;b->ready=1;++cc_updates;
-        if(!b->tinted) {
-            b->original_opa=cc_opacity(object);b->tinted=1;
-            cc_set_opacity(object,96u);
-        }
-        if(b->object==object && b->generation==generation) cc_invalidate(object);
-    }
+    cc_update_pixels(0);
+
 done:
     cc_working=0;
 }

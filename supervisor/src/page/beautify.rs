@@ -63,6 +63,7 @@ static BEAUTIFY_ROWS: &[RowModel] = &[
     RowModel::section("模糊与背景\0".as_bytes()),
     RowModel::nav("系统模糊\0".as_bytes(), Pid::Blur as u32),
     RowModel::nav("模糊区域\0".as_bytes(), Pid::BlurZone as u32),
+    RowModel::nav("模糊V2参数\0".as_bytes(), Pid::BlurParams as u32),
     RowModel::toggle("重启恢复字体和图标\0".as_bytes(), &RESTORE_FONT_DEF),
     RowModel::toggle("重启恢复模糊\0".as_bytes(), &RESTORE_BLUR_DEF),
 ];

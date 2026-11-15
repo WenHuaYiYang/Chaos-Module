@@ -56,6 +56,21 @@ int main(void) {
         unsigned char *p=full+y*1024+x*3;
         assert(p[0]==p[1]&&p[1]==p[2]);
     }
+    /* Configured radius uses the production filter, including endpoints. */
+    for(unsigned radius=1;radius<=40;radius+=39) {
+        memcpy(v2,input,sizeof(input));
+        for(unsigned i=0;i<84*120;i++) {
+            unsigned v=input[i];
+            reference_color[i*3]=(unsigned char)(((v&31)*255+15)/31);
+            reference_color[i*3+1]=(unsigned char)((((v>>5)&63)*255+31)/63);
+            reference_color[i*3+2]=(unsigned char)(((v>>11)*255+15)/31);
+        }
+        cfg.radius=radius;assert(syspatch_blur_run(&b,&cfg));
+        chaos_v2_params[0]=radius;
+        assert(chaos_blur_filter(v2,work,84,120,2,2,100));
+        assert(!memcmp(chaos_v2_color,reference_color,sizeof(reference_color)));
+    }
+    chaos_v2_params[0]=12;
     assert(!chaos_blur_filter(0,work,84,120,2,2,70));
     assert(!chaos_blur_filter(v2,work,85,120,2,2,70));
     return 0;

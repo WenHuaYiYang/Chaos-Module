@@ -20,6 +20,7 @@ mod connect_log;
 mod watchface;
 mod settings;
 mod beautify;
+pub(crate) mod blur_params;
 mod appmgr;
 mod about;
 mod system;

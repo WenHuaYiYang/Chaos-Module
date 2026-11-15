@@ -34,6 +34,25 @@ fn dimmer_keyboard_only_exposes_digits_and_edit_actions() {
     }
 }
 
+#[test]
+fn blur_parameters_use_digits_and_dispatch_to_parameter_page() {
+    let _lock=mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        mock::reset();open(b"12\0".as_ptr(),Completion::BlurParam);
+        assert!(numeric_mode());assert!(!chinese_capable() && !symbols_enabled());
+        assert_eq!(title(),b"Blur parameter\0");
+        let parent=fw_api::obj_create(0,0);assert!(render(parent));
+        let codes:Vec<u32>=mock::with(|ui|ui.objects.iter().filter_map(|o|o.code).collect());
+        assert_eq!(codes.len(),13);
+        for c in b'0'..=b'9'{assert!(codes.contains(&(c as u32)));}
+        press(b'x' as u32);assert_eq!(input(),b"12");
+        mock::with(|ui|ui.save_ok=false);press(KEY_DONE);
+        mock::with(|ui|{assert_eq!(ui.saves.last(),Some(&(7,b"12".to_vec())));assert_eq!(ui.back_count,0);});
+        mock::with(|ui|ui.save_ok=true);press(KEY_DONE);press(KEY_DONE);
+        mock::with(|ui|{assert_eq!(ui.back_count,1);assert_eq!(ui.saves.len(),2);});
+    }
+}
+
 // 横滑键盘：parent -> viewport -> board(640 宽)。setup 返回 (parent, board)。
 // 中文页候选条固定在 parent 上（y=56），不在 viewport 里。
 unsafe fn setup(completion: Completion) -> (u32, u32) {

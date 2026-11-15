@@ -7,10 +7,13 @@
 #define CHAOS_CC_BUTTONS_HOST 1
 struct node {uint32_t id,parent,clz,record[3];int live,hidden,area[4];unsigned radius,opacity;};
 static struct node nodes[6];
-static unsigned wanted,idle=1,fence_ok=1,moving,source_ready=1,stamp=1;
+static unsigned wanted,idle=1,fence_ok=1,source_ready=1,stamp=1;
 static unsigned fences,allocs,frees,syncs,draws,fail_alloc,fail_add,bad_buffer,delete_alloc;
 static uint32_t root=10;
-static unsigned root_checks,walks;
+static unsigned root_checks,walks,flushes,requests,now_ms,awake=1;
+static uint32_t params[6]={12,70,44,75,38,500},params_epoch=1;
+#define CC_PARAM(i) params[i]
+#define CC_PARAM_EPOCH() params_epoch
 static unsigned char source_pixels[336*480*3];
 static struct image {unsigned used,w,h;unsigned char *pixels;} images[40];
 static void cc_button_event(void *);
@@ -32,7 +35,10 @@ static unsigned cc_radius(uint32_t id){return node(id)->radius;}
 static unsigned cc_opacity(uint32_t id){return node(id)->opacity;}
 static void cc_set_opacity(uint32_t id,unsigned opacity){assert(cc_live(id));node(id)->opacity=opacity;}
 static int cc_fence(void){assert(idle);++fences;return fence_ok;}
-static int cc_moving(void){return moving;}
+static unsigned cc_awake(void){return awake;}
+static uint32_t cc_now(void){return now_ms;}
+static void cc_request_source(void){++requests;}
+static void cc_flush(void){++flushes;}
 static void erase(uint32_t id){struct node *n=node(id);uint32_t e[5]={id,id,36,n->record[1],0};cc_button_event(e);n->live=0;n->record[0]=0;}
 static uint32_t cc_alloc(unsigned w,unsigned h){
     assert(fences && idle);if(fail_alloc)return 0;
@@ -62,26 +68,43 @@ int main(void){
     assert(!node(13)->record[0]&&!node(14)->record[0]);
     assert(images[cc_buttons[0].image].pixels[3]==0);
     draw(11);draw(12);assert(draws==2);
-    assert(node(11)->opacity==96 && node(12)->opacity==96);
+    assert(node(11)->opacity==97 && node(12)->opacity==97);
     assert(images[cc_buttons[0].image].w==78 && images[cc_buttons[0].image].h==64);
     unsigned checks=root_checks,scans=walks;
     for(unsigned i=0;i<100;++i) draw(11);
     assert(root_checks==checks && walks==scans);draws-=100;
     unsigned f=fences,u=cc_updates;cc_buttons_poll();assert(fences==f&&cc_updates==u);
-    unsigned allocated=allocs,walk_before=walks;
-    /* List scrolling does not set the outer panel moving flag. Positions
-     * change every frame: it still must never copy/fence/reallocate. */
-    for(unsigned i=0;i<120;++i) {
-        node(11)->area[1]=20-(int)i;node(11)->area[3]=147-(int)i;
-        cc_buttons_poll();draw(11);
+    unsigned allocated=allocs,synced=syncs,walk_before=walks,flushed=flushes;
+    for(unsigned y=0;y<480;++y)for(unsigned x=0;x<336;++x)
+        memset(source_pixels+y*1008+x*3,y/2,3);
+    ++stamp;cc_buttons_frame();u=cc_updates;f=fences;flushed=flushes;
+    /* Native START sees updated coordinates every frame, even if owner poll
+     * has not run. No allocation, decoder eviction or tree scanning. */
+    for(unsigned i=1;i<=120;++i) {
+        node(11)->area[1]=20+(int)i;node(11)->area[3]=147+(int)i;
+        node(12)->area[0]=88+(int)(i%20);node(12)->area[2]=247+(int)(i%20);
+        cc_buttons_frame();draw(11);
+        assert(fences==f+i && flushes==flushed+i && cc_updates==u+i*2);
+        struct cc_button *b=&cc_buttons[0];
+        unsigned char *center=images[b->image].pixels+32*78*4+39*4;
+        assert(center[0]==(unsigned)((((20+i+64)/2)*44+50)/100));
     }
-    assert(fences==f && cc_updates==u && allocs==allocated);
-    assert(walks-walk_before<=16);draws-=120;
+    assert(allocs==allocated && syncs==synced && walks==walk_before);draws-=120;
+    f=fences;u=cc_updates;cc_buttons_frame();assert(fences==f&&cc_updates==u);
+    for(unsigned i=0;i<120;++i)cc_buttons_poll();assert(walks-walk_before<=16);
+    now_ms=499;cc_buttons_poll();assert(requests==0);
+    now_ms=500;cc_buttons_poll();assert(requests==1);
+    now_ms=999;cc_buttons_poll();assert(requests==1);
+    now_ms=1000;cc_buttons_poll();assert(requests==2);
+    ++stamp;cc_buttons_frame();assert(cc_updates==u+2);
+    unsigned serial=cc_atlas_serial;
+    params[2]=80;params[4]=20;++params_epoch;cc_buttons_poll();
+    assert(cc_atlas_serial==serial+1 && node(11)->opacity==51);
+    params[2]=44;params[4]=38;++params_epoch;cc_buttons_poll();assert(node(11)->opacity==97);
     node(11)->area[1]=20;node(11)->area[3]=147;
-    node(11)->area[0]++;node(11)->area[2]++;moving=1;cc_buttons_poll();draw(11);
-    assert(fences==f&&cc_updates==u&&draws==3);
-    moving=0;cc_scan_ticks=0;cc_buttons_poll();assert(cc_updates==u);
-    ++stamp;cc_scan_ticks=0;cc_buttons_poll();assert(cc_updates==u+2);
+    awake=0;now_ms=10000;cc_buttons_poll();assert(requests==2);awake=1;
+    now_ms=10000;node(11)->hidden=node(12)->hidden=1;cc_buttons_poll();assert(requests==2);
+    node(11)->hidden=node(12)->hidden=0;
     node(11)->record[0]=0;cc_scan_ticks=0;cc_buttons_poll();cc_scan_ticks=0;cc_buttons_poll();
     assert(node(11)->record[0]);
     unsigned rebound=0;for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) rebound+=cc_buttons[i].object==11 && cc_buttons[i].ready;
@@ -89,20 +112,20 @@ int main(void){
     uint32_t stale_generation=node(11)->record[1];erase(11);
     assert(allocs>frees);cc_buttons_poll();assert(cc_resources()==1);
     node(11)->live=1;node(11)->opacity=255;cc_scan_ticks=0;cc_buttons_poll();assert(node(11)->record[1]!=stale_generation);
-    uint32_t stale[5]={11,11,36,stale_generation,0};cc_button_event(stale);draw(11);assert(draws==4);
-    wanted=0;idle=0;draw(11);cc_buttons_poll();assert(draws==4&&cc_cleanup_pending());
+    uint32_t stale[5]={11,11,36,stale_generation,0};cc_button_event(stale);draw(11);assert(draws==3);
+    wanted=0;idle=0;draw(11);cc_buttons_poll();assert(draws==3&&cc_cleanup_pending());
     idle=1;fence_ok=0;cc_buttons_poll();assert(cc_cleanup_pending()&&allocs>frees);
-    empty();
-    source_ready=0;wanted=1;cc_buttons_poll();u=allocs;draw(11);assert(allocs==u&&draws==4);
+    source_ready=0;empty();source_ready=1;
+    source_ready=0;wanted=1;cc_buttons_poll();u=allocs;draw(11);assert(allocs==u&&draws==3);
     source_ready=1;fail_alloc=1;cc_buttons_poll();assert(allocs==u);fail_alloc=0;
     cc_buttons_poll();assert(allocs==u+2);empty();
     wanted=1;fail_add=1;cc_buttons_poll();assert(!cc_resources());fail_add=0;
     delete_alloc=1;cc_scan_ticks=0;cc_buttons_poll();assert(!node(11)->live);cc_buttons_poll();empty();
-    node(11)->live=1;node(11)->opacity=255;wanted=1;bad_buffer=1;cc_buttons_poll();draw(11);assert(draws==4);
-    bad_buffer=0;cc_scan_ticks=0;cc_buttons_poll();draw(11);assert(draws==5);
+    node(11)->live=1;node(11)->opacity=255;wanted=1;bad_buffer=1;cc_buttons_poll();draw(11);assert(draws==3);
+    bad_buffer=0;cc_scan_ticks=0;cc_buttons_poll();draw(11);assert(draws==4);
     node(11)->opacity=77; /* a later owner changed the property */
     root=20;cc_buttons_poll();assert(cc_resources()==1 && node(14)->record[0]);
     assert(node(11)->opacity==77);node(11)->opacity=255;
     empty();
-    puts("CC native button lifecycle: no-input/style replacement, cached glass, scroll stability, epochs, stale DELETE, failed fence/allocation/registration and shutdown passed");
+    puts("CC native button lifecycle: no-input/style replacement, live glass, bounded frame work, epochs, stale DELETE, failed fence/allocation/registration and shutdown passed");
 }

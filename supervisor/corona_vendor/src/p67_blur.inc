@@ -265,6 +265,9 @@ static void p67_blur_display_unbind(void) {
  if(valid) (void)P67_BLUR_DISPLAY_REMOVE(display,p67_blur_display_event);
 }
 
+#ifndef P67_BLUR_FRAME_READY
+#define P67_BLUR_FRAME_READY() ((void)0)
+#endif
 static void p67_blur_display_event(void *event) {
  uint32_t display=*(uint32_t *)event;
  unsigned code=*(uint16_t *)((char *)event+8)&0x7fffu;
@@ -299,6 +302,7 @@ static void p67_blur_display_event(void *event) {
  }
  if(code!=52) return;
  ++p67_blur_frame52;
+ P67_BLUR_FRAME_READY();
  if(!P67_BLUR_AVAILABLE) {
   if(p67_blur_armed || p67_blur_cleanup_armed) {
    p67_blur_armed=0; p67_blur_request_wake=0; p67_blur_cleanup_armed=0;

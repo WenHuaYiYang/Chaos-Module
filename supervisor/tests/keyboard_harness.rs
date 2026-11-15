@@ -50,6 +50,15 @@ mod dimmer_timeout {
     }
 }
 
+mod page { pub mod blur_params {
+    pub unsafe fn title() -> &'static [u8] {b"Blur parameter\0"}
+    pub unsafe fn error_text() -> *const u8 {b"1~40\0".as_ptr()}
+    pub unsafe fn save(text:*const u8)->bool {
+        let bytes=std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| {ui.saves.push((7,bytes));ui.save_ok})
+    }
+}}
+
 macro_rules! completion_mock {
     ($name:ident, $index:expr) => {
         mod $name {

@@ -1,6 +1,9 @@
 #include "../corona_vendor/include/resource_hook_blur.h"
 #include "syspatch_blur.c"
 static unsigned chaos_v2_algorithm;
+/* Radius, background %, button %, glass %, native tint %, source interval ms. */
+static uint32_t chaos_v2_params[6]={12,70,44,75,38,500};
+static uint32_t chaos_v2_params_epoch=1;
 static unsigned char chaos_v2_color[84*130*3];
 static unsigned chaos_v2_color_valid,chaos_v2_width,chaos_v2_height;
 static void chaos_v2_snapshot(const unsigned char *data,unsigned stride) {
@@ -48,7 +51,7 @@ static int chaos_blur_filter(uint16_t *src, uint16_t *tmp, unsigned w, unsigned 
     chaos_v2_color_valid=0;chaos_v2_width=w;chaos_v2_height=h;
     syspatch_blur_buf_t buffer={chaos_v2_color,w,h,w*3,3};
     syspatch_blur_cfg_t config;
-    syspatch_blur_cfg_default(&config); config.radius=12;
+    syspatch_blur_cfg_default(&config); config.radius=chaos_v2_params[0];
     config.quality=SYSPATCH_BLUR_QUALITY_PRECISION;config.skip=1;
     syspatch_blur_run(&buffer,&config);
     for (unsigned i=0;i<w*h;i++) {

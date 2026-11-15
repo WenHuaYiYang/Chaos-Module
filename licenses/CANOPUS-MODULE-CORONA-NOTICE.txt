@@ -119,3 +119,12 @@ b242f957ca9884a56737d156999238c7bf4925d4913e9cc11780d947ef265a78  supervisor/tes
   current hash is pinned in supervisor/tests/corona/upstream.sha256.
   supervisor/control_center_buttons.inc integrates native button DRAW/DELETE
   ownership and V2 pixel crops. This integration remains AGPL-3.0-only.
+
+2026-11-15: live V2 control-center glass and configurable material
+  supervisor/corona_vendor/src/p67_blur.inc additionally calls the default-noop
+  P67_BLUR_FRAME_READY extension at display START (event 52). Chaos binds it
+  to bounded updates of already-owned button textures. Unconfigured upstream
+  integrations retain their previous behavior. The original reviewed hash
+  remains above/in ADAPTED; the current derivative hash remains pinned in
+  supervisor/tests/corona/upstream.sha256. This extension, configurable V2
+  material integration and the surrounding p67 lifecycle remain AGPL-3.0-only.

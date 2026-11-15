@@ -136,6 +136,7 @@ pub(crate) enum Completion {
     WebPassword,
     DimmerTimeout,
     FileName,
+    BlurParam,
 }
 
 static mut TEXT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
@@ -167,7 +168,7 @@ const SYMBOL_ROWS: [&[u8]; 4] = [b"!@#$%^&*()", b"_-+=[]{}\\|", b";:'\",.<>/?", 
 
 fn nsh_mode() -> bool { unsafe { COMPLETION == Completion::NshCommand as u32 } }
 fn password_mode() -> bool { unsafe { COMPLETION == Completion::WebPassword as u32 } }
-fn numeric_mode() -> bool { unsafe { COMPLETION == Completion::DimmerTimeout as u32 } }
+fn numeric_mode() -> bool { unsafe { COMPLETION == Completion::DimmerTimeout as u32 || COMPLETION == Completion::BlurParam as u32 } }
 fn filename_mode() -> bool { unsafe { COMPLETION == Completion::FileName as u32 } }
 fn symbols_enabled() -> bool { nsh_mode() || password_mode() || filename_mode() }
 fn chinese_capable() -> bool { filename_mode() || (!symbols_enabled() && !numeric_mode()) }
@@ -424,6 +425,7 @@ unsafe fn save_nsh_draft() {
 pub(crate) unsafe fn title() -> &'static [u8] {
     match COMPLETION {
         x if x == Completion::FileName as u32 => "文件名称\0".as_bytes(),
+        x if x == Completion::BlurParam as u32 => crate::page::blur_params::title(),
         x if x == Completion::DimmerTimeout as u32 => "自动熄屏秒数\0".as_bytes(),
         x if x == Completion::NshCommand as u32 => "NSH命令输入\0".as_bytes(),
         x if x == Completion::WebPassword as u32 => "网页服务器密码\0".as_bytes(),
@@ -898,6 +900,7 @@ unsafe extern "C" fn key_event(event: u32) {
             }
             let saved = match COMPLETION {
                 x if x == Completion::FileName as u32 => crate::file_manager::save_name(core::ptr::addr_of!(TEXT).cast()),
+                x if x == Completion::BlurParam as u32 => crate::page::blur_params::save(core::ptr::addr_of!(TEXT).cast()),
                 x if x == Completion::DimmerTimeout as u32 => {
                     crate::dimmer_timeout::save(core::ptr::addr_of!(TEXT) as *const u8)
                 }
@@ -925,6 +928,8 @@ unsafe extern "C" fn key_event(event: u32) {
                 SUBMITTED = true;
                 if nsh_mode() { NSH_DRAFT[0] = 0; }
                 nav_back();
+            } else if COMPLETION == Completion::BlurParam as u32 && safe_ptr(INPUT_LABEL) {
+                fw_api::label_set_text(INPUT_LABEL, crate::page::blur_params::error_text());
             } else if numeric_mode() && safe_ptr(INPUT_LABEL) {
                 fw_api::label_set_text(INPUT_LABEL, "请输入1～2147483秒\0".as_ptr());
             } else if nsh_mode() && safe_ptr(INPUT_LABEL) {

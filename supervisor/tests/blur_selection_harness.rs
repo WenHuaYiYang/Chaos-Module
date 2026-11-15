@@ -13,6 +13,7 @@ mod fw_api {
     pub unsafe fn close(_:i32){}
 }
 mod background_home {pub unsafe fn remount(){super::state(|s|s.mounts+=1);}}
+mod blur_params {pub unsafe fn apply(){}}
 mod cc_buttons_config {pub unsafe fn enabled()->bool{true}}
 #[path="../src/corona_blur.rs"] mod controller;
 #[no_mangle] extern "C" fn chaos_blur_select_algorithm(v:u32)->i32 {

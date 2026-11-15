@@ -56,7 +56,7 @@ def verify(data):
     assert '#define CC_BUTTON_CLASS 0x2cdb9d6cu' in source
     assert 'P67_NATIVE(0x0c1068a9u))(object,0,12)' in source
     assert 'descriptor[12]=descriptor[13]=256u*scale' in source
-    assert 'descriptor[7]=image' in source and 'descriptor)[76]=192u' in source
+    assert 'descriptor[7]=image' in source and 'descriptor)[76]=(unsigned char)((CC_PARAM(3)*255u+50u)/100u)' in source
     print('PASS actual .043: LVX button class/parent, 156x128, radius36, native gray fill, image draw size/scale/opacity ABI')
     print('NOT VERIFIED: native display rendering, GPU alpha/cache acceptance, simulator/device visuals or frame time')
 

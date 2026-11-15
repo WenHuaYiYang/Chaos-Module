@@ -14,7 +14,11 @@
 #include <stddef.h>
 #include "syspatch_blur/chaos_filter.h"
 #define CHAOS_BLUR_V2_COLOR 1
-#define rh_blur_filter_rgb565 chaos_blur_filter
+static int chaos_blur_configured_filter(uint16_t *src,uint16_t *tmp,unsigned w,unsigned h,
+                                        unsigned radius,unsigned passes,unsigned darken) {
+    return chaos_blur_filter(src,tmp,w,h,radius,passes,chaos_v2_algorithm?chaos_v2_params[1]:darken);
+}
+#define rh_blur_filter_rgb565 chaos_blur_configured_filter
 
 #define RH_TARGET_1043 1
 #include "corona_vendor/include/resource_hook_target.h"
@@ -125,6 +129,10 @@ static int chaos_cc_buttons_demand(void) {
     return chaos_corona_enabled && chaos_v2_algorithm && chaos_cc_buttons_requested;
 }
 #define P67_BLUR_EXTRA_DEMAND() chaos_cc_buttons_demand()
+static void cc_buttons_frame(void);
+#define P67_BLUR_FRAME_READY() cc_buttons_frame()
+#define CC_PARAM(i) chaos_v2_params[i]
+#define CC_PARAM_EPOCH() chaos_v2_params_epoch
 #include "corona_vendor/src/p67_backgrounds.inc"
 #include "control_center_buttons.inc"
 #include "corona_display_rebind.inc"
@@ -139,6 +147,22 @@ void chaos_blur_control_buttons_set(uint32_t enabled) {
     if(enabled==chaos_cc_buttons_requested) return;
     chaos_cc_buttons_requested=enabled;
     if(enabled) p67_blur_reset();
+}
+int chaos_blur_v2_set_params(const uint32_t *values,uint32_t count) {
+    static const uint32_t lo[6]={1,10,0,0,0,100},hi[6]={40,100,100,100,100,2000};
+    unsigned changed=0,filter_changed=0;
+    if(!values || count!=6) return -22;
+    for(unsigned i=0;i<6;++i) {
+        if(values[i]<lo[i] || values[i]>hi[i]) return -22;
+        if(values[i]!=chaos_v2_params[i]) {changed=1;if(i<2)filter_changed=1;}
+    }
+    if(!changed) return 0;
+    if(chaos_corona_in_call || cc_working || p67_busy || p67_blur_busy || p67_blur_polling ||
+       p67_blur_native_capturing || !p67_blur_native_idle()) return -2145;
+    for(unsigned i=0;i<6;++i) chaos_v2_params[i]=values[i];
+    ++chaos_v2_params_epoch;
+    if(filter_changed) p67_blur_reset();
+    return 0;
 }
 /* 0x201102D9u 是固件 launcher 的“滚动/手势进行中”标记：手势开始时被置 1，
  * 由固件自己的滚动结束回调清零。手势被打断（例如滑动途中切走应用）时它可能
@@ -364,6 +388,9 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     chaos_text_kv(&w, "cc_button_draws", cc_draws);
     chaos_text_kv(&w, "cc_button_updates", cc_updates);
     chaos_text_kv(&w, "cc_button_errors", cc_failures);
+    chaos_text_kv(&w, "cc_frame_updates", cc_frame_updates);
+    chaos_text_kv(&w, "cc_atlas", cc_atlas_serial);
+    chaos_text_kv(&w, "cc_params", chaos_v2_params_epoch);
     chaos_text_kv(&w, "root", p67_blur_root);
     chaos_text_kv(&w, "root_sub", p67_blur_root_registered);
     chaos_text_kv(&w, "frame52", p67_blur_frame52);
