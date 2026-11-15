@@ -161,7 +161,11 @@ pub mod page {
     }
     pub mod frame {pub unsafe fn build<T:super::kit::MenuSpec>(_:&T,_:&crate::PageCtx,_:u32)->crate::PageResult{Ok(())}}
 }
-
+pub mod connect_radio {
+    pub unsafe fn prepare_pan(address:*const u8,name:*const u8)->i32{super::chaos_pan_connect_address(address,name)}
+}
+#[no_mangle] pub extern "C" fn chaos_connect_pan_status()->u32{0}
+#[no_mangle] pub extern "C" fn chaos_connect_pan_cancel(){}
 
 pub mod keyboard { #[derive(Clone, Copy)] pub enum Completion { WebPassword } pub unsafe fn open(_: *const u8, _: Completion) {} }
 

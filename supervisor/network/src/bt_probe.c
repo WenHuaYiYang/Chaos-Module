@@ -384,6 +384,10 @@ void bt_probe_connect(void)
     state.pair_reply_result=0xffff;
     state.bnep=0;state.bnep_code=0xffff;unlock(p);
     if(scanning){p=lock();state.scan_stopped=0;unlock(p);int rc=request(31,0,0);if(rc){pair_error(1,rc);return;}}
+    extern int chaos_connect_pan_ready(const uint8_t *);
+    if(chaos_connect_pan_ready(target)){
+        p=lock();state.bond=2;state.connect_ready=1;state.scan_stopped=1;memcpy(state.bond_addr,target,6);unlock(p);
+    } else {pair_error(6,-13);return;}
     /* Defer bond IPC until the discovery-stopped callback. */
     if(!scanning){p=lock();state.scan_stopped=1;unlock(p);}
 }
@@ -409,10 +413,14 @@ void bt_probe_poll(void)
      * BONDING(1) 期间同样不重发(重发会打断对端正在确认的配对)。
      * 回调迟迟不来(超过窗口且没有进入 BONDING)才放开 pending 重试。 */
     if(state.bond_pending && !state.bonding && state.ticks>=state.bond_retry_at)state.bond_pending=0;
-    int bond=state.phase==PAIR && state.scan_stopped && !state.abort && !state.bond_pending && state.ticks>=state.bond_retry_at;
+    int bond=state.phase==PAIR && !state.connect_ready && state.scan_stopped && !state.abort && !state.bond_pending && state.ticks>=state.bond_retry_at;
     if(bond && state.bond_attempts>=8){state.phase=IDLE;state.error=-611;state.error_stage=6;bond=0;}
     if(bond){state.bond_attempts++;state.bond_retry_at=state.ticks+20;state.bond_pending=1;}
     int connect=state.phase==PAIR && state.connect_ready && !state.abort;
+    extern int chaos_connect_pan_ready(const uint8_t *);
+    if(connect && !chaos_connect_pan_ready(target)){
+        connect=0;state.phase=IDLE;state.connect_ready=0;state.error=-13;state.error_stage=6;
+    }
     int pair_reply=(state.phase==PAIR || state.phase==CONNECTING) && state.pair_reply && !state.abort;state.pair_reply=0;
     if(connect){state.phase=CONNECTING;state.connect_ready=0;state.started=state.ticks;}
     /* 配对确认要等对端用户点弹窗, BONDING 期间给足 60s。

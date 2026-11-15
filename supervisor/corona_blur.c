@@ -151,19 +151,20 @@ void chaos_blur_control_buttons_set(uint32_t enabled) {
     if(enabled) p67_blur_reset();
 }
 int chaos_blur_v2_set_params(const uint32_t *values,uint32_t count) {
-    static const uint32_t lo[6]={1,10,0,0,0,100},hi[6]={40,100,100,100,100,2000};
+    static const uint32_t lo[BP_COUNT]=BP_MIN,hi[BP_COUNT]=BP_MAX;
     unsigned changed=0,filter_changed=0;
-    if(!values || count!=6) return -22;
-    for(unsigned i=0;i<6;++i) {
+    if(!values || count!=BP_COUNT) return -22;
+    for(unsigned i=0;i<BP_COUNT;++i) {
         if(values[i]<lo[i] || values[i]>hi[i]) return -22;
-        if(values[i]!=chaos_v2_params[i]) {changed=1;if(i<2)filter_changed=1;}
+        if(values[i]!=chaos_v2_params[i]) {changed=1;if(i<2 || i==6 || (i>=BP_BG_SATURATION && i<=BP_BG_TINT))filter_changed=1;}
     }
     if(!changed) return 0;
     if(chaos_corona_in_call || cc_working || p67_busy || p67_blur_busy || p67_blur_polling ||
        p67_blur_native_capturing || !p67_blur_native_idle()) return -2145;
-    for(unsigned i=0;i<6;++i) chaos_v2_params[i]=values[i];
+    for(unsigned i=0;i<BP_COUNT;++i) chaos_v2_params[i]=values[i];
     ++chaos_v2_params_epoch;
     if(filter_changed) p67_blur_reset();
+    p67_wake_pending=1;
     return 0;
 }
 /* 0x201102D9u 是固件 launcher 的“滚动/手势进行中”标记：手势开始时被置 1，
@@ -280,6 +281,21 @@ int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask) {
     return result;
 }
 
+/* Background and buttons have their own refresh requests. The raw capture is
+ * shared: the shortest interval among visible enabled regions can refresh both. */
+static uint32_t chaos_v2_background_last_capture;
+static void chaos_v2_background_refresh(void) {
+    if(!chaos_corona_enabled || !chaos_v2_algorithm || !chaos_blur_screen_on() || p67_blur_pending) return;
+    unsigned regions=rh_background_is_blur(p67_path[p67_path_index])?1u:0u;
+    for(unsigned i=0;i<3;++i)
+        if(rh_background_is_blur(p67_surface_path(&p67_surfaces[i]))) regions|=2u<<i;
+    if(!(regions&p67_blur_allowed_entries)) return;
+    uint32_t now=chaos_blur_monotonic_ms();
+    if(now-chaos_v2_background_last_capture<chaos_v2_params[BP_BG_INTERVAL]) return;
+    chaos_v2_background_last_capture=now;
+    p67_blur_request();p67_wake_pending=1;
+}
+
 void chaos_corona_backgrounds_poll(void) {
     if (chaos_corona_in_call) return;
     /* 自愈也挂在 poll 上：标记卡住时上游 poll 会在门口直接 return，
@@ -290,6 +306,7 @@ void chaos_corona_backgrounds_poll(void) {
     chaos_corona_launcher_rebind();
     rh_platform_backgrounds_poll();
     chaos_corona_rearm_missing_source();
+    chaos_v2_background_refresh();
     cc_buttons_poll();
     chaos_corona_in_call = 0;
 }

@@ -15,6 +15,7 @@ void chaos_pan_bt_poll(void)
 {
     bt_probe_poll();
     network_service_poll();
+    extern void chaos_connect_pan_poll(void);chaos_connect_pan_poll();
 }
 
 /* 网络高频拍：lwip 超时、DHCP、TCP 收发、HTTP 服务。 */

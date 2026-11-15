@@ -23,11 +23,13 @@ int main(void) {
     chaos_v2_algorithm=1;
     assert(chaos_blur_filter(v2,work,84,120,2,2,100));
     assert(!memcmp(chaos_v2_color,reference_color,sizeof(reference_color))); /* Original 8-bit filter. */
+    assert(!memcmp(chaos_v2_button_color,reference_color,sizeof(reference_color))); /* Same radius reuses un-darkened result. */
     assert(memcmp(v2,old,sizeof(v2))); /* V2 is not an alias of Corona. */
     for(unsigned i=0;i<84*120;i++) v2[i]=0xffff;
     assert(chaos_blur_filter(v2,work,84,120,2,2,70));
     for(unsigned i=0;i<84*120;i++) assert(v2[i]!=0); /* No black accumulator regression. */
     for(unsigned i=0;i<84*120;i++) {
+        assert(chaos_v2_button_color[i*3]==255); /* Background darkening never reaches buttons. */
         assert(chaos_v2_color[i*3]==chaos_v2_color[i*3+1]);
         assert(chaos_v2_color[i*3]==chaos_v2_color[i*3+2]); /* White stays neutral after darkening. */
     }
@@ -70,7 +72,53 @@ int main(void) {
         assert(chaos_blur_filter(v2,work,84,120,2,2,100));
         assert(!memcmp(chaos_v2_color,reference_color,sizeof(reference_color)));
     }
-    chaos_v2_params[0]=12;
+    /* Both radii start from the same raw snapshot, never each other's output. */
+    static unsigned char saved_button[84*120*3],saved_background[84*120*3];
+    chaos_v2_params[0]=1;chaos_v2_params[6]=40;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,70));
+    memcpy(saved_button,chaos_v2_button_color,sizeof(saved_button));
+    memcpy(saved_background,chaos_v2_color,sizeof(saved_background));
+    assert(memcmp(saved_button,saved_background,sizeof(saved_button)));
+    chaos_v2_params[0]=40;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,10));
+    assert(!memcmp(saved_button,chaos_v2_button_color,sizeof(saved_button)));
+    assert(memcmp(saved_background,chaos_v2_color,sizeof(saved_background)));
+    memcpy(saved_background,chaos_v2_color,sizeof(saved_background));
+    chaos_v2_params[6]=1;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,10));
+    assert(!memcmp(saved_background,chaos_v2_color,sizeof(saved_background)));
+    assert(memcmp(saved_button,chaos_v2_button_color,sizeof(saved_button)));
+    // The independent button filter still matches upstream IIR exactly.
+    for(unsigned i=0;i<84*120;i++) {
+        unsigned v=input[i];
+        reference_color[i*3]=(unsigned char)(((v&31)*255+15)/31);
+        reference_color[i*3+1]=(unsigned char)((((v>>5)&63)*255+31)/63);
+        reference_color[i*3+2]=(unsigned char)(((v>>11)*255+15)/31);
+    }
+    cfg.radius=1;assert(syspatch_blur_run(&b,&cfg));
+    assert(!memcmp(reference_color,chaos_v2_button_color,sizeof(reference_color)));
+    chaos_v2_params[0]=12;chaos_v2_params[6]=12;
+    /* Zero radius preserves raw source; saturation/contrast/tint never alter
+     * the immutable independent button material before its own style pass. */
+    chaos_v2_params[0]=chaos_v2_params[6]=0;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,100));
+    assert(!memcmp(v2,input,sizeof(input)));
+    memcpy(saved_button,chaos_v2_button_color,sizeof(saved_button));
+    chaos_v2_params[BP_BG_SATURATION]=0;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,100));
+    for(unsigned i=0;i<84*120;i++)assert(chaos_v2_color[i*3]==chaos_v2_color[i*3+1] && chaos_v2_color[i*3]==chaos_v2_color[i*3+2]);
+    assert(!memcmp(saved_button,chaos_v2_button_color,sizeof(saved_button)));
+    chaos_v2_params[BP_BG_CONTRAST]=0;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,100));
+    for(unsigned i=0;i<sizeof(saved_background);i++)assert(chaos_v2_color[i]==128);
+    chaos_v2_params[BP_BG_RED]=10;chaos_v2_params[BP_BG_GREEN]=20;chaos_v2_params[BP_BG_BLUE]=30;chaos_v2_params[BP_BG_TINT]=100;
+    memcpy(v2,input,sizeof(input));assert(chaos_blur_filter(v2,work,84,120,2,2,0));
+    for(unsigned i=0;i<84*120;i++)assert(chaos_v2_color[i*3]==30 && chaos_v2_color[i*3+1]==20 && chaos_v2_color[i*3+2]==10);
+    assert(!memcmp(saved_button,chaos_v2_button_color,sizeof(saved_button)));
+    chaos_v2_params[BP_BG_SATURATION]=100;chaos_v2_params[BP_BG_CONTRAST]=100;chaos_v2_params[BP_BG_TINT]=0;
+    for(unsigned i=0;i<84*120;i++)v2[i]=0xffff;
+    assert(chaos_blur_filter(v2,work,84,120,2,2,200));
+    for(unsigned i=0;i<sizeof(saved_background);i++)assert(chaos_v2_color[i]==255); // Saturate, never wrap.
     assert(!chaos_blur_filter(0,work,84,120,2,2,70));
     assert(!chaos_blur_filter(v2,work,85,120,2,2,70));
     return 0;

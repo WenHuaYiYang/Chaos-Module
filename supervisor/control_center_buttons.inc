@@ -5,6 +5,7 @@
  * Each owned texture is written only after a GPU fence, never from a draw or
  * DELETE callback. Destruction of widgets merely retires the texture. */
 #include "control_center_button_pixels.h"
+#include "blur_v2_params.h"
 #define CC_BUTTON_LIMIT 16u
 #define CC_BUTTON_CLASS 0x2cdb9d6cu
 struct cc_button { uint32_t object,root,generation,image,stamp; unsigned ready,w,h,radius,scale,original_opa,applied_opa,tinted; int x,y; };
@@ -13,7 +14,7 @@ static uint32_t cc_serial,cc_draws,cc_updates,cc_failures;
 static unsigned cc_working;
 static unsigned cc_scan_ticks;
 #ifndef CC_PARAM
-static uint32_t cc_default_params[6]={12,70,44,75,38,500};
+static uint32_t cc_default_params[BP_COUNT]=BP_DEFAULTS;
 #define CC_PARAM(i) cc_default_params[i]
 #define CC_PARAM_EPOCH() 1u
 #endif
@@ -109,12 +110,15 @@ static void cc_sync(uint32_t image) {
 }
 static void cc_flush(void) { p67_blur_native_clean(); }
 static int cc_source(struct cc_pixels *pixels,uint32_t *stamp) {
-    struct p67_blur_pixel_view view;
-    if(!p67_blur_source || !p67_blur_native_descriptor((uint32_t)p67_blur_source,15,&view)) return 0;
-    pixels->data=view.pixels;pixels->width=view.width;pixels->height=view.height;
-    pixels->stride=(unsigned)view.stride;pixels->size=(unsigned)view.size;
-    *stamp=p67_blur_publishes;
-    return 1;
+    if(!p67_blur_source) return 0;
+    for(unsigned i=0;i<2;++i) {
+        struct p67_blur_native_output *out=&p67_blur_native_outputs[i];
+        if(out->descriptor!=p67_blur_source || out->retired) continue;
+        *pixels=(struct cc_pixels){out->buttons,84,120,84*3,sizeof(out->buttons)};
+        *stamp=p67_blur_publishes;
+        return 1;
+    }
+    return 0;
 }
 static void cc_submit(uint32_t layer,uint32_t image,const int *area) {
     uint32_t descriptor[28];
@@ -224,7 +228,9 @@ static void cc_update_pixels(int frame) {
         if(!cc_wanted() || cc_root_slot()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
         if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
         if(atlas_dirty) {
-            if(!cc_build_atlas(&source,cc_atlas,CC_PARAM(2))) {++cc_failures;break;}
+            struct chaos_blur_color style={CC_PARAM(BP_BUTTON_BRIGHTNESS),CC_PARAM(BP_BUTTON_SATURATION),CC_PARAM(BP_BUTTON_CONTRAST),
+                CC_PARAM(BP_BUTTON_TINT),CC_PARAM(BP_BUTTON_RED),CC_PARAM(BP_BUTTON_GREEN),CC_PARAM(BP_BUTTON_BLUE)};
+            if(!cc_build_atlas_styled(&source,cc_atlas,&style)) {++cc_failures;break;}
             cc_atlas_source=stamp;cc_atlas_params=CC_PARAM_EPOCH();++cc_atlas_serial;
             cc_atlas_ready=1;atlas_dirty=0;
         }

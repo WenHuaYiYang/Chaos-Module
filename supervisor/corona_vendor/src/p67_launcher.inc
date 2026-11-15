@@ -78,6 +78,7 @@ static void p67_draw_background(uint32_t layer, const char *path, const int32_t 
         /* Select by immutable source header, including during algorithm changes. */
         if(P67_U32(source+4u)==(336u|(480u<<16)) && ((P67_U32(source)>>8)&255u)==15u) {
             descriptor[12]=descriptor[13]=256u;
+            ((unsigned char *)descriptor)[76]=(unsigned char)((chaos_v2_params[BP_BG_OPACITY]*255u+50u)/100u);
             source_area[2]=335;source_area[3]=479;
         }
 #endif

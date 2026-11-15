@@ -1,10 +1,13 @@
 #include "../corona_vendor/include/resource_hook_blur.h"
 #include "syspatch_blur.c"
+#include "../blur_color.h"
+#include "../blur_v2_params.h"
 static unsigned chaos_v2_algorithm;
-/* Radius, background %, button %, glass %, native tint %, source interval ms. */
-static uint32_t chaos_v2_params[6]={12,70,44,75,38,500};
+/* Versioned parameter layout and bounds are documented in blur_v2_params.h. */
+static uint32_t chaos_v2_params[BP_COUNT]=BP_DEFAULTS;
 static uint32_t chaos_v2_params_epoch=1;
 static unsigned char chaos_v2_color[84*130*3];
+static unsigned char chaos_v2_button_color[84*120*3];
 static unsigned chaos_v2_color_valid,chaos_v2_width,chaos_v2_height;
 static unsigned char chaos_v2_previous_raw[84*120*3];
 static unsigned chaos_v2_previous_valid,chaos_v2_snapshot_same,chaos_v2_cached_ready;
@@ -67,7 +70,7 @@ static int chaos_blur_filter(uint16_t *src, uint16_t *tmp, unsigned w, unsigned 
                              unsigned radius, unsigned passes, unsigned darken) {
     if (!chaos_v2_algorithm)
         return rh_blur_filter_rgb565(src,tmp,w,h,radius,passes,darken);
-    if (!src || !w || !h || w>84 || h>130 || darken>100) return 0;
+    if (!src || !w || !h || w>84 || h>130 || darken>200) return 0;
     if(!chaos_v2_color_valid || chaos_v2_width!=w || chaos_v2_height!=h) {
         for(unsigned i=0;i<w*h;i++){
             unsigned v=src[i];
@@ -77,13 +80,27 @@ static int chaos_blur_filter(uint16_t *src, uint16_t *tmp, unsigned w, unsigned 
         }
     }
     chaos_v2_color_valid=0;chaos_v2_width=w;chaos_v2_height=h;
+    // Copy the raw snapshot before either filter or brightness can affect it.
+    if(w==84 && h==120 && chaos_v2_params[6]!=chaos_v2_params[0]) {
+        for(unsigned i=0;i<w*h*3;i++) chaos_v2_button_color[i]=chaos_v2_color[i];
+        syspatch_blur_buf_t buttons={chaos_v2_button_color,w,h,w*3,3};
+        syspatch_blur_cfg_t button_cfg;
+        syspatch_blur_cfg_default(&button_cfg);button_cfg.radius=chaos_v2_params[6];
+        button_cfg.quality=SYSPATCH_BLUR_QUALITY_PRECISION;button_cfg.skip=1;
+        if(button_cfg.radius) syspatch_blur_run(&buttons,&button_cfg);
+    }
     syspatch_blur_buf_t buffer={chaos_v2_color,w,h,w*3,3};
     syspatch_blur_cfg_t config;
     syspatch_blur_cfg_default(&config); config.radius=chaos_v2_params[0];
     config.quality=SYSPATCH_BLUR_QUALITY_PRECISION;config.skip=1;
-    syspatch_blur_run(&buffer,&config);
+    if(config.radius) syspatch_blur_run(&buffer,&config);
+    // Equal radii have identical results: reuse this pass before darkening.
+    if(w==84 && h==120 && chaos_v2_params[6]==chaos_v2_params[0])
+        for(unsigned i=0;i<w*h*3;i++) chaos_v2_button_color[i]=chaos_v2_color[i];
+    struct chaos_blur_color style={darken,chaos_v2_params[BP_BG_SATURATION],chaos_v2_params[BP_BG_CONTRAST],
+        chaos_v2_params[BP_BG_TINT],chaos_v2_params[BP_BG_RED],chaos_v2_params[BP_BG_GREEN],chaos_v2_params[BP_BG_BLUE]};
     for (unsigned i=0;i<w*h;i++) {
-        for(unsigned c=0;c<3;c++) chaos_v2_color[i*3+c]=(unsigned char)((chaos_v2_color[i*3+c]*darken+50)/100);
+        chaos_blur_color_apply(chaos_v2_color+i*3,chaos_v2_color+i*3,&style);
         unsigned char *p=chaos_v2_color+i*3;
         src[i]=(uint16_t)(((p[2]>>3)<<11)|((p[1]>>2)<<5)|(p[0]>>3));
     }

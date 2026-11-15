@@ -84,6 +84,7 @@ pub(crate) unsafe fn toggle() -> bool {
 /// 维护定时器调用：按开关状态启动/停止文件桥。
 pub(crate) unsafe fn tick() {
     crate::connect_permission::load();
+    crate::connect_radio::load_enabled();
     load();
     let state = st_rd!(BRIDGE_STATE);
     if ENABLED != 0 {

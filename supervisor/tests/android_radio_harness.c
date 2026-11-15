@@ -9,6 +9,9 @@ static unsigned wanted=1,started=1,now=100,accept_packets=1,received,stops,close
 static unsigned system_gate=1,bond_mode;
 static unsigned radio_system_pair_gate(void){return system_gate;}
 static void radio_set_system_pair_gate(unsigned value){system_gate=value;}
+static unsigned pan_connects;static uint8_t pan_target[6];
+int network_connect_address(const uint8_t *address,const char *name){assert(name&&name[0]);memcpy(pan_target,address,6);++pan_connects;return 0;}
+static int stop_error;
 static int fail_command;static unsigned scan_mode=1;
 static void *loop_slot=(void *)0x1234;
 #define BT_LOOP ((uintptr_t)&loop_slot)
@@ -27,7 +30,7 @@ static uint32_t gap(void *a,const uint32_t *cb){assert(a==(void *)0x1111 && cb[2
 static int server(void *a,void *h,uint16_t scn,const void *uuid,uint8_t max){
     (void)a;(void)h;const uint32_t *u=uuid;assert(scn==19&&max==1&&u[0]==16&&u[4]==0x43434e31u);++server_calls;return 0;
 }
-static int stop(void *a,void *h,uint16_t scn){(void)a;(void)h;assert(scn==19);++stops;return 0;}
+static int stop(void *a,void *h,uint16_t scn){(void)a;(void)h;assert(scn==19);++stops;return stop_error;}
 static int disconnect(void *a,void *h,const uint8_t *peer,uint16_t port){(void)a;(void)h;assert(peer[0]==1&&port>=77);return 0;}
 static int ipc(void *a,void *m,uint32_t command){assert(a==(void *)0x1111&&command<256);++commands[command];uint8_t *b=m;
     b[12]=command==(unsigned)fail_command?1:0;if(command==38){b[12]=(uint8_t)scan_mode;memset(b+60,0xcd,8);}
@@ -90,5 +93,33 @@ int main(void){
     fail_command=0;step(1);
     wanted=started=0;step(0);assert(stops==1&&!radio_server);
     radio_spp_proxy(0,device,0,79,2048,"/spp/peer");assert(!radio_path_pending);
+    // Independent switch closes stream/server, cancels work and can recover.
+    step(1);radio_spp_proxy(0,device,0,80,2048,"/spp/peer");step(1);radio_pipe_ready(radio_pipe,0,0);
+    chaos_connect_radio_enable(0);assert(!cc_radio_live((void *)(uintptr_t)radio_generation));
+    cc_radio_service(0);cc_radio_tick(1);cc_radio_service(0);assert(!radio_server&&!radio_pipe&&!radio_pair_until&&system_gate==1);
+    chaos_connect_pair_start();chaos_connect_pair_scan();chaos_connect_pair_device(0);assert(!radio_pair_request&&!radio_scan_request&&!radio_select_request);
+    chaos_connect_radio_enable(1);cc_radio_service(1);cc_radio_tick(1);cc_radio_service(1);assert(radio_server);
+    assert(!chaos_connect_pan_prepare(device,"Phone"));chaos_connect_pan_poll();assert(!pan_connects);
+    step(1);bond_mode=2;now+=801;step(1);chaos_connect_pan_poll();assert(!pan_connects);
+    uint8_t other[6]={1,8,3,4,5,6};
+    radio_spp_proxy(0,other,0,81,2048,"/spp/peer");step(1);assert(!radio_pipe);
+    chaos_connect_pan_poll();assert(!pan_connects);
+    radio_spp_proxy(0,device,0,82,2048,"/spp/peer");step(1);
+    chaos_connect_pan_poll();assert(!pan_connects); // Proxy isn't read-ready yet.
+    radio_pipe_ready(radio_pipe,0,0);chaos_connect_pan_poll();assert(pan_connects==1&&!memcmp(device,pan_target,6));
+    chaos_connect_pan_poll();assert(pan_connects==1);
+    assert(!chaos_connect_pan_prepare(device,"Phone"));chaos_connect_pan_cancel();chaos_connect_pan_poll();assert(pan_connects==1);
+    assert(!chaos_connect_pan_prepare(device,"Phone"));now+=90001;chaos_connect_pan_poll();assert(pan_connects==1&&chaos_connect_pan_status()==4);
+    chaos_connect_radio_enable(0);chaos_connect_pan_poll();assert(!radio_pan_pending);
+    // A failed native stop remains blocked until cleanup actually succeeds.
+    chaos_connect_radio_enable(1);step(1);step(1);step(1);assert(radio_server);
+    stop_error=-5;chaos_connect_radio_enable(0);cc_radio_service(0);assert(radio_server&&radio_restart_pending);
+    chaos_connect_radio_enable(1);chaos_connect_pair_start();cc_radio_service(1);
+    assert(radio_restart_pending&&!radio_ready);
+    stop_error=0;cc_radio_tick(1);cc_radio_service(1);cc_radio_service(1);
+    assert(radio_server&&radio_pair_until&&!radio_restart_pending);
+    // Disable outside this module's scan window must not cancel another scan.
+    radio_scan_until=0;unsigned scan_stops=commands[31];chaos_connect_radio_enable(0);cc_radio_service(0);
+    assert(commands[31]==scan_stops);
     puts("Android radio: pairing window/outgoing bond, callback states, UUID, fragmented/coalesced stream, backpressure, generation, shutdown passed");
 }

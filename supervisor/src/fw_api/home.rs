@@ -85,6 +85,32 @@ unsafe fn business_root_matches(object: u32, content: u32, panel: u32, root: u32
     ancestor == root
 }
 
+/// 仅校验 launcher，不等待控制中心/负一屏/通知页。注册表每拍复核，
+/// 系统重建或清空事件列表后可重新绑定；只添加自己的监听。
+pub unsafe fn background_watch_launcher(callback: u32) -> u32 {
+    if !background_home_matches() { return 0; }
+    let root = rd32((BACKGROUND_HOME_DESC + 0x30) as *const u32);
+    if !safe_ptr(root) || rd8((BACKGROUND_HOME_DESC + 0x28) as *const u8) == 4
+        || rd8((BACKGROUND_HOME_DESC + 0x2a) as *const u8) != 2
+        || rd32((BACKGROUND_HOME_DESC + 0x24) as *const u32) != 0 { return 0; }
+    let content = rd32(0x2011_0160 as *const u32);
+    let panel = rd32(0x2011_0154 as *const u32);
+    let mut launcher = rd32(0x2011_02f4 as *const u32);
+    if !business_root_matches(launcher, content, panel, root) {
+        launcher = find_business_root(content, panel, root);
+    }
+    if !business_root_matches(launcher, content, panel, root) { return 0; }
+    let count: unsafe extern "C" fn(u32) -> u32 = transmute(super::fwaddr::OBJ_EVENT_COUNT as usize);
+    let get: unsafe extern "C" fn(u32, u32) -> u32 = transmute(super::fwaddr::OBJ_EVENT_DESCRIPTOR as usize);
+    let n = count(launcher);
+    if n > 32 { return 0; }
+    for i in 0..n {
+        let d = get(launcher, i);
+        if safe_ptr(d) && rd32(d as *const u32) == callback { return launcher; }
+    }
+    if super::obj_add_event(launcher, callback, 0, 0) != 0 { launcher } else { 0 }
+}
+
 unsafe fn find_business_root(content: u32, panel: u32, root: u32) -> u32 {
     if !safe_ptr(content) || !safe_ptr(panel) { return 0; }
     let count = super::obj_child_count(content);

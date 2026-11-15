@@ -60,6 +60,8 @@ const _: () = assert!(core::mem::size_of::<BtDiagnostics>() == 164);
 
 unsafe extern "C" {
     fn chaos_pan_enable(on: i32);
+    fn chaos_connect_pan_status()->u32;
+    fn chaos_connect_pan_cancel();
     fn chaos_pan_scan();
     fn chaos_pan_connect(index: u32);
     fn chaos_pan_connect_address(address: *const u8, name: *const u8) -> i32;
@@ -204,6 +206,10 @@ unsafe fn remember_peer(v: &NetworkView) {
 }
 // 扫描自动重试: 一轮 inquiry 只有 12s, 手机可被发现窗口约 120s, 对齐全靠手速。
 const SCAN_ATTEMPTS: u32 = 3;
+static mut PAN_PREPARE_ERROR:i32=0;
+unsafe fn prepare_spp(address:*const u8,name:*const u8){
+    PAN_PREPARE_ERROR=crate::connect_radio::prepare_pan(address,name);
+}
 static mut SCAN_ATTEMPT: u32 = 0;
 static mut SCAN_LAST_PHASE: u32 = 0xFF;
 static mut SCAN_STALL: u32 = 0;
@@ -296,6 +302,11 @@ unsafe fn status_text(v: &NetworkView, out: &mut [u8]) {
     let mut w = crate::text::W::new(out.as_mut_ptr(), out.len()); let err = WORKER_ERROR.load(Ordering::Acquire);
     if err != 0 { w.s("网络任务启动失败 ".as_bytes()); signed(&mut w, err); }
     else if pan_selected(v) != (v.enabled != 0) { w.s(if pan_selected(v) { "正在启用btpan…".as_bytes() } else { "正在停用btpan…".as_bytes() }); }
+    else if PAN_PREPARE_ERROR == -13 {w.s("请先打开ChaosConnect蓝牙配对页的启用开关".as_bytes());}
+    else if PAN_PREPARE_ERROR != 0 {w.s("SPP准备失败 ".as_bytes());signed(&mut w,PAN_PREPARE_ERROR);}
+    else if chaos_connect_pan_status()==1 {w.s("正在普通蓝牙配对，等待手机确认".as_bytes());}
+    else if chaos_connect_pan_status()==2 {w.s("等待SPP串口：请打开手机ChaosConnect连接手环".as_bytes());}
+    else if chaos_connect_pan_status()==4 {w.s("SPP未就绪或超时，请关闭蓝牙配对开关后重试".as_bytes());}
     else { w.s(cbytes(phase(v))); if v.phase == 2 { w.c(b' ').n(v.checked).c(b'/').n(v.candidates); }
         if v.error != 0 {
             // 配对阶段(bt_probe 自己的 error_stage)不走 network_service 的阶段名,
@@ -406,21 +417,21 @@ impl crate::page::Page for BtpanPage {
     fn is_switch_row(&self, idx: usize) -> bool { idx == 0 }
     fn on_switch(&self, idx: usize) { unsafe {
         if idx != 0 || UPDATING || !interactive_row(PAGE_BTPAN_PID,idx) { return; }
-        let (v,_) = snapshot(); request_pan(!pan_selected(&v),&v); refresh_pan();
+        let (v,_) = snapshot(); if pan_selected(&v){chaos_connect_pan_cancel();}request_pan(!pan_selected(&v),&v); refresh_pan();
     } }
     fn on_click(&self, idx: usize) { unsafe {
         if UPDATING || !interactive_row(PAGE_BTPAN_PID,idx) { return; } let (v,_) = snapshot();
         match idx {
-            2 => { SCAN_ATTEMPT = 0; SCAN_STALL = 0; SCAN_LAST_PHASE = v.phase;
+            2 => { chaos_connect_pan_cancel(); PAN_PREPARE_ERROR=0; SCAN_ATTEMPT = 0; SCAN_STALL = 0; SCAN_LAST_PHASE = v.phase;
                 if !pan_selected(&v) { request_pan(true,&v); } else if WORKER_STARTED.load(Ordering::Acquire) { SCAN_ATTEMPT = 1; chaos_pan_scan(); } }
-            3 => { SCAN_ATTEMPT = 0; SCAN_STALL = 0; chaos_pan_disconnect(); }
+            3 => { chaos_connect_pan_cancel(); PAN_PREPARE_ERROR=0; SCAN_ATTEMPT = 0; SCAN_STALL = 0; chaos_pan_disconnect(); }
             4 if v.phase == 4 => chaos_pan_pair_confirm(),
             5 => { nav_goto(PAGE_NETINFO_PID,0); return; }
             DEV_FIRST..=DEV_LAST if pan_selected(&v) && WORKER_STARTED.load(Ordering::Acquire) => {
                 if v.count == 0 && idx == DEV_FIRST {
                     let saved = saved_peer();
-                    if saved.valid { chaos_pan_connect_address(saved.address.as_ptr(),saved.name.as_ptr()); }
-                } else { let row = idx - DEV_FIRST; if let Some((index,address)) = SHOWN[row] { if index < v.count.min(16) && v.peers[index as usize].device.address == address { chaos_pan_connect(index); } } }
+                    if saved.valid { prepare_spp(saved.address.as_ptr(),saved.name.as_ptr()); }
+                } else { let row = idx - DEV_FIRST; if let Some((index,address)) = SHOWN[row] { if index < v.count.min(16) && v.peers[index as usize].device.address == address { prepare_spp(address.as_ptr(),v.peers[index as usize].device.name.as_ptr()); } } }
             }
             _ => {}
         } refresh_pan();

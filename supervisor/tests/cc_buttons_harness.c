@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../control_center_button_pixels.h"
+#include "../blur_v2_params.h"
 #define CHAOS_CC_BUTTONS_HOST 1
 struct node {uint32_t id,parent,clz,record[3];int live,hidden,area[4];unsigned radius,opacity;};
 static struct node nodes[6];
@@ -11,7 +12,7 @@ static unsigned wanted,idle=1,fence_ok=1,source_ready=1,stamp=1;
 static unsigned fences,allocs,frees,syncs,draws,fail_alloc,fail_add,bad_buffer,delete_alloc;
 static uint32_t root=10;
 static unsigned root_checks,walks,flushes,requests,now_ms,awake=1,invalidates;
-static uint32_t params[6]={12,70,44,75,38,500},params_epoch=1;
+static uint32_t params[BP_COUNT]=BP_DEFAULTS,params_epoch=1;
 #define CC_PARAM(i) params[i]
 #define CC_PARAM_EPOCH() params_epoch
 static unsigned char source_pixels[336*480*3];
@@ -58,6 +59,7 @@ static void cc_submit(uint32_t layer,uint32_t id,const int *area){assert(layer==
 static void draw(uint32_t id){uint32_t e[5]={id,id,25,node(id)->record[1],99};cc_button_event(e);}
 static void empty(void){wanted=0;idle=1;fence_ok=1;cc_buttons_poll();assert(!cc_resources()&&!cc_cleanup_pending()&&allocs==frees);for(unsigned i=0;i<6;++i)if(nodes[i].live)assert(nodes[i].opacity==255);}
 int main(void){
+    params[BP_BUTTON_BRIGHTNESS]=44;
     memset(source_pixels,100,sizeof(source_pixels));
     nodes[0]=(struct node){11,10,CC_BUTTON_CLASS,{0},1,0,{0,20,155,147},36,255};
     nodes[1]=(struct node){12,10,CC_BUTTON_CLASS,{0},1,0,{88,200,247,265},33,255};
@@ -102,6 +104,14 @@ int main(void){
     params[2]=80;params[4]=20;++params_epoch;cc_buttons_poll();
     assert(cc_atlas_serial==serial+1 && node(11)->opacity==51);
     params[2]=44;params[4]=38;++params_epoch;cc_buttons_poll();assert(node(11)->opacity==97);
+    params[BP_BUTTON_TINT]=100;params[BP_BUTTON_RED]=210;params[BP_BUTTON_GREEN]=20;params[BP_BUTTON_BLUE]=40;
+    ++params_epoch;cc_buttons_poll();
+    unsigned char *colored=images[cc_buttons[0].image].pixels+32*78*4+39*4;
+    assert(colored[0]==40 && colored[1]==20 && colored[2]==210 && colored[3]==255);
+    params[BP_BUTTON_TINT]=0;params[BP_BUTTON_SATURATION]=0;++params_epoch;cc_buttons_poll();
+    colored=images[cc_buttons[0].image].pixels+32*78*4+39*4;
+    assert(colored[0]==colored[1] && colored[1]==colored[2]);
+    params[BP_BUTTON_SATURATION]=75;++params_epoch;cc_buttons_poll();
     node(11)->area[1]=20;node(11)->area[3]=147;
     awake=0;now_ms=10000;cc_buttons_poll();assert(requests==2);awake=1;
     now_ms=10000;node(11)->hidden=node(12)->hidden=1;cc_buttons_poll();assert(requests==2);

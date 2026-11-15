@@ -62,6 +62,23 @@ int main(void) {
         if(v<256)assert(p[0]==p[1]&&p[1]==p[2]);
         assert(p[3]==255);
     }
+    // Half-size atlas from independent 84x120 source, with bilinear samples
+    // aligned to the full background's pixel centres and untouched padding.
+    struct cc_pixels small={input,84,120,256,256*120};
+    memset(input,0xcd,256*120);
+    for(unsigned y=0;y<120;y++)for(unsigned x=0;x<84;x++)
+        memset(input+y*256+x*3,x*3,3);
+    assert(cc_build_atlas(&small,atlas,100));
+    for(unsigned y=0;y<240;y++)for(unsigned x=0;x<168;x++) {
+        unsigned char *p=(unsigned char *)&atlas[y*168+x];
+        assert(p[0]==p[1] && p[1]==p[2] && p[3]==255);
+        if(x) assert(p[0]-((unsigned char *)&atlas[y*168+x-1])[0]<=2);
+    }
+    assert(((unsigned char *)atlas)[0]==0);
+    assert(((unsigned char *)&atlas[167])[0]==249);
+    for(unsigned y=0;y<120;y++)for(unsigned x=252;x<256;x++)assert(input[y*256+x]==0xcd);
+    small.size--;assert(!cc_build_atlas(&small,atlas,100));small.size++;
+    small.width=83;assert(!cc_build_atlas(&small,atlas,100));
     free(input);free(out);free(atlas);
     puts("CC atlas: neutral color, contrast, live samples, reused AA alpha, premultiplication, padding/alignment/bounds passed");
 }

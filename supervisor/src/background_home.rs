@@ -72,14 +72,15 @@ static mut BOOT_DELAY: u32 = 0;
 // persist.vibrate_back_state 两个设置(那代框架 10 Pro 没有, 触发自己做)。
 // 震动走 fw_api::vibrate(0xD) = 固件官方翻页效果(0x0C4C56CC, 内部跟随系统震动开关)。
 //
-// * 滑动列表震动: launcher 根上的**任意事件**(v1 原始方案, 真机实证会震 —— 滚动时
-//   磁贴回收/滚动事件都会到这; 而 SCROLL_END(10) 经实测根本不来, 码过滤全是死路),
-//   冷却 200ms 限频: 持续滑动 = 每 200ms 震一次(跟手节奏), 单次操作 = 震一次,
+// * 滑动列表震动: launcher 根上的输入及磁贴增删事件(保留原方案的广泛触发，
+//   不限定 SCROLL_END；忽略绘制/样式刷新，避免 V2 静止渲染时连震),
+//   冷却 100ms 限频: 持续滑动 = 每 100ms 震一次(跟手节奏), 单次操作 = 震一次,
 //   停手即停(真机 2026-10-16 三轮迭代定稿)。
 // * 右滑返回震动: 前台 app 切回 HOME(右滑返回/退出应用的落点都是进 launcher)震一次。
 // 持久化 /data/chaos/swipe_vib.cfg 2 字节: [滑动列表, 右滑返回], 默认全关。
 static mut SV_LOADED: u32 = 0;
 static mut SV_LIST_ON: u32 = 0;
+static mut SV_ROOT: u32 = 0;
 static mut SV_BACK_ON: u32 = 0;
 static mut SV_REQ: u32 = 0;          // bit0=列表翻越 bit1=右滑返回/进 launcher
 static mut SV_TICK: u32 = 0;         // 50ms 计数
@@ -140,13 +141,12 @@ unsafe fn sv_back_tick() {
     }
 }
 
-/// structure_changed 里调: launcher 根上的任意事件 + 冷却。
+/// 独立 sv_event 里调: launcher 根上的输入/磁贴事件 + 冷却。
 /// 真机 2026-10-16 定稿: 按事件码过滤(9/10/11)会让滑动完全不震 —— 滚动事件
 /// 就藏在 PRESSING/其它码里, 分不出; "按住不滑连震"是已知代价, 用户接受。
 pub(crate) unsafe fn swipe_scroll_evt(current: u32, target: u32) {
     if st_rd!(SV_LIST_ON) == 0 { return; }
-    let roots = st_rd!(WATCHED_ROOTS);
-    let launcher = roots[0];
+    let launcher = st_rd!(SV_ROOT);
     if launcher == 0 || (current != launcher && target != launcher) { return; }
     let t = st_rd!(SV_TICK);
     let last = st_rd!(SV_LAST_VIB);
@@ -154,6 +154,25 @@ pub(crate) unsafe fn swipe_scroll_evt(current: u32, target: u32) {
         st_wr!(SV_REQ, st_rd!(SV_REQ) | 1);
         st_wr!(SV_LAST_VIB, t);
         st_wr!(SV_LAST_VALID, 1);
+    }
+}
+
+/// 独立于背景引擎；V2 接管背景后仍维护原生 launcher 的输入监听。
+unsafe fn sv_watch_tick() {
+    if st_rd!(SV_LIST_ON) == 0 || !fw_api::screen_is_on() { return; }
+    st_wr!(SV_ROOT, fw_api::background_watch_launcher(sv_event as *const () as u32));
+}
+
+unsafe extern "C" fn sv_event(event: u32) {
+    if event == 0 { return; }
+    let current = rd32(event as *const u32);
+    let target = rd32((event + 4) as *const u32);
+    let code = rd16((event + 8) as *const u16) & 0x7fff;
+    if code == 36 {
+        if current == target && current == st_rd!(SV_ROOT) { st_wr!(SV_ROOT, 0); }
+    } else if code < 24 || code == 38 || code == 39 {
+        // 保留全部输入码及磁贴增删冒泡；绘制/样式刷新不触发震动。
+        swipe_scroll_evt(current, target);
     }
 }
 
@@ -203,10 +222,6 @@ unsafe extern "C" fn structure_changed(event: u32) {
     if event == 0 { return; }
     let current = rd32(event as *const u32);
     let target = rd32((event + 4) as *const u32);
-    // launcher 滑动震动先判: 回调挂在 launcher 根上, 子对象的事件靠冒泡送进来,
-    // 而下面那道"是不是我们盯的根"的过滤只看 current —— 子对象来的事件会被它整条丢掉,
-    // 表现就是滑动列表震动时有时无。swipe_scroll_evt 自己会校验事件确实来自 launcher。
-    swipe_scroll_evt(current, target);
     let mut watched = current == st_rd!(WATCHED_ROOT);
     for root in st_rd!(WATCHED_ROOTS) {
         if root != 0 && root == current { watched = true; }
@@ -695,6 +710,7 @@ pub(crate) unsafe fn tick() {
     consume_deleted();
     vib_tick();   // 滑动震动 + 震动测试
     if !crate::font_apply::quiet() { return; }
+    sv_watch_tick();
     // 档位或状态一变就排一次整页重建: 回调里(事件派发链上)只登记请求, 控件由这里
     // 在安静拍上重建 —— 与"更换字体""桌面图标"两页同一套做法。
     if st_rd!(DIRTY) != 0 {

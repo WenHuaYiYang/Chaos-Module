@@ -43,7 +43,8 @@ DRAW_MAIN 在官方底板之后、图标子对象之前提交局部玻璃图。
 
 默认玻璃不透明度 75%（191/255），状态底色不透明度 38%（97/255），
 中心两层叠加约 84.5% 不透明度，背景约透出 15.5%。两项可分别设置为 0..100%。
-按钮颜色保留 75% 原通道、25% 亮度，再按“按钮亮度”缩放，默认 44%。
+按钮颜色保留 75% 原通道、25% 亮度，再按“按钮亮度”缩放，默认 31%。
+背景与按钮分别从原始快照滤波，背景亮度不再影响按钮亮度。
 这是合成模型，不能代替实际壁纸下的可读性验收。
 
 ## 实时刷新与开销
@@ -51,7 +52,7 @@ DRAW_MAIN 在官方底板之后、图标子对象之前提交局部玻璃图。
 40f4b35 为解决重复 CPU 调色/圆角计算和逐张 cache clean/fence，取消了位置缓存键；
 其副作用是滚动时底图冻结。本轮恢复逐帧位置取样，并分离素材生成与取样：
 
-1. 从已发布的 336×480 BGR888 V2 模糊源建立共享 168×240 BGRA atlas。
+1. 从当前已发布输出配套的 84×120 独立按钮模糊源，双线性生成共享 168×240 BGRA atlas。
    只有源发布代数或参数代数变化时调色一次。atlas 约 161 KB、静态对齐存储。
 2. 大按钮纹理 78×64、编辑按钮 80×33，圆角半径缩半、4×4 抗锯齿覆盖率。
    alpha 仅在首次分配或形状改变时计算；奇数宽高使用 1× 纹理避免取整误差。
@@ -80,7 +81,9 @@ atlas 独立共享，不为每个按钮额外生成全屏快照。
 保存在 `/data/chaos/blur_cc_buttons.cfg`。四个背景全关时可单独启用按钮，
 原四背景位图 0..15 不变。`P67_BLUR_EXTRA_DEMAND` 默认零扩展提供独立需求。
 
-“系统美化 → 模糊V2参数”支持数字键盘调整并保存六项参数及恢复默认。
+“系统美化 → 模糊V2参数”分为“背景调整”和“按钮调整”，现有 21 项参数。
+两组独立设置模糊强度、亮度、透明度、饱和度、对比度、RGB 染色和采集间隔，
+共 21 项；分别恢复默认，并支持旧六/七参数配置迁移。
 范围、格式及错误处理见 [模糊V2移植说明](BLUR-V2-PORT.md)。
 
 诊断保留 `cc_buttons / cc_button_draws / cc_button_updates / cc_button_errors`，
@@ -92,6 +95,7 @@ atlas 独立共享，不为每个按钮额外生成全屏快照。
 ```sh
 python3 tools/test_cc_buttons.py
 python3 tools/test_blur_params.py
+python3 tools/test_swipe_vibration.py
 python3 tools/test_corona_blur.py
 python3 tools/test_blur_v2.py
 rustc --edition=2021 --test supervisor/tests/network_platform_harness.rs -o /tmp/chaos-clock-tests

@@ -18,7 +18,12 @@
 #define P67_BLUR_DISPLAY_COUNT(display) p67_blur_native_display_count(display)
 #define P67_BLUR_DISPLAY_GET(display, index) p67_blur_native_display_get((display), (index))
 
-struct p67_blur_native_output { uint32_t descriptor; unsigned retired; };
+struct p67_blur_native_output { uint32_t descriptor; unsigned retired;
+#ifdef CHAOS_BLUR_V2_COLOR
+    /* Immutable button source paired with this exact published descriptor. */
+    unsigned char buttons[84*120*3];
+#endif
+};
 static struct p67_blur_native_output p67_blur_native_outputs[2];
 static uint32_t p67_blur_native_input;
 static unsigned p67_blur_native_capturing, p67_blur_native_power_depth;
@@ -325,6 +330,10 @@ static uintptr_t p67_blur_native_publish(const uint16_t *plane, uint32_t epoch) 
     if (!stored) {
         p67_blur_native_error=16; out->retired=1; return 0;
     }
+#ifdef CHAOS_BLUR_V2_COLOR
+    if(chaos_v2_algorithm) for(unsigned j=0;j<sizeof(out->buttons);++j)
+        out->buttons[j]=chaos_v2_button_color[j];
+#endif
     p67_blur_native_clean();
     return descriptor;
 }

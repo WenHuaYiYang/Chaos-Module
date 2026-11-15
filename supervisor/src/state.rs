@@ -212,9 +212,12 @@ pub static PAGE_BLUR_PARAMS: [u8; 11] = *b"blurparams\0";
 pub static PAGE_CONNECT_PAIR:[u8;12]=*b"connectpair\0";
 pub static PAGE_ANDROID_PERMISSIONS:[u8;12]=*b"androidperm\0";
 
+pub static PAGE_BLUR_BACKGROUND_PARAMS: [u8; 13] = *b"blurbgparams\0";
+pub static PAGE_BLUR_BUTTON_PARAMS: [u8; 14] = *b"blurbtnparams\0";
+
 pub static PAGE_PLUGIN_PERMISSIONS:[u8;11]=*b"pluginperm\0";
 
-pub const PAGE_COUNT: usize = 56;                   // 注册页数(页0..页55)
+pub const PAGE_COUNT: usize = 58;                   // 注册页数(页0..页57)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

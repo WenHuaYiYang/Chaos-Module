@@ -32,25 +32,53 @@ mod fw_api {
     use super::io;
 }
 #[no_mangle] unsafe extern "C" fn chaos_blur_v2_set_params(p:*const u32,count:u32)->i32 {
-    assert_eq!(count,6);io(|s| {s.calls+=1;if s.busy{return -2145;}
-        s.applied=std::slice::from_raw_parts(p,6).to_vec();0})
+    assert_eq!(count,blur_params::COUNT as u32);io(|s| {s.calls+=1;if s.busy{return -2145;}
+        s.applied=std::slice::from_raw_parts(p,blur_params::COUNT).to_vec();0})
 }
-fn fixture(values:[u16;6])->Vec<u8> {
-    let mut b=b"BVP1".to_vec();for v in values {b.extend(v.to_le_bytes());}
+fn expanded(prefix:[u32;7])->[u32;blur_params::COUNT] {
+    let mut out=blur_params::DEFAULTS;out[..7].copy_from_slice(&prefix);out
+}
+fn encode(magic:&[u8],values:&[u16])->Vec<u8> {
+    let mut b=magic.to_vec();for v in values {b.extend(v.to_le_bytes());}
     b.push(b.iter().fold(0xa5,|a,b|a^b));b
 }
-fn values()->[u32;6] {unsafe{std::array::from_fn(|i|blur_params::get(i))}}
+fn fixture(prefix:[u32;7])->Vec<u8> {encode(b"BVP3",&expanded(prefix).map(|v|v as u16))}
+fn values()->[u32;blur_params::COUNT] {unsafe{std::array::from_fn(|i|blur_params::get(i))}}
 fn main(){unsafe{
     let args:Vec<String>=std::env::args().collect();let case=&args[1];
     match case.as_str() {
         "default" => {assert_eq!(values(),blur_params::DEFAULTS);blur_params::apply();blur_params::apply();io(|s|assert_eq!(s.calls,1));},
         "load" => {io(|s|{s.file=(0..args[2].len()).step_by(2).map(|i|u8::from_str_radix(&args[2][i..i+2],16).unwrap()).collect();s.short=true;});
-            assert_eq!(values(),[40,70,44,75,38,500]);},
-        "valid" => {io(|s|{s.file=fixture([1,10,0,100,0,2000]);s.short=true;});assert_eq!(values(),[1,10,0,100,0,2000]);},
+            assert_eq!(values(),expanded([40,70,31,75,38,500,12]));},
+        "valid" => {io(|s|{s.file=fixture([0,200,200,100,0,5000,40]);s.short=true;});assert_eq!(values(),expanded([0,200,200,100,0,5000,40]));},
         "magic"|"checksum"|"range"|"truncated" => {
-            let mut b=fixture([12,70,44,75,38,500]);
-            match case.as_str(){"magic"=>b[0]=0,"checksum"=>b[16]^=1,"range"=>b=fixture([41,70,44,75,38,500]),_=>{b.pop();}}
+            let mut b=fixture([12,70,31,75,38,500,12]);
+            match case.as_str(){"magic"=>b[0]=0,"checksum"=>{let last=b.len()-1;b[last]^=1;},"range"=>b=fixture([41,70,31,75,38,500,12]),_=>{b.pop();}}
             io(|s|s.file=b);assert_eq!(values(),blur_params::DEFAULTS);
+        },
+        "legacy"|"legacy_range"|"legacy_checksum"|"legacy_truncated"|"v2"|"v2_range" => {
+            let v2=case.starts_with("v2");
+            let mut fields=vec![22u16,80,50,60,30,700];if v2 {fields.push(4);}
+            if case.ends_with("range") {fields[1]=150;}
+            let mut b=encode(if v2 {b"BVP2"}else{b"BVP1"},&fields);
+            if case=="legacy_checksum" {b[16]^=1;}
+            if case=="legacy_truncated" {b.pop();}
+            io(|s|{s.file=b;s.short=true;});
+            if case=="legacy" || case=="v2" {
+                let mut expected=expanded([22,80,if v2 {50}else{40},60,30,700,if v2 {4}else{22}]);expected[20]=700;
+                assert_eq!(values(),expected);
+                assert!(blur_params::set(2,41));expected[2]=41;
+                assert_eq!(io(|s|s.file.clone()),encode(b"BVP3",&expected.map(|v|v as u16)));
+            } else {assert_eq!(values(),blur_params::DEFAULTS);}
+        },
+        "groups" => {
+            for i in 0..blur_params::COUNT {assert!(blur_params::set(i,blur_params::MAX[i]));}
+            assert!(blur_params::reset_group(false));
+            for i in 0..blur_params::COUNT {assert_eq!(values()[i],if [2,3,4,5,6,14,15,16,17,18,19].contains(&i) {blur_params::MAX[i]}else{blur_params::DEFAULTS[i]});}
+            assert!(blur_params::set(0,30));assert!(blur_params::set(1,190));
+            assert!(blur_params::set(10,200));assert!(blur_params::set(20,3000));
+            let before=values();assert!(blur_params::reset_group(true));
+            for i in 0..blur_params::COUNT {assert_eq!(values()[i],if [2,3,4,5,6,14,15,16,17,18,19].contains(&i) {blur_params::DEFAULTS[i]}else{before[i]});}
         },
         "busy" => {
             io(|s|s.busy=true);assert!(blur_params::set(0,30));blur_params::apply();io(|s|assert!(s.applied.is_empty()));
@@ -66,17 +94,18 @@ fn main(){unsafe{
             assert_eq!(blur_params::save_failed(),case!="persist");
             io(|s|{s.fail_after=None;s.open_fail=false;s.close_fail=false;});
             assert!(blur_params::set(0,40));assert!(!blur_params::save_failed());
-            let file=io(|s|s.file.clone());assert_eq!(file,fixture([40,70,44,75,38,500]));
+            let file=io(|s|s.file.clone());assert_eq!(file,fixture([40,70,31,75,38,500,12]));
             let hex:String=file.iter().map(|b|format!("{b:02x}")).collect();
             assert!(std::process::Command::new(&args[0]).args(["load",&hex]).status().unwrap().success());
             assert!(blur_params::reset());assert_eq!(values(),blur_params::DEFAULTS);
-            assert_eq!(io(|s|s.file.clone()),fixture([12,70,44,75,38,500]));
+            assert_eq!(io(|s|s.file.clone()),fixture([12,70,31,75,38,500,12]));
         },
         "bounds" => {
-            for i in 0..6 {let before=values();assert!(!blur_params::set(i,blur_params::MAX[i]+1));assert_eq!(values(),before);
+            for i in 0..blur_params::COUNT {let before=values();assert!(!blur_params::set(i,blur_params::MAX[i]+1));assert_eq!(values(),before);
                 if blur_params::MIN[i]>0{assert!(!blur_params::set(i,blur_params::MIN[i]-1));}
                 assert!(blur_params::set(i,blur_params::MIN[i]));assert!(blur_params::set(i,blur_params::MAX[i]));}
-            assert!(!blur_params::set(6,0));assert_eq!(blur_params::get(6),0);
+            assert!(!blur_params::set(blur_params::COUNT,0));assert_eq!(blur_params::get(blur_params::COUNT),0);
+            blur_params::apply();io(|s|assert_eq!(s.applied,values().to_vec()));
         },
         _=>panic!("unknown scenario"),
     }
