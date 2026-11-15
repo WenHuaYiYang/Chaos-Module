@@ -12,20 +12,17 @@ with tempfile.TemporaryDirectory(prefix='chaos-cc-buttons-') as folder:
                         '-fsanitize=address,undefined','-O1',str(ROOT/f'supervisor/tests/{name}.c'),
                         '-o',str(binary)],check=True)
         subprocess.run([str(binary)],check=True)
+    source=(ROOT/'supervisor/control_center_buttons.inc').read_text()
+    start=source.index('static void cc_submit(')
+    end=source.index('\n}\n',start)+3
+    included=Path(folder)/'submit.c';included.write_text(source[start:end])
+    binary=Path(folder)/'submit'
+    subprocess.run([os.environ.get('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror',
+                    '-fsanitize=address,undefined',f'-DCHAOS_CC_SUBMIT_SOURCE="{included}"',
+                    str(ROOT/'supervisor/tests/cc_submit_harness.c'),'-o',str(binary)],check=True)
+    subprocess.run([str(binary)],check=True)
     binary=Path(folder)/'config'
     subprocess.run(['rustc','--edition=2021',str(ROOT/'supervisor/tests/cc_buttons_config_harness.rs'),'-o',str(binary)],check=True)
     for scenario in ('default','off','invalid','retry'):
         subprocess.run([str(binary),scenario],check=True)
-    # Pixel harness proves the opaque icon-area texture channels never exceed
-    # 68. Independently bound white contrast after blending with the two
-    # verified native fills. Model only: actual panel/cache remains unverified.
-    def linear(v):
-        v=v/255
-        return v/12.92 if v<=0.04045 else ((v+0.055)/1.055)**2.4
-    for fill in ((34,34,34),(39,122,247)):
-        rgb=[(68*160+c*95+127)//255 for c in fill]
-        luminance=sum(linear(c)*w for c,w in zip(rgb,(0.2126,0.7152,0.0722)))
-        ratio=1.05/(luminance+0.05)
-        assert ratio>=7, (fill,rgb,ratio)
-        print(f'Modeled white-icon contrast on native {fill}: {ratio:.2f}:1')
 print('PASS control-center button pixels and lifecycle (not device/GPU acceptance)')

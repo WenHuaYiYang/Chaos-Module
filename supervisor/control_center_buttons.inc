@@ -1,15 +1,17 @@
 /* SPDX-License-Identifier: AGPL-3.0-only
  * p67 / .043 native button glass. The official widget, children, input,
- * checked/pressed state, coordinates and styles are never replaced or changed.
+ * checked/pressed state and coordinates are never replaced. The opaque native
+ * fill is temporarily made translucent and restored on detach.
  * Each owned texture is written only after a GPU fence, never from a draw or
  * DELETE callback. Destruction of widgets merely retires the texture. */
 #include "control_center_button_pixels.h"
 #define CC_BUTTON_LIMIT 16u
 #define CC_BUTTON_CLASS 0x2cdb9d6cu
-struct cc_button { uint32_t object,root,generation,image,stamp; unsigned ready,w,h,radius; int x,y; };
+struct cc_button { uint32_t object,root,generation,image,stamp; unsigned ready,w,h,radius,scale,original_opa,tinted; int x,y; };
 static struct cc_button cc_buttons[CC_BUTTON_LIMIT];
 static uint32_t cc_serial,cc_draws,cc_updates,cc_failures;
 static unsigned cc_working;
+static unsigned cc_scan_ticks;
 static void cc_button_event(void *event);
 
 #ifndef CHAOS_CC_BUTTONS_HOST
@@ -21,6 +23,7 @@ static uint32_t cc_root(void) {
     uint32_t root=load32(0x2010fe50u);
     return p67_live(root) && load32(root)==0x2cdba8b4u?root:0;
 }
+static uint32_t cc_root_slot(void) { return load32(0x2010fe50u); }
 static int cc_live(uint32_t object) { return p67_live(object); }
 static uint32_t cc_class(uint32_t object) { return load32(object); }
 static int cc_attached(uint32_t object,uint32_t root) {
@@ -57,6 +60,14 @@ static void cc_coords(uint32_t object,int *area) {
 static unsigned cc_radius(uint32_t object) {
     return ((uint32_t (*)(uint32_t,uint32_t,uint32_t))(uintptr_t)
         P67_NATIVE(0x0c1068a9u))(object,0,12);
+}
+static unsigned cc_opacity(uint32_t object) {
+    return ((uint32_t (*)(uint32_t,uint32_t,uint32_t))(uintptr_t)
+        P67_NATIVE(0x0c1068a9u))(object,0,29);
+}
+static void cc_set_opacity(uint32_t object,unsigned opacity) {
+    ((void (*)(uint32_t,uint32_t,uint32_t))(uintptr_t)
+        P67_NATIVE(0x0c5883f9u))(object,opacity,0);
 }
 static int cc_fence(void) { return p67_blur_native_fence() && cc_idle(); }
 static int cc_moving(void) { return p67_surfaces[0].moving; }
@@ -98,11 +109,16 @@ static void cc_submit(uint32_t layer,uint32_t image,const int *area) {
     uint32_t descriptor[28];
     ((void (*)(void *))(uintptr_t)P67_NATIVE(0x0c5882b9u))(descriptor);
     descriptor[7]=image;
+    unsigned w=(unsigned)(area[2]-area[0]+1),h=(unsigned)(area[3]-area[1]+1);
+    unsigned scale=!(w&1u) && !(h&1u)?2u:1u;
+    int source_area[4]={area[0],area[1],area[0]+(int)(w/scale)-1,area[1]+(int)(h/scale)-1};
+    descriptor[12]=descriptor[13]=256u*scale;
+    descriptor[16]=descriptor[17]=0;
     /* Stronger official blue/pressed-state contribution, while the bounded
      * dark glass above it keeps white icons readable on bright wallpaper. */
-    ((unsigned char *)descriptor)[76]=160u;
+    ((unsigned char *)descriptor)[76]=192u;
     ((void (*)(uint32_t,const void *,const int *))(uintptr_t)
-        P67_NATIVE(0x0c5882a1u))(layer,descriptor,area);
+        P67_NATIVE(0x0c5882a1u))(layer,descriptor,source_area);
 }
 #endif
 
@@ -120,8 +136,8 @@ static void cc_button_event(void *event) {
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
         struct cc_button *b=&cc_buttons[i];
         if(b->object!=object || b->generation!=generation) continue;
-        if(code==36) { b->object=0;b->ready=0;return; }
-        if(cc_working || !cc_wanted() || !b->ready || !b->image || b->root!=cc_root() ||
+        if(code==36) { b->object=0;b->ready=0;b->tinted=0;cc_scan_ticks=0;return; }
+        if(cc_working || !cc_wanted() || !b->ready || !b->image || b->root!=cc_root_slot() ||
            !cc_attached(object,b->root) || !words[4]) return;
         int area[4];cc_coords(object,area);
         if(area[2]-area[0]+1!=(int)b->w || area[3]-area[1]+1!=(int)b->h) return;
@@ -144,20 +160,34 @@ static void cc_detach(struct cc_button *b) {
     uint32_t object=b->object,generation=b->generation;
     b->ready=0;b->object=0;
     if(!object || !cc_live(object)) return;
+    if(b->tinted && cc_opacity(object)==96u) cc_set_opacity(object,b->original_opa);
+    b->tinted=0;
+    if(!cc_live(object)) return;
     uint32_t *record=cc_record(object);
     if(record && record[1]==generation && record[2]==0) cc_remove(object);
     if(cc_live(object)) cc_invalidate(object);
 }
 static void cc_buttons_poll(void) {
+    if(!cc_wanted() && !cc_resources()) return;
+    /* Draw events use the native GPU image path and raw root identity. Bound
+     * expensive integrity scans to one in eight owner polls when cached. */
+    if(cc_wanted() && cc_scan_ticks && cc_root_slot()==cc_buttons[0].root) {
+        unsigned complete=1;
+        for(unsigned i=0;i<CC_BUTTON_LIMIT;++i)
+            if(cc_buttons[i].image && !cc_buttons[i].object) complete=0;
+            else if(cc_buttons[i].object && !cc_buttons[i].ready) complete=0;
+        if(complete && ++cc_scan_ticks<=8u) return;
+    }
     if(cc_working || !cc_idle()) return;
     cc_working=1;
     uint32_t root=cc_wanted()?cc_root():0;
     struct cc_scan scan={0};
     if(root) cc_walk(root,cc_find,&scan);
-    if(scan.overflow || root!=(cc_wanted()?cc_root():0)) { ++cc_failures;goto done; }
+    if(scan.overflow || (root && root!=cc_root_slot())) { ++cc_failures;goto done; }
+    cc_scan_ticks=root?1u:0u;
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
         struct cc_button *b=&cc_buttons[i];
-        if(b->object && (b->root!=root || !cc_seen(&scan,b->object) || !cc_live(b->object))) cc_detach(b);
+        if(b->object && (b->root!=root || !cc_seen(&scan,b->object))) cc_detach(b);
         if(b->object) {
             uint32_t *record=cc_record(b->object);
             if(!record || record[1]!=b->generation || record[2]!=0) cc_detach(b);
@@ -175,7 +205,7 @@ static void cc_buttons_poll(void) {
         uint32_t generation=b->generation;
         uint32_t *added=cc_add(object,generation);
         if(b->object!=object || b->generation!=generation) continue;
-        uint32_t *record=cc_live(object)?cc_record(object):0;
+        uint32_t *record=cc_record(object);
         if(!added || !record || record[1]!=generation || record[2]!=0) cc_detach(b);
     }
     /* One fence per changed batch, not one fence or snapshot per button/frame. */
@@ -193,33 +223,41 @@ static void cc_buttons_poll(void) {
         if(!have_source || !cc_attached(b->object,root)) continue;
         int area[4];cc_coords(b->object,area);
         int w=area[2]-area[0]+1,h=area[3]-area[1]+1;
-        if(w<1 || h<1 || w>160 || h>128 || area[0]>335 || area[1]>479 || area[2]<0 || area[3]<0) continue;
+        if(w<1 || h<1 || w>160 || h>128) continue;
         unsigned radius=cc_radius(b->object);
-        if(b->ready && b->stamp==stamp && b->x==area[0] && b->y==area[1] &&
+        if(b->ready && b->stamp==stamp &&
            b->w==(unsigned)w && b->h==(unsigned)h && b->radius==radius) continue;
-        /* Freeze existing local pixels during native scroll; refresh their
-         * wallpaper crop when the page settles, without hiding the button. */
-        if(b->ready && cc_moving()) continue;
+        /* Position-only movement never regenerates pixels. Source publication
+         * or shape changes update the cache only outside native panel motion. */
+        if(cc_moving()) continue;
         uint32_t object=b->object,generation=b->generation,current_stamp;
         if(!fenced) { if(!cc_fence()) break;fenced=1; }
-        if(!cc_wanted() || cc_root()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
+        if(!cc_wanted() || cc_root_slot()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
         if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
         if(b->image && (b->w!=(unsigned)w || b->h!=(unsigned)h)) {
             uint32_t old=b->image;b->image=0;b->ready=0;cc_free(old);
             if(b->object!=object || b->generation!=generation) continue;
         }
-        if(!b->image) b->image=cc_alloc((unsigned)w,(unsigned)h);
+        unsigned scale=!(w&1) && !(h&1)?2u:1u;
+        unsigned tw=(unsigned)w/scale,th=(unsigned)h/scale;
+        if(!b->image) b->image=cc_alloc(tw,th);
         if(b->object!=object || b->generation!=generation || !b->image) { ++cc_failures;continue; }
         unsigned char *out;unsigned stride,size;
-        if(!cc_buffer(b->image,(unsigned)w,(unsigned)h,&out,&stride,&size) ||
-           !cc_glass_pixels(&source,out,(unsigned)w,(unsigned)h,stride,size,area[0],area[1],radius)) {
+        int x=area[0]<0?0:area[0]>336-w?336-w:area[0];
+        int y=area[1]<0?0:area[1]>480-h?480-h:area[1];
+        if(!cc_buffer(b->image,tw,th,&out,&stride,&size) ||
+           !cc_glass_pixels_scaled(&source,out,tw,th,stride,size,x,y,radius/scale,scale)) {
             b->ready=0;++cc_failures;continue;
         }
         cc_sync(b->image);
         if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
         b->w=(unsigned)w;b->h=(unsigned)h;b->x=area[0];b->y=area[1];
-        b->radius=radius;b->stamp=stamp;b->ready=1;++cc_updates;
-        cc_invalidate(object);
+        b->radius=radius;b->scale=scale;b->stamp=stamp;b->ready=1;++cc_updates;
+        if(!b->tinted) {
+            b->original_opa=cc_opacity(object);b->tinted=1;
+            cc_set_opacity(object,96u);
+        }
+        if(b->object==object && b->generation==generation) cc_invalidate(object);
     }
 done:
     cc_working=0;

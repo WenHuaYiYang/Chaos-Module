@@ -37,6 +37,9 @@ def verify(data):
     assert ('w',obj,156) in sizes and ('h',obj,128) in sizes
     assert (obj,12,36,0) in styles
     assert any(s[:3]==(obj,28,0x222222) for s in styles)
+    # Run the actual background-opacity wrapper into the generic style seam.
+    m.call(0x0C5883F9,obj,96,0)
+    assert (obj,29,96,0) in styles
     # ROM memset used by the exact 112-byte image draw initializer.
     m.u.mem_map(0x00270000,0x10000)
     def memset(u):
@@ -52,7 +55,8 @@ def verify(data):
     source=(ROOT/'supervisor/control_center_buttons.inc').read_text()
     assert '#define CC_BUTTON_CLASS 0x2cdb9d6cu' in source
     assert 'P67_NATIVE(0x0c1068a9u))(object,0,12)' in source
-    assert 'descriptor[7]=image' in source and 'descriptor)[76]=160u' in source
+    assert 'descriptor[12]=descriptor[13]=256u*scale' in source
+    assert 'descriptor[7]=image' in source and 'descriptor)[76]=192u' in source
     print('PASS actual .043: LVX button class/parent, 156x128, radius36, native gray fill, image draw size/scale/opacity ABI')
     print('NOT VERIFIED: native display rendering, GPU alpha/cache acceptance, simulator/device visuals or frame time')
 
