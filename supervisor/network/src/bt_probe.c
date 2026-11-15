@@ -207,8 +207,8 @@ static int prepare(void)
         int rc_get=exchange(0x23,0,0,verify,sizeof(verify));
         uint32_t q=lock();
         state.result_name=rc_set;state.result_name_read=rc_get;
-        for(unsigned i=0;i<32;i++)state.local_name[i]=(char)verify[i];
-        state.local_name[32]=0;unlock(q);
+        for(unsigned i=0;i+1<sizeof(state.local_name);i++)state.local_name[i]=(char)verify[i];
+        state.local_name[sizeof(state.local_name)-1]=0;unlock(q);
     }
     return 0;
 }

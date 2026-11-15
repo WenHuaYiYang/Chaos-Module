@@ -8,6 +8,7 @@
 static uint32_t wf_root=100,record[3],display_record[3],host_display=200;
 static unsigned display_count,wakes,wake_fail,wake_reenter,wake_reset,wake_delete;
 static unsigned copy_display_delete,publish_display_delete,copy_display_change,publish_display_change;
+static unsigned same_pixels,cache_commits;
 static unsigned count,adds,copies,publishes,retires,maintains,fail_copy,fail_publish,wf_visible=1;
 static unsigned delete_copy,reset_publish,phase,exit_copy,exit_publish;
 static unsigned owner_safe=1,owner_checks,native_calls;
@@ -44,6 +45,8 @@ static void event(unsigned);
 #define P67_BLUR_DISPLAY_REMOVE(d,c) remove_cb(d,(uint32_t)(uintptr_t)c)
 #define P67_BLUR_VISIBLE() wf_visible
 #define P67_BLUR_COPY(p,i) copy(p,i)
+#define P67_BLUR_COPY_UNCHANGED() same_pixels
+#define P67_BLUR_DID_PUBLISH() (++cache_commits)
 #define P67_BLUR_PUBLISH(p,e) publish(p,e)
 #define P67_BLUR_RETIRE(s) retire(s)
 #define P67_BLUR_MAINTAIN() maintain()
@@ -452,6 +455,18 @@ int main(void) {
  diagnostics();poll(1);event(52);event(53);
  cleanup_budget();
  entry_policy();
+ /* Identical snapshots must reuse the published source, while all owner /
+  * root / display / generation checks still precede the reuse decision. */
+ p67_blur_entry_scoped=0;p67_blur_allowed_entries=0;poll(1);event(52);event(53);
+ assert(p67_blur_source);old=p67_blur_source;
+ unsigned old_publishes=publishes,old_copies=copies,old_commits=cache_commits;
+ same_pixels=1;p67_blur_request();event(52);
+ assert(copies==old_copies+1 && publishes==old_publishes && cache_commits==old_commits);
+ assert(p67_blur_source==old && !p67_blur_pending && !p67_blur_armed);
+ p67_blur_request();wrong_identity=1;event(52);
+ assert(p67_blur_core_gate==6 && p67_blur_pending && publishes==old_publishes);
+ poll(1);event(52);same_pixels=0;p67_blur_request();event(52);event(53);
+ assert(publishes==old_publishes+1 && cache_commits==old_commits+1);
  /* Demand-off clears logical state even while owner gates are closed. */
  owner_safe=0;before=native_calls;p67_blur_watch(0);
  assert(!p67_blur_source && !p67_blur_pending && !p67_blur_armed && native_calls==before);

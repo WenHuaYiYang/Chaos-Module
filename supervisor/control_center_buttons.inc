@@ -194,6 +194,7 @@ static void cc_update_pixels(int frame) {
     int atlas_dirty=!cc_atlas_ready || cc_atlas_source!=stamp || cc_atlas_params!=CC_PARAM_EPOCH();
     uint32_t changed[CC_BUTTON_LIMIT]={0},generations[CC_BUTTON_LIMIT]={0};
     unsigned visible=0,flushed=0;
+    unsigned source_changed=atlas_dirty;
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
         struct cc_button *b=&cc_buttons[i];
         if(!b->object) continue;
@@ -213,7 +214,12 @@ static void cc_update_pixels(int frame) {
             if(b->object!=object || b->generation!=generation) continue;
             b->applied_opa=tint;
         }
-        if(!shape && !atlas_dirty && b->stamp==cc_atlas_serial && (!frame || (b->x==area[0] && b->y==area[1]))) continue;
+        /* Half-resolution sprites do not change when both origins still
+         * address the same atlas texel. Keep exact truncation at negative edges. */
+        int same_position=b->x==area[0] && b->y==area[1];
+        if(b->scale==2 && b->x>=0 && b->y>=0 && area[0]>=0 && area[1]>=0)
+            same_position=b->x/2==area[0]/2 && b->y/2==area[1]/2;
+        if(!shape && !atlas_dirty && b->stamp==cc_atlas_serial && (!frame || same_position)) continue;
         if(!fenced) {if(!cc_fence())break;fenced=1;}
         if(!cc_wanted() || cc_root_slot()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
         if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
@@ -249,7 +255,7 @@ static void cc_update_pixels(int frame) {
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) if(changed[i]) {
         if(!flushed) {cc_flush();flushed=1;}
         if(cc_buttons[i].object==changed[i] && cc_buttons[i].generation==generations[i] &&
-           cc_root_slot()==root) cc_invalidate(changed[i]);
+           cc_root_slot()==root && (!frame || source_changed)) cc_invalidate(changed[i]);
     }
     /* Source capture is bounded separately from sprite updates. Replenish the
      * existing safe START budget; never capture a framebuffer containing icons. */

@@ -55,7 +55,9 @@ int main(void){
     uint8_t device[64]={1,2,3,4,5,6};memcpy(device+12,"Phone",6);radio_gap_device(0,device);
     char name[32];assert(chaos_connect_pair_name(0,name,32)==5&&!strcmp(name,"Phone"));
     chaos_connect_pair_device(0);step(1);assert(commands[0x69]==1&&!commands[94]);
-    now+=800;step(1);assert(commands[94]==1);
+    unsigned queries=commands[92];
+    for(unsigned i=0;i<4;++i){now+=100;step(1);}assert(commands[92]==queries);
+    now+=400;step(1);assert(commands[94]==1 && commands[92]==queries+1);
     bond_mode=1;now+=4000;step(1);assert(commands[94]==1);bond_mode=0;
     radio_gap_pair(0,device);step(1);assert(commands[0x61]==1);
     radio_gap_display(0,device,1,0,123456);step(1);assert(commands[0x62]==1);

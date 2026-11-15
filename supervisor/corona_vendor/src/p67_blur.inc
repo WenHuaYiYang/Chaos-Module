@@ -6,6 +6,12 @@
 #ifndef P67_BLUR_COPY
 #define P67_BLUR_COPY(plane, identity) 0
 #endif
+#ifndef P67_BLUR_COPY_UNCHANGED
+#define P67_BLUR_COPY_UNCHANGED() 0
+#endif
+#ifndef P67_BLUR_DID_PUBLISH
+#define P67_BLUR_DID_PUBLISH() ((void)0)
+#endif
 #ifndef P67_BLUR_PUBLISH
 #define P67_BLUR_PUBLISH(plane, epoch) 0
 #endif
@@ -367,6 +373,15 @@ static void p67_blur_display_event(void *event) {
  if(!p67_blur_display_valid()) { p67_blur_core_gate=4; goto done; }
  if(!p67_blur_root_registered) { p67_blur_core_gate=5; goto done; }
  if(identity!=p67_blur_root || identity!=P67_BLUR_WATCHFACE()) { p67_blur_core_gate=6; goto done; }
+ /* Equal raw pixels + equal material epoch reuse the immutable output.
+  * Snapshot/identity checks still run, so animated faces and app/root changes
+  * are observed without lowering the configured sampling cadence. */
+ if(p67_blur_source && P67_BLUR_COPY_UNCHANGED()) {
+  if(request==p67_blur_request_serial) {
+   p67_blur_pending=0; p67_blur_armed=0; p67_blur_request_wake=0;
+  }
+  p67_blur_core_gate=10; goto done;
+ }
  (void)rh_blur_filter_rgb565(p67_blur_plane,p67_blur_work,P67_BLUR_WIDTH,P67_BLUR_HEIGHT,2,2,P67_BLUR_DARKEN_PERCENT);
  next=P67_BLUR_PUBLISH(p67_blur_plane,epoch);
  if(!next) {
@@ -384,6 +399,7 @@ static void p67_blur_display_event(void *event) {
  if(p67_blur_core_gate) { P67_BLUR_RETIRE(next); goto done; }
  ++p67_blur_publishes;
  old=p67_blur_source; p67_blur_source=next;
+ P67_BLUR_DID_PUBLISH();
  if(old && old!=next) P67_BLUR_RETIRE(old);
  if(request==p67_blur_request_serial) {
   p67_blur_pending=0; p67_blur_armed=0; p67_blur_request_wake=0;

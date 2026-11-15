@@ -41,6 +41,7 @@ static uint16_t handle;
 static void *session;
 static uint32_t packet_id,request_epoch,prefix,client_android;
 static uint32_t owner_init,bt_init,owner_period,bt_period;
+static uint32_t attach_last,attach_epoch=~0u;
 static uint64_t owner_timer[(TIMER_SIZE+7)/8],bt_timer[(TIMER_SIZE+7)/8];
 static void *boot_timer;
 static uint32_t lock(void){uint32_t p;__asm__ volatile("mrs %0, primask\n\tcpsid i":"=r"(p)::"memory");return p;}
@@ -158,11 +159,17 @@ static int bt_start(uint32_t period){
 static void poll(void){
     cc_radio_log_owner();
     if(reset_pending){cc_files_reset();reset_pending=0;session=0;prefix=0;}
-    if(!wanted||!started){attach(1);return;}attach(0);if(!bt_init)(void)bt_start(20);
+    uint32_t now=chaos_connect_now_ms();
+    /* A connection-list scan masks interrupts. Discover new legacy links at
+     * 4 Hz, with an immediate pass for every enable/disable epoch. */
+    if(attach_epoch!=epoch || now-attach_last>=250u){
+        attach_epoch=epoch;attach_last=now;attach(!wanted||!started);
+    }
+    if(!wanted||!started)return;if(!bt_init)(void)bt_start(20);
     if(session&&!live_session(client_android,handle,session)){cc_files_reset();session=0;prefix=0;}
     extern uint32_t chaos_connect_now_ms(void);
     if(cc_files_tick(chaos_connect_now_ms())){session=0;prefix=0;}
-    for(unsigned served=0;served<RX_SLOTS&&tx_free()>=3;served++){
+    for(unsigned served=0;served<2u&&tx_free()>=3;served++){
         if(!wanted||!started)break;
         uint32_t slot=rx_read;if(rx[slot].state!=2)break;
         struct request *r=&rx[slot];struct cc_frame f;
@@ -180,7 +187,7 @@ static void poll(void){
     if(tx[tx_read].state==2)(void)bt_start(2);
 }
 static int owner_start(uint32_t period);
-static void owner_tick(void *unused){(void)unused;poll();(void)owner_start(!started?1000:rx[rx_read].state==2?2:10);}
+static void owner_tick(void *unused){(void)unused;poll();(void)owner_start(!started?1000:rx[rx_read].state==2?2:20);}
 static int owner_start(uint32_t period){
     void *loop=*(void *volatile *)(uintptr_t)OWNER_LOOP;if(!loop)return -1;if(owner_period==period)return 0;
     if(!owner_init){if(FN(TIMER_INIT,init_fn)(loop,owner_timer))return -1;owner_init=1;}

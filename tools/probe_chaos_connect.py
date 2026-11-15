@@ -104,7 +104,10 @@ def main():
         receive_frame(frame(1,1),0x12340001);call(syms['owner_tick']);assert word(syms['test_dispatches'])==1 and word(syms['test_chunk'])==2048
         call(syms['bt_tick']);call(syms['bt_tick']);assert attempts[0]==attempts[1] # retry uses pristine plaintext
         for i in range(8):receive_frame(frame(0x31,i+2,bytes([i])*2048),0x12340002+i)
-        call(syms['owner_tick']);call(syms['bt_tick']);assert word(syms['test_dispatches'])==9
+        before_batch=word(syms['test_dispatches'])
+        call(syms['owner_tick']);assert word(syms['test_dispatches'])==before_batch+2
+        for _ in range(3):call(syms['owner_tick'])
+        call(syms['bt_tick']);assert word(syms['test_dispatches'])==9
         assert bytes(m.u.mem_read(crypto,64))==before
         # Closing is immediate, even before the maintenance stop callback.
         # Queue an already-accepted request and a reply, then close at the UI gate.

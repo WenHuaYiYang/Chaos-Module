@@ -151,7 +151,18 @@ pub mod fw_api {
     pub fn nsh_usleep(_: u32) {}
 }
 
-pub mod page { pub trait Page: Sync { fn fill_title(&self, _: *mut u8); fn render(&self, _: &crate::PageCtx) -> crate::PageResult; fn on_click(&self, _: usize); fn is_switch_row(&self, _: usize) -> bool { false } fn on_switch(&self, _: usize) {} fn needs_tick(&self) -> bool { false } fn tick(&self) {} } }
+#[path="../src/page/kit/row.rs"] mod menu_row;
+pub mod page {
+    pub trait Page: Sync { fn fill_title(&self, _: *mut u8); fn render(&self, _: &crate::PageCtx) -> crate::PageResult; fn on_click(&self, _: usize); fn is_switch_row(&self, _: usize) -> bool { false } fn on_switch(&self, _: usize) {} fn needs_tick(&self) -> bool { false } fn tick(&self) {} }
+    pub mod kit {
+        pub use crate::menu_row::*;
+        pub trait MenuSpec {fn rows(&self)->&'static [RowModel];}
+        pub unsafe fn menu_click<T:MenuSpec>(spec:&T,i:usize){if let Some(row)=spec.rows().get(i){if let RowKind::Nav(pid)=row.kind{crate::nav_goto(pid,0);}}}
+    }
+    pub mod frame {pub unsafe fn build<T:super::kit::MenuSpec>(_:&T,_:&crate::PageCtx,_:u32)->crate::PageResult{Ok(())}}
+}
+
+
 pub mod keyboard { #[derive(Clone, Copy)] pub enum Completion { WebPassword } pub unsafe fn open(_: *const u8, _: Completion) {} }
 
 #[no_mangle] pub extern "C" fn chaos_pan_enable(on:i32) { let mut s=host_state().lock().unwrap();s.pan_enable_calls+=1;if s.auto_apply_pan{s.network.enabled=(on!=0)as u32;} }

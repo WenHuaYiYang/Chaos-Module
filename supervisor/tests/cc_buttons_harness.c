@@ -10,7 +10,7 @@ static struct node nodes[6];
 static unsigned wanted,idle=1,fence_ok=1,source_ready=1,stamp=1;
 static unsigned fences,allocs,frees,syncs,draws,fail_alloc,fail_add,bad_buffer,delete_alloc;
 static uint32_t root=10;
-static unsigned root_checks,walks,flushes,requests,now_ms,awake=1;
+static unsigned root_checks,walks,flushes,requests,now_ms,awake=1,invalidates;
 static uint32_t params[6]={12,70,44,75,38,500},params_epoch=1;
 #define CC_PARAM(i) params[i]
 #define CC_PARAM_EPOCH() params_epoch
@@ -29,7 +29,7 @@ static void cc_walk(uint32_t r,int(*cb)(uint32_t,void*),void *p){++walks;for(uns
 static uint32_t *cc_record(uint32_t id){return node(id)->record[0]?node(id)->record:0;}
 static uint32_t *cc_add(uint32_t id,uint32_t generation){if(fail_add)return 0;uint32_t *r=node(id)->record;r[0]=1;r[1]=generation;r[2]=0;return r;}
 static void cc_remove(uint32_t id){node(id)->record[0]=0;}
-static void cc_invalidate(uint32_t id){assert(cc_live(id));}
+static void cc_invalidate(uint32_t id){assert(cc_live(id));++invalidates;}
 static void cc_coords(uint32_t id,int *area){memcpy(area,node(id)->area,16);}
 static unsigned cc_radius(uint32_t id){return node(id)->radius;}
 static unsigned cc_opacity(uint32_t id){return node(id)->opacity;}
@@ -77,14 +77,15 @@ int main(void){
     unsigned allocated=allocs,synced=syncs,walk_before=walks,flushed=flushes;
     for(unsigned y=0;y<480;++y)for(unsigned x=0;x<336;++x)
         memset(source_pixels+y*1008+x*3,y/2,3);
-    ++stamp;cc_buttons_frame();u=cc_updates;f=fences;flushed=flushes;
+    ++stamp;cc_buttons_frame();u=cc_updates;f=fences;flushed=flushes;unsigned inv=invalidates;
     /* Native START sees updated coordinates every frame, even if owner poll
      * has not run. No allocation, decoder eviction or tree scanning. */
     for(unsigned i=1;i<=120;++i) {
         node(11)->area[1]=20+(int)i;node(11)->area[3]=147+(int)i;
         node(12)->area[0]=88+(int)(i%20);node(12)->area[2]=247+(int)(i%20);
         cc_buttons_frame();draw(11);
-        assert(fences==f+i && flushes==flushed+i && cc_updates==u+i*2);
+        assert(fences==f+i/2 && flushes==flushed+i/2 && cc_updates==u+(i/2)*2);
+        assert(invalidates==inv); /* Geometry is already dirty; do not schedule another frame. */
         struct cc_button *b=&cc_buttons[0];
         unsigned char *center=images[b->image].pixels+32*78*4+39*4;
         assert(center[0]==(unsigned)((((20+i+64)/2)*44+50)/100));

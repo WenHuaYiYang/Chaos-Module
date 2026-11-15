@@ -129,6 +129,8 @@ static int chaos_cc_buttons_demand(void) {
     return chaos_corona_enabled && chaos_v2_algorithm && chaos_cc_buttons_requested;
 }
 #define P67_BLUR_EXTRA_DEMAND() chaos_cc_buttons_demand()
+#define P67_BLUR_COPY_UNCHANGED() chaos_v2_unchanged()
+#define P67_BLUR_DID_PUBLISH() (chaos_v2_cached_ready=chaos_v2_algorithm)
 static void cc_buttons_frame(void);
 #define P67_BLUR_FRAME_READY() cc_buttons_frame()
 #define CC_PARAM(i) chaos_v2_params[i]

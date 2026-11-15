@@ -24,7 +24,7 @@ static uint8_t radio_selected[6];
 static volatile unsigned radio_outgoing;
 static volatile uint32_t radio_bond_state,radio_bond_transport,radio_bond_reason,radio_display_kind=0xffffffffu;
 static int32_t radio_acl_result,radio_bond_result;
-static uint32_t radio_bond_attempts,radio_bond_retry,radio_visibility_check;
+static uint32_t radio_bond_attempts,radio_bond_retry,radio_visibility_check,radio_bond_query;
 #ifndef CHAOS_CONNECT_RADIO_HOST
 static unsigned radio_system_pair_gate(void){return *(volatile uint8_t *)(uintptr_t)0x201264a4u;}
 static void radio_set_system_pair_gate(unsigned value){*(volatile uint8_t *)(uintptr_t)0x201264a4u=(uint8_t)value;}
@@ -131,10 +131,12 @@ static void radio_read(void *pipe,const uint8_t *bytes,int32_t count){
     if(pipe!=radio_pipe)return;
     if(count<0){radio_close_request=1;return;}
     if(!bytes||!count)return;
-    for(int32_t i=0;i<count;++i){
-        if(radio_input_used>=sizeof(radio_input)){radio_fail(15,-90);radio_close_request=1;return;}
-        radio_input[radio_input_used++]=bytes[i];
-        if(radio_input_used==4){
+    while(count>0){
+        unsigned target=radio_input_need?radio_input_need:4u;
+        if(radio_input_used>=target || target>sizeof(radio_input)){radio_fail(15,-90);radio_close_request=1;return;}
+        unsigned take=target-radio_input_used;if(take>(unsigned)count)take=(unsigned)count;
+        copy(radio_input+radio_input_used,bytes,take);radio_input_used+=take;bytes+=take;count-=(int32_t)take;
+        if(radio_input_used==4 && !radio_input_need){
             uint32_t n=0;for(unsigned j=0;j<4;++j)n|=(uint32_t)radio_input[j]<<(8*j);
             if(n<CC_HEADER||n>CC_MAX_WIRE){radio_fail(15,-90);radio_close_request=1;return;}
             radio_input_need=n+4;
@@ -248,15 +250,19 @@ static void cc_radio_service(unsigned enabled){
         if(radio_pair_until){
             (void)radio_exchange(31,0,0,0,0);
             radio_acl_result=radio_exchange(0x69,selected,6,0,0);
-            radio_bond_retry=now+800u; /* ACL connect is asynchronous. */
+            radio_bond_retry=now+800u;radio_bond_query=now-500u; /* ACL connect is asynchronous. */
             if(radio_acl_result==-618){radio_fail(9,radio_acl_result);radio_outgoing=0;}
         }
     }
     if(radio_outgoing&&radio_pair_until){
         uint8_t query[7],bond=0;copy(query,radio_pair_peer,6);query[6]=1;
-        int rc=radio_exchange(92,query,7,&bond,1);
-        if(!rc){radio_bond_transport=1;radio_bond_state=bond;
-            if(bond==2&&radio_bond_reason==0&&radio_bond_attempts==0)radio_bond_done=1;
+        /* GAP callbacks carry immediate changes. IPC is a bounded fallback,
+         * not a synchronous round-trip on every 100 ms worker iteration. */
+        if(now-radio_bond_query>=500u) {
+            radio_bond_query=now;int rc=radio_exchange(92,query,7,&bond,1);
+            if(!rc){radio_bond_transport=1;radio_bond_state=bond;
+                if(bond==2&&radio_bond_reason==0&&radio_bond_attempts==0)radio_bond_done=1;
+            }
         }
         if(!radio_bond_done && radio_bond_state!=1 && (int32_t)(now-radio_bond_retry)>=0){
             if(radio_bond_attempts>=6){radio_fail(10,radio_bond_result?radio_bond_result:-110);radio_outgoing=0;}

@@ -45,12 +45,17 @@ static int cc_copy_atlas(const uint32_t *atlas,unsigned char *out,unsigned w,uns
                          unsigned stride,unsigned size,int left,int top,unsigned scale) {
     if(!atlas || !out || ((uintptr_t)out&3u) || (stride&3u) || !w || !h || w>160 || h>128 || stride<w*4 || stride>1024 || size<stride*h ||
        (scale!=1 && scale!=2) || left < -1024 || left>1024 || top < -2048 || top>2048) return 0;
+    unsigned columns[160];
+    for(unsigned x=0;x<w;++x) {
+        int sx=(left+(int)(x*scale))/2;if(sx<0)sx=0;if(sx>167)sx=167;columns[x]=(unsigned)sx;
+    }
     for(unsigned y=0;y<h;++y) {
         int sy=(top+(int)(y*scale))/2;if(sy<0)sy=0;if(sy>239)sy=239;
+        const uint32_t *line=atlas+(unsigned)sy*CC_ATLAS_W;
         for(unsigned x=0;x<w;++x) {
-            int sx=(left+(int)(x*scale))/2;if(sx<0)sx=0;if(sx>167)sx=167;
             unsigned char *q=out+y*stride+x*4;unsigned a=q[3];
-            uint32_t pixel=atlas[(unsigned)sy*CC_ATLAS_W+(unsigned)sx];
+            uint32_t pixel=line[columns[x]];
+            if(!a) continue;
             /* Fully covered interior is one word copy. Only rounded-edge
              * pixels need premultiplication; alpha geometry is never rerun. */
             if(a==255u) { *(uint32_t *)(void *)q=pixel;continue; }

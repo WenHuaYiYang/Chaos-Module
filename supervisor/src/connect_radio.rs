@@ -25,6 +25,8 @@ pub(crate) fn ensure_worker(){
 static mut STATUS:[u8;96]=[0;96];
 static mut DIAGNOSTICS:[u8;160]=[0;160];
 static mut NAMES:[[u8;64];6]=[[0;64];6];
+#[path="row_text_cache.rs"] mod row_text_cache;
+static mut ROW_CACHE:row_text_cache::TextCache<8,160>=row_text_cache::TextCache::EMPTY;
 static mut TICKS:u32=0;
 pub(crate) unsafe fn start(){
     if !crate::bridge_cfg::enabled(){crate::bridge_cfg::toggle();}
@@ -84,14 +86,15 @@ pub(crate) static PAGE:PairPage=PairPage;
 impl MenuSpec for PairPage{fn rows(&self)->&'static [RowModel]{ROWS}}
 impl Page for PairPage{
     fn fill_title(&self,p:*mut u8){unsafe{put_str(p,"蓝牙配对\0".as_bytes());}}
-    fn render(&self,c:&PageCtx)->PageResult{unsafe{frame::build(self,c,c.title)}}
+    fn render(&self,c:&PageCtx)->PageResult{unsafe{ROW_CACHE.reset();frame::build(self,c,c.title)}}
     fn on_click(&self,i:usize){unsafe{kit::menu_click(self,i)}}
     fn needs_tick(&self)->bool{true}
     fn tick(&self){unsafe{
+        if !fw_api::screen_is_on(){return;}
         TICKS=TICKS.wrapping_add(1);if TICKS%5!=0{return;}
         for slot in 1..9 {
             let row=read_volatile(page_rows_ptr(Pid::ConnectPair as usize).add(slot));
-            if row!=0{let text=if slot==1{status()}else if slot==2{diagnostics()}else{name(slot-3)};fw_api::row_update(row,fw_api::NONE_PTR,fw_api::NONE_PTR,text,0,0);}
+            if row!=0{let text=if slot==1{status()}else if slot==2{diagnostics()}else{name(slot-3)};if ROW_CACHE.changed(slot-1,row,text){fw_api::row_update(row,fw_api::NONE_PTR,fw_api::NONE_PTR,text,0,0);}}
         }
     }}
 }
