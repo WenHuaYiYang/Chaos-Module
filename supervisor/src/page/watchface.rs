@@ -2,6 +2,7 @@
 
 use crate::page::*;
 use crate::page::Page;
+use crate::page::kit::{MenuSpec, RowModel, ToggleDef};
 
 // ===== 页8/9: 表盘列表(切换/轮换) =====
 
@@ -15,6 +16,18 @@ impl Page for WatchfaceListPage {
         unsafe {
             if self.pid == 8 { put_str(buf, "表盘切换".as_bytes()); }
             else { put_str(buf, "摇一摇轮换".as_bytes()); }
+        }
+    }
+
+    /// 进页重读表盘清单: 两页过滤独立 —— 表盘页看 WF_SHOW_BUILTIN, 轮换页看 WF_SEL_BUILTIN。
+    fn on_enter(&self) {
+        unsafe {
+            let f = if self.pid == 8 {
+                st_rd!(WF_SHOW_BUILTIN)
+            } else {
+                st_rd!(WF_SEL_BUILTIN)
+            };
+            load_watchfaces(f);
         }
     }
 
@@ -35,12 +48,12 @@ impl Page for WatchfaceListPage {
                 let v = st_rd!(WF_SHOW_BUILTIN);
                 st_wr!(WF_SHOW_BUILTIN, if v != 0 { 0 } else { 1 });
                 load_watchfaces(st_rd!(WF_SHOW_BUILTIN));
-                render_req(8);
+                render_req(Pid::WfList as u32);
             } else {
                 let v = st_rd!(WF_SEL_BUILTIN);
                 st_wr!(WF_SEL_BUILTIN, if v != 0 { 0 } else { 1 });
                 load_watchfaces(st_rd!(WF_SEL_BUILTIN));
-                render_req(9);
+                render_req(Pid::WfShake as u32);
             }
         }
     }
@@ -78,7 +91,7 @@ impl Page for WatchfaceListPage {
             } else if idx == 9 {
                 if (win + 1) * 8 < cnt {
                     st_wr!(WF_WIN, (win + 1) as u32);
-                    render_req(self.pid);
+                    render_req(self.pid as u32);
                 }
             } else {
                 nav_back();
@@ -104,8 +117,6 @@ impl Page for WatchfaceListPage {
             }
             let op9 = read_volatile(rows.add(9));
             if op9 != 0 { sh(op9, if (win + 1) * 8 < cnt { 0 } else { 1 }); }
-            let op10 = read_volatile(rows.add(10));
-            if op10 != 0 { sh(op10, 0); }
         }
     }
 }
@@ -114,63 +125,44 @@ impl Page for WatchfaceListPage {
 
 pub(crate) struct WfMgmtPage;
 
-impl Page for WfMgmtPage {
+// 页10 开关/入口定义
+unsafe fn wfshake_get() -> bool { st_rd!(SHAKE_EN) != 0 }
+unsafe fn wfshake_toggle() {
+    // 开关唯一真源 = 全局 SHAKE_EN(摇一摇定时器门控与开机恢复都读它)。
+    let v = if st_rd!(SHAKE_EN) != 0 { 0u32 } else { 1u32 };
+    st_wr!(SHAKE_EN, v);
+    crate::watchface::persist_shake_enabled(v);
+}
+unsafe fn wf_goto_shake() { nav_goto(Pid::WfShake as u32, 0); }
+unsafe fn wf_goto_list() {
+    load_watchfaces(st_rd!(WF_SHOW_BUILTIN));
+    nav_goto(Pid::WfList as u32, 0);
+}
 
+static WFSHAKE_DEF: ToggleDef = ToggleDef { get: wfshake_get, toggle: wfshake_toggle, status: None };
+static WFMGR_ROWS: &[RowModel] = &[
+    RowModel::toggle("摇一摇\0".as_bytes(), &WFSHAKE_DEF),
+    RowModel::action("摇一摇轮换\0".as_bytes(), wf_goto_shake, 0, None),
+    RowModel::action("表盘切换\0".as_bytes(), wf_goto_list, 0, None),
+];
+
+impl MenuSpec for WfMgmtPage {
+    fn rows(&self) -> &'static [RowModel] { WFMGR_ROWS }
+}
+
+impl Page for WfMgmtPage {
     fn fill_title(&self, buf: *mut u8) {
-        unsafe { put_str(buf, "表盘管理".as_bytes()); }
+        unsafe { put_str(buf, "表盘管理\0".as_bytes()); }
     }
 
     fn render(&self, ctx: &PageCtx) -> PageResult {
-        unsafe {
-            let mut tbuf: [u8; 88] = [0; 88];
-            shake_toggle_text(tbuf.as_mut_ptr());
-            let tlen = cstr_len(tbuf.as_ptr());
-            let text = core::slice::from_raw_parts(tbuf.as_ptr(), tlen + 1);
-            let prev = build_rows(ctx, ctx.title, &[
-                (0, RowSpec::switch(text)),
-                (1, RowSpec::clickable("摇一摇轮换\0".as_bytes())),
-                (2, RowSpec::clickable("表盘切换\0".as_bytes())),
-            ])?;
-            // 补写开关初态
-            let rows = page_rows_ptr(10);
-            let s0 = read_volatile(rows.add(0));
-            if s0 != 0 {
-                let upd = fw_api::row_update;
-                let en = st_rd!(SHAKE_EN);   // 开关真源 = 全局(与开机恢复/定时器门控同源)
-                upd(s0, core::ptr::null(), tbuf.as_ptr(), core::ptr::null(), 0, en as u8);
-            }
-            let _ = prev;
-            Ok(())
-        }
+        unsafe { frame::build(self, ctx, ctx.title) }
     }
 
-    fn is_switch_row(&self, idx: usize) -> bool { idx == 0 }
-
-    fn on_switch(&self, _idx: usize) {
-        // 开关唯一真源 = 全局 SHAKE_EN(摇一摇定时器门控与开机恢复都读它)。
-        // 页面不再持本地副本 —— 本地副本会让开关初态与持久化状态脱钩
-        // (旧实现: 本地默认 1, 重启后永远显示"开", 且第一次拨动写的值与所见相反)。
-        unsafe {
-            let v = if st_rd!(SHAKE_EN) != 0 { 0u32 } else { 1u32 };
-            st_wr!(SHAKE_EN, v);
-            crate::watchface::persist_shake_enabled(v);
-        }
-    }
-
-    fn on_click(&self, idx: usize) {
-        unsafe {
-            match idx {
-                1 => nav_goto(9, 0),
-                2 => {
-                    load_watchfaces(st_rd!(WF_SHOW_BUILTIN));
-                    nav_goto(8, 0);
-                }
-                _ => {}
-            }
-        }
-    }
+    fn is_switch_row(&self, idx: usize) -> bool { kit::menu_is_switch(self, idx) }
+    fn on_click(&self, idx: usize) { unsafe { kit::menu_click(self, idx) } }
+    fn on_switch(&self, idx: usize) { unsafe { kit::menu_switch(self, idx) } }
 }
-
 
 pub(super) static PAGE_WF_LIST_8: WatchfaceListPage = WatchfaceListPage { pid: 8 };
 pub(super) static PAGE_WF_LIST_9: WatchfaceListPage = WatchfaceListPage { pid: 9 };

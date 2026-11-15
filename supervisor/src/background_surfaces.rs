@@ -189,7 +189,10 @@ unsafe fn add(object: u32, root: u32, prop: u32, desired: u32) {
         let mut entry = st_rd!(SURFACES[slot]);
         if entry.object == object && entry.prop == prop {
             entry.root = root;
-            if st_rd!(ACTIVE) == 0 {
+            // 只有“当前值不是我们写进去的”才重新采集原值 —— 否则会把我们
+            // 自己写的 0 记成原样（“换什么档位都透明”就是这么来的）。
+            // 台账在 restore() 里已经清账，这条路只服务于遗留条目。
+            if st_rd!(ACTIVE) == 0 && value(object, prop) != entry.desired {
                 entry.original = original_value(object, prop);
             }
             entry.desired = desired;
@@ -408,13 +411,25 @@ pub(crate) unsafe fn restore(roots: Option<[u32; 4]>) -> bool {
     st_wr!(ACTIVE, 0);
     st_wr!(WORK, 0);
     st_wr!(SCAN, 0);
+    // 通知聚合页是独立 page 根：透明模式也会把它的 BG_OPA 写成 0，
+    // 只按 4 个主根还原会把它漏在这儿，之后再也没人管。
+    let page_roots = st_rd!(PAGE_ROOTS);
     for slot in 0..LIMIT {
         let entry = st_rd!(SURFACES[slot]);
-        if entry.object != 0 && owns_root(entry.root, Some(roots)) && belongs(entry.object, entry.root) {
-            if value(entry.object, entry.prop) != entry.original {
-                write(entry.object, entry.prop, entry.original);
-            }
+        if entry.object == 0 { continue; }
+        if !owns_root(entry.root, Some(roots)) && !page_roots.contains(&entry.root) {
+            continue;
         }
+        // 父链验证失败说明对象已经不在这个根下面(通常是页面被销毁)：
+        // 既不能写(可能是野指针)，也不该清账 —— 清了就再也没人还原它。
+        if !belongs(entry.object, entry.root) { continue; }
+        if value(entry.object, entry.prop) != entry.original {
+            write(entry.object, entry.prop, entry.original);
+        }
+        // 写回原值后清账。留着这条会被下一次 add() 当成“既有条目”，
+        // 而 ACTIVE==0 时 add() 会重新采集原值 —— 当前值正是我们刚写回去
+        // 的 0，于是“透明”被记成原样，之后换什么档位都是透明。
+        st_wr!(SURFACES[slot], EMPTY);
     }
     // 删除通知返回后再撤销旧句柄。
     consume();

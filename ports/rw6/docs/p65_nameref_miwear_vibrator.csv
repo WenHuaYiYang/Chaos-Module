@@ -1,0 +1,7 @@
+name,str_file_off,ref_file_off,func_entry,delta
+miwear_vibrator_dump_port,0x2DAAE4,0x86B7E4,0x86B76C,
+miwear_vibrator_init_port,0x2DAB14,0x86B558,0x86B480,
+miwear_vibrator_set_mode,0x386A00,0x9B3954,0x9B3910,
+miwear_vibrator_cancel,0x386A1C,0x9B38EC,0x9B38B0,
+miwear_vibrator_run,0x386A34,0x9B3758,0x9B36C4,
+miwear_vibrator_run,0x386A34,0x9B3850,0x9B37A8,

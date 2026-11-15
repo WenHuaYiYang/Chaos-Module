@@ -721,9 +721,9 @@ pub(crate) unsafe fn apply_finish() {
     }
     // 前台是我们自己的页: 这一拍起不碰任何对象。界面等引擎重建, 补差量等退场 + 静置。
     if fg == font_list::FONT_PID as usize {
-        font_list::mark_page_dirty();     // 内含 render_req(5) + 把待重画请求结掉
+        font_list::mark_page_dirty();     // 内含 render_req(Pid::FontList as u32) + 把待重画请求结掉
     } else {
-        render_req(fg);
+        render_req(fg as u32);
     }
 }
 

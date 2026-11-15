@@ -1,0 +1,122 @@
+[package]
+name = "probe_p65"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# 直接走 lv_obj_create / create_obj+init_obj 建对象
+obj = []
+objcls = []
+obj3 = []
+mkonly = []
+mkpar = []
+timer = []
+goto2 = []
+obj4 = []
+mkapp = []
+mkapp3 = []
+mkapp2 = []
+diag = []
+diag2 = []
+mkonly3 = []
+diag3 = []
+label = []
+text = []
+style = []
+geom = []
+wtest = []
+page = []
+page2 = []
+dsp = []
+goto3 = []
+live = []
+install2 = []
+install3 = []
+install4 = []
+install5 = []
+install6 = []
+install7 = []
+install8 = []
+evt = []
+flags = []
+getw = []
+getw2 = []
+demo = []
+font2 = []
+delx = []
+about = []
+evsend = []
+cycle = []
+desk = []
+paint = []
+paint4 = []
+props5 = []
+propmap = []
+about2 = []
+launch9 = []
+launch10 = []
+launch11 = []
+launch12 = []
+scanapps = []
+app2page = []
+page3 = []
+add77 = []
+readd = []
+tprobe = []
+openapp = []
+cloneopen = []
+open2 = []
+scantree = []
+default = []
+# 只验证"能装进来并执行"，不碰锚点
+min = []
+# 连日志都不打：只验证 modlib 能装载
+empty = []
+# 补齐 .data/.bss/.rodata 三节、不调固件：试装载器对节形状的要求
+shaped = []
+# 只调 brightness_set_value(137)，不打日志：用 xd 读状态块验执行
+bright = []
+# 只调 brightness_set_full_power(1)：看 +0x18 与 +0xEC
+full = []
+# 只调 page_goto(不存在的页键)：看固件的"找不到页"日志
+goto = []
+# 用合法页键 0x01050000 调 page_goto
+goto_key = []
+# 只调 launcher_refresh_app(不存在 id)
+refresh = []
+# app_launcher_del(24) / app_launcher_add(24)：看桌面记录链头变化
+del = []
+add = []
+# 调 vg_font_create_named 并把返回值写进模块 .data（结果通道）
+font = []
+# 只调 apply_brightness_smoothly(300)：看目标亮度 +0x10
+apply = []
+# 调 lvx_zoom_picker_create(0)，结果进结果通道
+pick = []
+# 对活体滚轮对象调 set_mode(1)：看 +0x54D 模式字节
+pickmode = []
+# 调 lvx_page_title_create(0,NULL,1,0,0)：看返回对象
+title = []
+# 带真标题：看 +0x4C 高度常数
+title2 = []
+# page_goto(当前页键 1)：最安全的路径
+gotocur = []
+# 调 app_lookup(19)（运行期 vtable 地址）
+lookup = []
+# 用自造描述符调 app_install，再 app_lookup 回读
+install = []
+# 运行期克隆 app 19（改 id/名字）再 install + lookup 回读
+clone = []
+# 克隆但把描述符的两个应用回调换成模块自己的
+clone2 = []
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+lto = true
+codegen-units = 1
+debug = false

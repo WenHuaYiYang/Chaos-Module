@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/release-v1.1.4-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.1-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -25,17 +25,20 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 它最初是为了在 10 Pro 上补研究工具链而写的，后来逐渐长成一套完整的设备管理界面：
 应用管理、表盘、字体、图标、亮度、缓存、模糊与震动设置。
 
-> **规模**：约 1.4 万行 Rust，19 个页面 id，`chaos_sup.ko` 约 190 KB。
+> **实现**：Rust（`no_std`）与 C 原生模块，44 个页面 id，Lua 安装器。
 
 ## 特性
 
 - **应用管理**：隐藏/显示、一键批量、排除项；普通/深度隐藏两种模式（[说明](docs/APP-MANAGER.md)）。
-- **系统美化**：字体切换、桌面图标包、系统模糊、表盘通透背景。
+- **系统美化**：字体切换、静态/动态图标包、系统模糊、表盘通透背景。动态图标包兼容原 CIPK 投递格式，当前可见动态图标全部播放（[制作与协议](docs/ICON-PACKS.md)）。
+- **蜂窝应用列表（实验）**：双向拖动与惯性、左缘调节间距、右缘整体缩放、边界返回、原生编辑与删除，与 RW6 效果互斥。开关持久保存，切换时重新绑定列表并立即应用；完整模拟器显示与帧率待复测（[实现与验证](docs/HONEYCOMB.md)）。
 - **表盘**：内置/市场表盘切换、摇一摇轮换、表盘管理。
 - **设备工具**：亮度、缓存清理、时间/日期设置、震动测试。
+- **应用图标**：设置 → 应用图标进入三级单选列表，仅保留原版和动态，统一 96×96；首次安装及从旧版升级自动选择动态，之后保存手动选择。动态播放上传的 GIF（193 帧、5.2 秒循环），暂停时复用原版文件，移除其他主题和额外静态缓冲以缩小体积（[说明](docs/DYNAMIC-ICON.md)）。
 - **运行日志**：关键操作写入 `/data/chaos/chaos.log`，设置 → 运行日志可查看与清空。
+- **截屏与录屏**：首页进入控制列表，后台录屏可选 GIF 15 fps / APNG 目标 60 fps，息屏后 BMP 截屏；录屏和截图分别选择 `/data/chaos/media` 或 `/data/offlinelog`，三级列表删除管理（[格式与验证边界](docs/CAPTURE.md)）。
 - **无外部依赖**：只调固件已验证的 API，不注入 JS、不依赖网络。
-- **原生文件桥**：内置 CanopusConnect 兼容端，AstroBox 文件管理器插件可直接连接，不再需要 Canopus 模块/管理器。
+- **ChaosConnect 文件桥**：独立私有协议，AstroBox v4 插件通过设备传输接口连接；支持窗口传输、CRC校验和链路测速。需同时更新插件，详见 [文件桥](docs/24-FILE-BRIDGE.md)。
 
 ## 兼容性
 
@@ -60,9 +63,12 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 ## 构建
 
 ```bash
-python3 tools/build.py            # ko + 图标 + p67 容器
-python3 tools/build.py --skip-ko  # 只重打容器
+python3 tools/build.py --firmware 10p-3.101.043  # 完整构建，产物按固件隔离
+python3 tools/build.py --skip-ko --skip-fetch   # 校验同固件缓存后重打容器
 ```
+
+安装包输出为 `dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin`。
+固件提取与 symbol 目录说明见 [symbol/README.md](symbol/README.md)。
 
 依赖、流程、版本号规则与发版检查单见 **[docs/BUILD.md](docs/BUILD.md)**。
 
@@ -77,6 +83,7 @@ python3 tools/build.py --skip-ko  # 只重打容器
 | [架构](docs/ARCHITECTURE.md) | 启动链、页面模型、IPC、固件耦合 |
 | [LVGL 地址](docs/LVGL-MAP.md) | p67 固件的 LVGL 类描述与入口 |
 | [更新日志](docs/CHANGELOG.md) | 版本历史 |
+| [截屏与录屏](docs/CAPTURE.md) | 录屏/截图设置、双目录文件管理、格式与验证边界 |
 
 文档索引：[docs/README.md](docs/README.md)。
 

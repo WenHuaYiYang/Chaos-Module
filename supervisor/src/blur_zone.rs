@@ -3,6 +3,7 @@
 // 背景 hook 的四个目标面(fw_api::background_home_targets 的槽位, 顺序固定):
 //   0 = 启动器(桌面列表)   1 = 控制中心
 //   2 = 小部件             3 = 通知中心(消息根 + 通知聚合页, 注册见 background_pages)
+//   4 = 控制中心按钮（仅V2，独立配置；mask()仍仅返回四个背景位）。
 //
 // 位图语义: 1 = 正常替换(默认) / 0 = 不替换(该区域保持官方模糊画面)。
 // 持久化: /data/chaos/blur_regions.cfg, 1 字节位图; 文件缺失 = 全开(0x0F)。
@@ -18,10 +19,10 @@
 use crate::fw_api;
 use crate::{st_rd, st_wr};
 
-pub(crate) const REGION_N: usize = 4;
+// 第五项只用于 V2 按钮底板，单独保存，不扩展原四区背景位图。
+pub(crate) const REGION_N: usize = 5;
 
 /// 本页的 page_id(系统模糊 -> 模糊区域; 页15, 注册见 ipc.rs/state.rs/page.rs)
-pub(crate) const PAGE_PID: u32 = 15;
 
 static mut MASK: u32 = 0x0F;
 static mut LOADED: u32 = 0;
@@ -50,12 +51,14 @@ pub(crate) unsafe fn mask() -> u32 {
 
 /// 槽位当前是否启用(st_rd! 是 volatile 读, 调用方都在 unsafe 上下文)
 pub(crate) unsafe fn on(slot: usize) -> bool {
+    if slot == 4 { return crate::cc_buttons_config::enabled(); }
     slot < REGION_N && (st_rd!(MASK) >> slot) & 1 != 0
 }
 
 /// 写开关并持久化; 返回是否真的变了(变了调用方才需要 remount)
 pub(crate) unsafe fn set(slot: usize, on: bool) -> bool {
     if slot >= REGION_N { return false; }
+    if slot == 4 { return crate::cc_buttons_config::set(on); }
     ensure_loaded();
     let old = st_rd!(MASK);
     let m = if on { old | (1u32 << slot) } else { old & !(1u32 << slot) };

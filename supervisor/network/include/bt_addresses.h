@@ -18,6 +18,9 @@
 #define BT_PAIR_REQUEST_REPLY     0x0c3b0051u
 #define BT_PAIR_DISPLAY_REPLY     0x0c3b008du
 #define BT_ADAPTER_SLOT           0x20126738u
+/* 注意: bt_adapter_set_scan_mode(0x0c3b56a9) 曾在 v65559 被直接调用(3,1),
+ * 真机当场黑屏 —— 那是 PENDING/not_probed 的地址 + 未验证签名, 已撤除。
+ * 要再试必须先在设备上做单点取证(最小模块 + 只调这一条), 不许夹在配对流程里。 */
 
 /* 10 Pro / p67 3.101.043 classic PAN ABI. These are the entries recovered
  * from the exact AP call sites; they are not Band 11/q66 addresses. The

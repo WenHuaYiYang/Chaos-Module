@@ -23,14 +23,34 @@ struct state {
     uint32_t client_state;int32_t client_fd;
     int32_t error;
     uint16_t cid,mtu;
+    /* 配对重试(桌面栈会先广播 bond=0 快照, 见 on_bond 注释): 4s/次, 至多6次。
+     * bond_addr/bond_order: 043 上建绑定命令要哪种地址序没有设备证据 —— 扫描
+     * 回调序与反转序交替重试, 回调比较跟 bond_addr 走, 谁先配成功用谁。 */
+    uint32_t bond_attempts,bond_retry_at,bond_order,bond_pending,bonding,bond_events;
+    uint32_t bond_last_value,bond_last_transport,pair_reply_result,device_configured;
+    int32_t result_cod,result_iocap,result_paircfg,result_connect,result_bond,result_confirm,result_remove,result_name,result_name_read;
+    char local_name[32];
+    uint32_t bond_remove_pending;
+    uint8_t bond_addr[6];
+    uint32_t event_head;
+    struct probe_event {uint32_t kind,first,second;uint8_t address[6];} history[16];
     struct bt_probe_device devices[MAX_DEVICES];
 };
 static struct state state={.client_fd=-1,.service_result=-1};
 static uint32_t callbacks[17],registration;
+static uint32_t configured;   /* 设备级配置(CoD/io cap/0x3d)已下发 */
 static void *adapter;
 static uint8_t target[6];
 static int same(const uint8_t *a,const uint8_t *b)
 {for(unsigned i=0;i<6;i++)if(a[i]!=b[i])return 0;return 1;}
+/* 回调事件环: 调用者必须已持锁。用于"到底有没有回调、参数是什么"的现场取证。 */
+static void event_log(uint32_t kind,const uint8_t *address,uint32_t first,uint32_t second)
+{
+    if(state.event_head>0x7fffffff)state.event_head=0;
+    struct probe_event *slot=&state.history[state.event_head&15];
+    if(address)memcpy(slot->address,address,6);else memset(slot->address,0,6);
+    slot->kind=kind;slot->first=first;slot->second=second;state.event_head++;
+}
 static uint16_t rd16(const uint8_t *p) {return p[0]|((uint16_t)p[1]<<8);}
 static void wr16(uint8_t *p,uint16_t v) {p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
 static void wr32(uint8_t *p,uint32_t v) {for(unsigned i=0;i<4;i++)p[i]=(uint8_t)(v>>(8*i));}
@@ -57,10 +77,11 @@ static int request(uint32_t command,const void *payload,unsigned length)
 {return exchange(command,payload,length,0,0);}
 
 static void on_adapter(void *cookie,int value)
-{(void)cookie;uint32_t p=lock();state.adapter_state=(uint32_t)value;unlock(p);}
+{(void)cookie;uint32_t p=lock();state.adapter_state=(uint32_t)value;event_log('A',0,(uint32_t)value,0);unlock(p);}
 static void on_scan(void *cookie,int value)
 {
     (void)cookie;uint32_t p=lock();state.discovery_callbacks++;state.discovery_value=(uint32_t)value;
+    event_log('S',0,(uint32_t)value,0);
     state.scan_stopped=value==0;
     if(state.phase==SCAN) {
         if(value){state.scan_seen_start=1;state.scan_stage=6;}
@@ -87,22 +108,47 @@ static void on_device(void *cookie,const uint8_t *data)
 static void on_pair(void *cookie,const uint8_t *address)
 {
     (void)cookie;if(!address)return;uint32_t p=lock();
-    if(state.phase==PAIR && !state.abort && same(address,target))state.pair_reply=1;
+    event_log('P',address,0,0);
+    if((state.phase==PAIR || state.phase==CONNECTING) && !state.abort && same(address,state.bond_addr))state.pair_reply=1;
     unlock(p);
 }
 static void on_display(void *cookie,const uint8_t *address,int transport,int kind,uint32_t passkey)
 {
-    (void)cookie;(void)kind;if(!address || transport!=1)return;
-    uint32_t p=lock();if(state.phase==PAIR && !state.abort && same(address,target)) {state.passkey=passkey;state.pair_confirm=1;}unlock(p);
+    (void)cookie;if(!address)return;
+    uint32_t p=lock();
+    event_log('D',address,(uint32_t)transport,(((uint32_t)(uint16_t)kind)<<24)|(passkey&0xffffff));
+    /* 043 的回调 transport 语义没有设备证据(参考实现来自 q66 188)。不按 transport
+     * 过滤, 只按地址匹配 —— 过滤错了会静默丢事件, 表现为"永远收不到配对码"。 */
+    if((state.phase==PAIR || state.phase==CONNECTING) && !state.abort && same(address,state.bond_addr)) {
+        state.passkey=passkey;state.pair_confirm=1;
+    }
+    unlock(p);
 }
 static void on_bond(void *cookie,const uint8_t *address,int transport,int value)
 {
-    (void)cookie;if(!address || transport!=1)return;
+    (void)cookie;if(!address)return;
     uint32_t p=lock();
-    if(state.phase==PAIR && same(address,target)) {
+    state.bond_events++;state.bond_last_value=(uint32_t)value;state.bond_last_transport=(uint32_t)transport;
+    event_log('B',address,(uint32_t)transport,(uint32_t)value);
+    /* 043 的 bond 状态枚举(固件字符串表实证): 0=BOND_NONE 1=BONDING 2=BONDED。
+     * 旧代码只认 2, 把 1(正在配对) 当成失败落 -611 —— 新设备一定先收到 1,
+     * 于是一点就报 -611; 已配对设备直接回 2 所以能连。 */
+    if(state.phase==PAIR && same(address,state.bond_addr)) {
         state.bond=(uint32_t)value;
-        if(value==2 && !state.abort)state.connect_ready=1;
-        else if(value==0 || state.abort){state.phase=IDLE;state.error=-611;state.error_stage=6;}
+        if(value==2 && !state.abort) {
+            state.connect_ready=1;state.bond_attempts=0;state.bond_pending=0;state.bonding=0;
+        } else if(value==1) {
+            /* 配对进行中(等对端确认/交换密钥): 保持 PAIR, 不重发, 不判死。 */
+            state.bonding=1;state.bond_pending=1;state.bond_retry_at=state.ticks+40;
+        } else if(value==0) {
+            /* 未绑定: 可能是"重建配对前先清旧密钥"的快照, 也可能真的失败。
+             * 交给 bt_probe_poll 节流重试, 超限才 -611; 下一拍先 remove bond(0x5f)
+             * 清掉残留绑定再重配 —— 电脑端有旧配对记录时 createbond 会被直接拒。 */
+            state.bonding=0;state.bond_pending=0;state.bond_retry_at=state.ticks+20;
+            state.bond_remove_pending=1;
+        } else if(!state.abort) {
+            state.bonding=0;state.phase=IDLE;state.error=-611;state.error_stage=6;
+        }
     }
     unlock(p);
 }
@@ -132,6 +178,38 @@ static int prepare(void)
     if(value<0){pair_error(1,value);return -1;}
     on_adapter(0,value);
     if(value!=4){pair_error(1,-619);return -1;}
+    /* 设备级初始化, 照抄系统 btmain 的序列(0xc70B004):
+     *   cmd 0x27 CoD=0x280704  →  settable class of device
+     *   cmd 0x29 io capability →  系统用 3(NoInputNoOutput/Just Works),
+     *                             这里用 1(DisplayYesNo): 对端是 YesNo/KeyboardDisplay
+     *                             时会走 Numeric Comparison, 手环能显示配对码
+     *                             (参考项目 q66 的 on_display→passkey→确认 流程)。
+     *   cmd 0x3d {0,1}         →  系统同值; 此前完全缺失, 配对一直被对端取消。
+     * 配对请求仍自动 accept 兜底, 所以即使对端走 Just Works 也一定能完成。 */
+    if(!configured){
+        uint32_t cod=0x00280704u;int rc_cod=request(0x27,&cod,4);
+        uint8_t capability[1]={1};int rc_cap=request(0x29,capability,1);
+        uint8_t pairing[2]={0,1};int rc_pair=request(0x3d,pairing,2);
+        uint32_t q=lock();
+        state.result_cod=rc_cod;state.result_iocap=rc_cap;state.result_paircfg=rc_pair;
+        state.device_configured=1;unlock(q);
+        configured=1;
+    }
+    /* 本地蓝牙名: cmd 0x22 set / 0x23 get(固件 bttool "name"/"get name")。
+     * 每次 prepare 都重下发 —— 系统"设备名称"变更或重启会把 adapter 名顶回
+     * 默认值(旧版本连手机显示 Syspatch 就是这么来的), 只设一次会被覆盖。 */
+    {
+        uint8_t name[64]={0};
+        static const char label[]="Chaos-Module";
+        for(unsigned i=0;i<sizeof(label)-1 && i<63;i++)name[i]=(uint8_t)label[i];
+        int rc_set=request(0x22,name,sizeof(name));
+        uint8_t verify[64]={0};
+        int rc_get=exchange(0x23,0,0,verify,sizeof(verify));
+        uint32_t q=lock();
+        state.result_name=rc_set;state.result_name_read=rc_get;
+        for(unsigned i=0;i+1<sizeof(state.local_name);i++)state.local_name[i]=(char)verify[i];
+        state.local_name[sizeof(state.local_name)-1]=0;unlock(q);
+    }
     return 0;
 }
 
@@ -238,7 +316,8 @@ void bt_probe_scan(void)
     if(state.phase!=IDLE){state.error=-607;unlock(p);return;}
     state.count=state.selected=0;state.error=0;state.phase=SCAN;state.started=state.ticks;
     state.scan_stopped=state.scan_seen_start=0;state.scan_stage=4;state.scan_result=0;unlock(p);
-    uint32_t timeout=20;int rc=request(30,&timeout,sizeof(timeout));
+    /* 12s: inquiry 覆盖两个 train 的下限是 10.24s, 留 1.7s 余量。20s 是纯等待。 */
+    uint32_t timeout=12;int rc=request(30,&timeout,sizeof(timeout));
     p=lock();state.scan_result=rc;
     if(rc){state.error=rc;state.error_stage=1;state.phase=IDLE;state.scan_stage=8;}
     else if(state.scan_stage==4)state.scan_stage=5;
@@ -264,9 +343,23 @@ void bt_probe_diagnostics(struct bt_probe_diagnostics *out)
     out->service_result=state.service_result;out->sys_errno=state.sys_errno;
     out->client_state=state.client_state;out->client_fd=state.client_fd;
     out->l2_event=state.event;out->l2_events=state.events;
-    out->error=state.error;out->error_stage=state.error_stage;unlock(p);
+    out->error=state.error;out->error_stage=state.error_stage;
+    out->bond_attempts=state.bond_attempts;out->bond_pending=state.bond_pending;
+    out->bonding=state.bonding;out->bond_events=state.bond_events;
+    out->bond_value=state.bond_last_value;out->bond_transport=state.bond_last_transport;
+    out->bond_order=state.bond_order;out->phase=state.phase;
+    out->pair_reply_result=state.pair_reply_result;
+    out->device_configured=state.device_configured;
+    out->result_cod=state.result_cod;out->result_iocap=state.result_iocap;
+    out->result_paircfg=state.result_paircfg;out->result_connect=state.result_connect;
+    out->result_bond=state.result_bond;out->result_confirm=state.result_confirm;
+    out->result_remove=state.result_remove;
+    out->result_name=state.result_name;
+    out->result_name_read=state.result_name_read;
+    for(unsigned i=0;i<32;i++)out->local_name[i]=state.local_name[i];
+    unlock(p);
 }
-_Static_assert(sizeof(struct bt_probe_diagnostics)==56,"Rust diagnostics ABI");
+_Static_assert(sizeof(struct bt_probe_diagnostics)==164,"Rust diagnostics ABI");
 int bt_probe_device(uint32_t index,struct bt_probe_device *out)
 {uint32_t p=lock();int ok=index<state.count;if(ok)memcpy(out,&state.devices[index],sizeof(*out));unlock(p);return ok;}
 void bt_probe_connect_device(uint32_t index)
@@ -279,15 +372,22 @@ void bt_probe_connect(void)
     if(prepare())return;uint32_t p=lock();
     if(state.phase==PAIR && state.pair_confirm) {
         state.pair_confirm=0;unlock(p);
-        uint8_t payload[8];memcpy(payload,target,6);payload[6]=payload[7]=1;
+        uint8_t payload[8];memcpy(payload,state.bond_addr,6);payload[6]=payload[7]=1;
         error(request(98,payload,sizeof(payload)));return;
     }
     if((state.phase!=IDLE && state.phase!=SCAN) || !state.count){state.error=-607;unlock(p);return;}
     int scanning=state.phase==SCAN;
     memcpy(target,state.devices[state.selected].address,6);state.phase=PAIR;state.abort=0;state.error=0;state.error_stage=0;
     state.started=state.ticks;state.cid=state.mtu=0;state.bond=state.pair_confirm=state.connect_ready=state.pair_reply=0;
+    state.bond_attempts=0;state.bond_retry_at=0;state.bond_order=0;memset(state.bond_addr,0,6);
+    state.bond_pending=state.bonding=state.bond_events=0;state.bond_last_value=state.bond_last_transport=0xffff;
+    state.pair_reply_result=0xffff;
     state.bnep=0;state.bnep_code=0xffff;unlock(p);
     if(scanning){p=lock();state.scan_stopped=0;unlock(p);int rc=request(31,0,0);if(rc){pair_error(1,rc);return;}}
+    extern int chaos_connect_pan_ready(const uint8_t *);
+    if(chaos_connect_pan_ready(target)){
+        p=lock();state.bond=2;state.connect_ready=1;state.scan_stopped=1;memcpy(state.bond_addr,target,6);unlock(p);
+    } else {pair_error(6,-13);return;}
     /* Defer bond IPC until the discovery-stopped callback. */
     if(!scanning){p=lock();state.scan_stopped=1;unlock(p);}
 }
@@ -305,39 +405,96 @@ void bt_probe_leave(void) {bt_probe_disconnect();}
 void bt_probe_poll(void)
 {
     uint32_t p=lock();state.ticks++;
-    if(state.phase==SCAN && state.ticks-state.started>88) {
+    if(state.phase==SCAN && state.ticks-state.started>56) {
         state.phase=IDLE;state.scan_stage=7;
         if(!state.scan_seen_start){state.error=-617;state.scan_stage=9;}
     }
-    int bond=state.phase==PAIR && state.scan_stopped && !state.bond && !state.abort;
-    if(bond)state.bond=1;
+    /* 建绑定发起/重试。bond_pending = "已发 94, 正等回调", 期间不重发;
+     * BONDING(1) 期间同样不重发(重发会打断对端正在确认的配对)。
+     * 回调迟迟不来(超过窗口且没有进入 BONDING)才放开 pending 重试。 */
+    if(state.bond_pending && !state.bonding && state.ticks>=state.bond_retry_at)state.bond_pending=0;
+    int bond=state.phase==PAIR && !state.connect_ready && state.scan_stopped && !state.abort && !state.bond_pending && state.ticks>=state.bond_retry_at;
+    if(bond && state.bond_attempts>=8){state.phase=IDLE;state.error=-611;state.error_stage=6;bond=0;}
+    if(bond){state.bond_attempts++;state.bond_retry_at=state.ticks+20;state.bond_pending=1;}
     int connect=state.phase==PAIR && state.connect_ready && !state.abort;
-    int pair_reply=state.phase==PAIR && state.pair_reply && !state.abort;state.pair_reply=0;
+    extern int chaos_connect_pan_ready(const uint8_t *);
+    if(connect && !chaos_connect_pan_ready(target)){
+        connect=0;state.phase=IDLE;state.connect_ready=0;state.error=-13;state.error_stage=6;
+    }
+    int pair_reply=(state.phase==PAIR || state.phase==CONNECTING) && state.pair_reply && !state.abort;state.pair_reply=0;
     if(connect){state.phase=CONNECTING;state.connect_ready=0;state.started=state.ticks;}
-    if((state.phase==CONNECTING || state.phase==PAIR) && state.ticks-state.started>120)state.error=-614;
+    /* 配对确认要等对端用户点弹窗, BONDING 期间给足 60s。
+     * 超时必须真的退出 PAIR/CONNECTING —— 旧代码只置 error 不改 phase,
+     * 于是 network_service 永远看到 bt.phase!=0, 换设备连接直接报 -16(EBUSY)。 */
+    if((state.phase==CONNECTING || state.phase==PAIR) && state.ticks-state.started>(state.bonding?240:180)) {
+        state.error=-614;state.phase=IDLE;state.bond_pending=state.bonding=0;
+    }
     if(state.phase==LINK && state.bnep==BNEP_STATE_WAIT_FOR_CONNECTION_RESPONSE && state.ticks-state.started>40)state.error=-616;
     unlock(p);
-    if(pair_reply){uint8_t payload[7];memcpy(payload,target,6);payload[6]=1;error(request(97,payload,sizeof(payload)));}
+    if(pair_reply){
+        /* 两种配对确认命令都发:
+         *   cmd 0x61 = pair request reply {addr, accept}
+         *   cmd 0x62 = confirmation {addr, transport, conform}
+         * 不同栈把 Numeric Comparison 的确认放在不同命令上, 只回 0x61 时
+         * 对端会一直等确认直到取消(真机现象: bond 1 → 0)。失败无害。 */
+        uint8_t accept[7]={0};memcpy(accept,state.bond_addr,6);accept[6]=1;
+        int rc=request(97,accept,sizeof(accept));
+        uint8_t confirm[8]={0};memcpy(confirm,state.bond_addr,6);confirm[6]=1;confirm[7]=1;
+        int rc2=request(98,confirm,sizeof(confirm));
+        p=lock();state.pair_reply_result=(uint32_t)rc;state.result_confirm=rc2;unlock(p);
+        if(rc)error(rc);
+    }
     if(bond){
-        /* Match the reference's bondability preflight. Aggregate bond state
-         * may describe an LE bond: query this Classic transport separately. */
-        uint8_t payload[8]={0};memcpy(payload,target,6);payload[6]=1;
-        int pairing=request(92,payload,8);
-        p=lock();int ipc=state.ipc_result;unlock(p);
-        if(ipc || pairing<0 || pairing>2){pair_error(4,pairing);return;}
-        if(pairing==2){p=lock();state.bond=2;state.connect_ready=1;unlock(p);}
-        else if(pairing==0) {
-            int mode=request(38,0,0);
-            p=lock();ipc=state.ipc_result;unlock(p);
-            if(ipc || mode<0 || mode>3){pair_error(2,mode);return;}
-            uint8_t settings[2]={(uint8_t)mode,1};
-            int rc=request(37,settings,2);
-            if(rc){pair_error(3,rc);return;}
-            rc=request(94,payload,8);
-            if(rc){pair_error(5,rc);return;}
-        } /* pairing==1: already bonding; wait for the matching callback. */
+        /* 043 实测: cmd 92 的回复对新/旧设备不可区分(未绑定也回"已绑定"),
+         * 不能作为是否发起配对的依据 —— 之前只有先在电脑/手机上手动配过对的
+         * 设备能连上, 就是这个原因。改为连接时总是发起建绑定(94):
+         *   新设备  -> 对端弹配对确认, bond=2 回调后走连接;
+         *   已绑定  -> 栈静默完成(直接 bond=2), 或 94 被拒(rc!=0)时退回直连。
+         * 38/37 只在可用时设置 bondable 模式, 失败不拦路。
+         * 地址序: L2CAP connect 用扫描序已实证可用(已配对设备能连), 建绑定默认
+         * 同一序; 连续失败 3 次后才试反转序(某些栈的 bond API 要显示序)。 */
+        p=lock();
+        if(state.bond_attempts>3 && (state.bond_attempts&1)){for(unsigned i=0;i<6;i++)state.bond_addr[i]=target[5-i];state.bond_order=1;}
+        else{memcpy(state.bond_addr,target,6);state.bond_order=0;}
+        unlock(p);
+        int mode=request(38,0,0);
+        if(!mode || (mode>0 && mode<=3)){uint8_t settings[2]={(uint8_t)mode,1};request(37,settings,2);}
+        /* 上一轮 bond=0(配对失败) 时, 先删掉本机残留绑定再重配: 电脑/手机端
+         * 若保留旧配对记录, createbond 会被对方直接拒绝(现象就是 bond 1→0 循环)。
+         * cmd 0x5f = remove bond {addr 6B, transport}。 */
+        if(state.bond_remove_pending){
+            uint8_t remove[7]={0};memcpy(remove,state.bond_addr,6);remove[6]=1;
+            int rc_remove=request(0x5f,remove,sizeof(remove));
+            p=lock();state.result_remove=rc_remove;state.bond_remove_pending=0;unlock(p);
+        }
+        /* 经典 PAN 建绑定前要先有 ACL: 股票 bttool 的用法也是先 connect <addr>
+         * 再 createbond <addr> 1(transport: 0=BLE 1=BREDR, 见 bttool 帮助文本)。
+         * 未连接设备上直接 createbond 会立刻回 bond=0 → -611。
+         * 另外先设 IO capability(1=DisplayYesNo), 否则 SSP 可能因能力未定失败。
+         * 两条都幂等, 失败不拦路(已连接时 connect 返回"已连接"错误属正常)。 */
+        /* IO capability 已在 prepare() 按系统 btmain 序列设成 3(Just Works):
+         * 对端不需要我们显示/确认数字, 收到配对请求回 accept 即完成。 */
+        int rc_connect=request(0x69,state.bond_addr,6);
+        uint8_t payload[8]={0};memcpy(payload,state.bond_addr,6);payload[6]=1;
+        int rc=request(94,payload,8);
+        p=lock();int ipc=state.ipc_result;state.result_connect=rc_connect;state.result_bond=rc;unlock(p);
+        if((rc && rc!=-11) || ipc){p=lock();state.bond=2;state.bonding=0;state.bond_pending=0;state.connect_ready=1;unlock(p);}
     }
     if(connect)queue(1);
+}
+/* 用记住的地址直连, 跳过 inquiry: 经典 inquiry 只返回"当前允许被发现"的对端,
+ * 而 page scan 在蓝牙开着时一直都在, 所以已知地址随时可以连上。 */
+int bt_probe_connect_address(const uint8_t address[6],const char *name)
+{
+    if(!address)return -22;
+    uint32_t p=lock();
+    if(state.phase!=IDLE){unlock(p);return -16;}
+    struct bt_probe_device *d=&state.devices[0];
+    memcpy(d->address,address,6);d->rssi=0;
+    unsigned j=0;if(name)for(;j<20 && name[j];j++)d->name[j]=name[j];d->name[j]=0;
+    state.count=1;state.selected=0;unlock(p);
+    bt_probe_connect();
+    return 0;
 }
 /* Bounded formatting: no dependency on an unaudited firmware printf. */
 struct output {char *s;uint32_t n,cap;};
@@ -364,4 +521,29 @@ void bt_probe_text(char *out,uint32_t capacity)
     str(&o," IPC:");num(&o,(uint32_t)s.ipc_result,10,1);str(&o," Svc:");num(&o,(uint32_t)s.service_result,10,1);
     if(s.pair_confirm){str(&o,"\nKey:");num(&o,s.passkey,10,6);str(&o," Confirm?");}
     str(&o,"\nIP: module-private PAN");if(capacity)out[o.n]=0;
+}
+uint32_t bt_probe_event_text(char *out,uint32_t capacity)
+{
+    if(!out || !capacity)return 0;
+    /* 只拷事件环(320B), 不整份拷贝 state —— 这个函数跑在 20KB 任务栈上。 */
+    struct probe_event events[16];uint32_t reference;
+    uint32_t p=lock();memcpy(events,state.history,sizeof(events));reference=state.event_head;unlock(p);
+    struct output o={out,0,capacity};
+    uint32_t total=reference,count=total<12u?total:12u;
+    if(!count)str(&o,"暂无回调事件");
+    for(uint32_t i=0;i<count;i++){
+        struct probe_event *e=&events[(total-count+i)&15];
+        if(i)chr(&o,'\n');
+        const char *n="?";
+        switch(e->kind){case 'A':n="adapter";break;case 'S':n="scan";break;case 'V':n="device";break;
+            case 'P':n="pair";break;case 'D':n="display";break;case 'B':n="bond";break;case 'L':n="l2";break;}
+        (void)0;str(&o,n);chr(&o,' ');
+        unsigned any=0;for(unsigned b=0;b<6;b++)if(e->address[b])any=1;
+        if(any){for(unsigned b=0;b<6;b++){if(b)chr(&o,':');num(&o,e->address[5-b],16,2);}}
+        else str(&o,"--");
+        str(&o,"  a=");if((int32_t)e->first<0)chr(&o,'-');num(&o,(int32_t)e->first<0?0u-e->first:e->first,10,1);
+        str(&o," b=");if((int32_t)e->second<0)chr(&o,'-');num(&o,(int32_t)e->second<0?0u-e->second:e->second,10,1);
+    }
+    if(capacity)out[o.n]=0;
+    return o.n;
 }

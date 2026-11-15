@@ -5,6 +5,7 @@ void bt_probe_scan(void);
 void bt_probe_action(uint32_t id);
 void bt_probe_next(void);
 void bt_probe_connect(void);
+int bt_probe_connect_address(const uint8_t address[6],const char *name);
 void bt_probe_disconnect(void);
 void bt_probe_bnep(void);
 void bt_probe_poll(void);
@@ -21,6 +22,15 @@ struct bt_probe_diagnostics {
     int32_t ipc_result,service_result,sys_errno;
     uint32_t client_state;int32_t client_fd;
     uint32_t l2_event,l2_events;int32_t error;uint32_t error_stage;
+    /* 配对取证: bond 回调枚举 0=BOND_NONE 1=BONDING 2=BONDED(固件字符串表实证)。 */
+    uint32_t bond_attempts,bond_pending,bonding,bond_events,bond_value,bond_transport,bond_order,phase;
+    uint32_t pair_reply_result;   /* cmd 0x61 的返回(非0=配对请求被拒/失败) */
+    uint32_t device_configured;   /* CoD/io cap/0x3d 设备级配置已下发 */
+    /* 关键命令的返回码(>0 = 蓝牙服务拒绝, -618 = IPC 失败), 排查用。 */
+    int32_t result_cod,result_iocap,result_paircfg,result_connect,result_bond,result_confirm,result_remove,result_name,result_name_read;
+    char local_name[32];          /* cmd 0x23 回读的 adapter 本地名 */
 };
 void bt_probe_diagnostics(struct bt_probe_diagnostics *out);
+/* 最近 12 条蓝牙回调事件, 文本行; 返回写入字节数(不含终止符)。 */
+uint32_t bt_probe_event_text(char *out,uint32_t capacity);
 #endif

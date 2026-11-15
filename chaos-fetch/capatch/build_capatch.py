@@ -20,6 +20,10 @@ import shutil
 import struct
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from firmware_symbols import DEFAULT_TARGET, load_target
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "capatch.c")
@@ -162,9 +166,15 @@ class Elf32:
 
 
 def main():
+    global OUT_ELF, OUT_OBJ
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", help="验证通过后复制 capatch.elf 到指定路径")
     args = parser.parse_args()
+    target = load_target(Path(HERE).parents[1], os.environ.get("CHAOS_FIRMWARE", DEFAULT_TARGET))
+    output_dir = Path(HERE) / 'build' / target['id']
+    output_dir.mkdir(parents=True, exist_ok=True)
+    OUT_ELF = str(output_dir / 'capatch.elf')
+    OUT_OBJ = str(output_dir / 'capatch.o')
     for p in (CLANG, LLD):
         if not os.path.exists(p):
             raise SystemExit("工具缺失: %s" % p)
@@ -173,7 +183,7 @@ def main():
     print("   lld   :", LLD)
 
     print("\n== [1/2] 编译 ==")
-    cmd = [CLANG] + CFLAGS + ["-c", SRC, "-o", OUT_OBJ]
+    cmd = [CLANG] + CFLAGS + ["-include", str(target['symbol_dir'] / 'firmware.h'), "-c", SRC, "-o", OUT_OBJ]
     run(cmd)
     print("   -> %s (%d B)" % (os.path.basename(OUT_OBJ), os.path.getsize(OUT_OBJ)))
 

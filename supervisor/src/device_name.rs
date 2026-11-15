@@ -5,7 +5,6 @@
 
 use crate::*;
 
-pub(crate) const PAGE_PID: u32 = 26;
 
 const SELECT_CONFIG: &[u8] = b"/data/chaos/device-name.cfg\0";
 const CUSTOM_CONFIG: &[u8] = b"/data/chaos/device-name.txt\0";
@@ -37,7 +36,8 @@ static mut LOADED: bool = false;
 
 #[inline]
 fn valid_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'.' || c == b' '
+    // 放行中文键盘写入的完整 UTF-8 汉字（每字 3 字节），容量仍按字节计。
+    c.is_ascii_alphanumeric() || c == b'.' || c == b' ' || c >= 0x80
 }
 
 pub(crate) unsafe fn ensure_loaded() {
@@ -143,7 +143,7 @@ pub(crate) unsafe fn edit_custom() {
     crate::keyboard::open(initial, crate::keyboard::Completion::DeviceName);
 }
 
-/// 键盘完成动作调用。只有非空且全部为英文、数字、小数点或空格的值才会保存。
+/// 键盘完成动作调用。非空、UTF-8 完整，且 ASCII 只含字母数字小数点空格的值才会保存。
 pub(crate) unsafe fn save_custom(text: *const u8) -> bool {
     ensure_loaded();
     if text.is_null() {

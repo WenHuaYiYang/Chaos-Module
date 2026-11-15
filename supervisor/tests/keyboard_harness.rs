@@ -26,7 +26,7 @@ fn nav_goto(pid: u32, _: u32) {
 fn nav_back() {
     mock::with(|ui| ui.back_count += 1);
 }
-fn render_req(pid: usize) { mock::with(|ui| ui.render_requests.push(pid)); }
+fn render_req(pid: u32) { mock::with(|ui| ui.render_requests.push(pid)); }
 mod terminal_ui {
     pub unsafe fn submit_command(text: *const u8) -> bool {
         let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
@@ -43,6 +43,21 @@ mod btpan {
         })
     }
 }
+mod dimmer_timeout {
+    pub unsafe fn save(text: *const u8) -> bool {
+        let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| { ui.saves.push((6, bytes)); ui.save_ok })
+    }
+}
+
+mod page { pub mod blur_params {
+    pub unsafe fn title() -> &'static [u8] {b"Blur parameter\0"}
+    pub unsafe fn error_text() -> *const u8 {b"1~40\0".as_ptr()}
+    pub unsafe fn save(text:*const u8)->bool {
+        let bytes=std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| {ui.saves.push((7,bytes));ui.save_ok})
+    }
+}}
 
 macro_rules! completion_mock {
     ($name:ident, $index:expr) => {
@@ -91,7 +106,7 @@ mod mock {
         pub save_ok: bool,
         pub saves: Vec<(u32, Vec<u8>)>,
         pub back_count: usize,
-        pub render_requests: Vec<usize>,
+        pub render_requests: Vec<u32>,
         pub fail_at: Option<usize>,
     }
 
@@ -131,6 +146,7 @@ mod fw_api {
     use super::mock;
 
     pub const LV_DIR_HOR: u32 = 0x3;
+    pub const LV_DIR_VER: u32 = 0xC;
     pub const LV_OBJ_FLAG_CLICKABLE: u32 = 0x2;
     pub const LV_OBJ_FLAG_SCROLLABLE: u32 = 0x10;
     pub const LV_OBJ_FLAG_SCROLL_ELASTIC: u32 = 0x20;
@@ -191,3 +207,5 @@ mod fw_api {
         mock::with(|ui| ui.key_code)
     }
 }
+
+mod file_manager { pub static MESSAGE:[u8;96]=[0;96]; pub unsafe fn save_name(_: *const u8)->bool{true} }

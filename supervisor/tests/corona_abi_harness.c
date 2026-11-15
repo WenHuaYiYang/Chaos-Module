@@ -5,6 +5,7 @@
 #include "resource_hook_background.h"
 
 static unsigned chaos_corona_enabled, chaos_corona_in_call;
+static uint32_t chaos_corona_idle_wait;
 static int idle = 1, commit_result;
 static unsigned expected_enabled, expected_mask;
 static unsigned commits, polls;
@@ -12,8 +13,37 @@ static unsigned reenter_commit, reenter_poll, reentry_checks;
 
 int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask);
 void chaos_corona_backgrounds_poll(void);
+static unsigned honeycomb_consumes, position_forwards;
+static int chaos_honeycomb_pre_scroll(void *event) { assert(event); return honeycomb_consumes; }
+static void native_position(void *event) { assert(event); ++position_forwards; }
+#define CHAOS_CORONA_NATIVE_POSITION native_position
 
-static int p67_blur_native_idle(void) { return idle; }
+static unsigned native_idle_queries, surface_idle_queries;
+static int p67_busy;
+static uint32_t image_slot;
+static unsigned char scroll_latch;
+struct surface_stub { unsigned idle; };
+static struct surface_stub p67_surfaces[3] = {{1}, {1}, {1}};
+#define P67_IMAGE_SLOT 0x201102dcu
+#define P67_U8(address) test_byte(address)
+static unsigned char test_byte(uint32_t address) { assert(address == 0x201102d9u); return scroll_latch; }
+static uint32_t load32(uint32_t address) { assert(address == P67_IMAGE_SLOT); return image_slot; }
+static int p67_blur_native_idle(void) { ++native_idle_queries; return idle; }
+static int p67_surface_idle(struct surface_stub *surface) { ++surface_idle_queries; return surface->idle; }
+/* 生产实现里由自愈/计数器引用的外部件，这里打桩（不含任何 native 读）。 */
+static uint32_t chaos_corona_commits, chaos_corona_commit_fails;
+static unsigned latch_rescues;
+static void chaos_corona_latch_rescue(void) { ++latch_rescues; }
+static unsigned display_repairs;
+static void chaos_corona_display_rebind(void) {
+    assert(chaos_corona_in_call == 1 && display_repairs == polls);
+    ++display_repairs;
+}
+/* Callback integrity is exercised against real p67 objects in launcher harness. */
+static void chaos_corona_launcher_rebind(void) {}
+static void chaos_corona_rearm_missing_source(void) {}
+static void cc_buttons_poll(void) {}
+static void chaos_v2_background_refresh(void) {}
 
 static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
     const char *paths[] = {bg->launcher, bg->control_center, bg->notifications, bg->widgets};
@@ -39,6 +69,7 @@ static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
 
 static void rh_platform_backgrounds_poll(void) {
     assert(chaos_corona_in_call == 1);
+    assert(display_repairs == polls + 1);
     ++polls;
     if (reenter_poll) {
         unsigned saved_commits = commits, saved_polls = polls;
@@ -123,6 +154,26 @@ int main(void) {
         assert(!chaos_corona_enabled && !chaos_corona_in_call);
     }
     assert(commits == 40);
-    puts("Chaos C ABI: 16 masks, mixed system/blur paths, rollback, busy, scratch and reentry guards passed");
+    honeycomb_consumes=0;chaos_corona_launcher_position(&polls);assert(position_forwards==1);
+    honeycomb_consumes=1;chaos_corona_launcher_position(&polls);assert(position_forwards==1);
+    /* Observing the wait reason must preserve short-circuit safety: no native
+     * registry walk while reentrant, scrolling, holding a snapshot or drawing. */
+    unsigned queries = native_idle_queries;
+    chaos_corona_in_call=1;
+    assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==1);
+    chaos_corona_in_call=0;p67_busy=1;
+    assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==2);
+    p67_busy=0;image_slot=0x1234;
+    assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==3);
+    image_slot=0;scroll_latch=1;
+    assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==4);
+    assert(native_idle_queries==queries && !surface_idle_queries);
+    scroll_latch=0;idle=0;
+    assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==5 && !surface_idle_queries);
+    idle=1;p67_surfaces[1].idle=0;
+    assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==7 && surface_idle_queries==2);
+    p67_surfaces[1].idle=1;
+    assert(chaos_corona_backgrounds_idle() && !chaos_corona_idle_wait && surface_idle_queries==5);
+    puts("Chaos C ABI: 16 masks, mixed paths, rollback/reentry and honeycomb position guard passed");
     return 0;
 }

@@ -327,6 +327,37 @@ class PanTests(unittest.TestCase):
         m.call('network_connect',15);m.call('test_network_poll');self.assertEqual(m.word('test_connected_index'),15)
         m.call('test_pairing',42);m.call('test_network_poll');self.assertEqual(m.word('test_view',20),42)
         m.call('network_pair_confirm');m.call('test_network_poll');self.assertEqual(m.word('test_confirms'),1)
+    def test_missing_radio_address_reports_97_instead_of_dhcp_timeout(self):
+        # 地址没就绪时 pan_ip_poll 的 link 条件不成立, DHCP 一个包都没发过;
+        # 报 -110 会误导成"手机没给 IP"。这条钉住它与真 DHCP 超时分开。
+        m=self.network();m.call('network_enable',1);m.call('test_network_poll')
+        m.call('test_scan_done',1);m.call('test_network_poll');m.call('test_network_poll')
+        m.call('network_connect',0);m.call('test_network_poll')
+        m.call('test_linked',0x44);m.call('test_network_poll')
+        m.setword('test_radio_ready',0)
+        for _ in range(245):m.call('test_network_poll')
+        self.assertEqual(m.word('test_view',28),(-97)&0xffffffff)
+        self.assertEqual(m.word('test_view',32),6)
+        self.assertEqual(m.word('test_disconnects'),1)
+    def test_saved_peer_connects_without_inquiry(self):
+        # 记住的对端直连: 不经过扫描, 因此不要求手机处于"可被发现"状态。
+        m=self.network();m.call('network_enable',1);m.call('test_network_poll')
+        m.call('test_scan_done',0);m.call('test_network_poll');m.call('test_network_poll')
+        self.assertEqual(m.call('test_connect_saved'),0)
+        self.assertEqual(m.word('test_address_connects'),0)  # 命令只入队, 由 worker 执行
+        m.call('test_network_poll')
+        self.assertEqual(m.word('test_address_connects'),1)
+        self.assertEqual(m.word('test_connected_address'),0x44332211)
+        self.assertEqual(m.word('test_view',72),0x44332211)
+        self.assertEqual(m.word('test_view',40),0x6e6f6870)  # "phon"
+        self.assertEqual(m.word('test_view',44),0x65)        # "e"
+        self.assertEqual(m.word('test_connects'),0)  # 没走"选设备"那条路
+    def test_saved_peer_refused_while_scanning(self):
+        m=self.network();m.call('network_enable',1);m.call('test_network_poll')
+        m.call('network_scan');m.call('test_network_poll')
+        self.assertEqual(m.call('test_connect_saved'),-16)
+        for _ in range(4):m.call('test_network_poll')
+        self.assertEqual(m.word('test_address_connects'),0)
     def test_disconnect_cancels_sdp_and_pending_selection(self):
         m=self.network();m.call('network_enable',1);m.call('test_network_poll');m.call('test_scan_done',16);m.call('test_network_poll');m.call('test_network_poll')
         m.setword('test_sdp_hold',1);m.call('network_connect',0);m.call('test_network_poll');m.call('network_disconnect');m.call('test_network_poll')

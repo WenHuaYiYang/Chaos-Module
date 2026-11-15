@@ -253,7 +253,7 @@ unsafe fn slot_file_ok(slot: u32) -> bool {
 //   2. 之后任何状态变化(切换选中、两步删除的确认态、提示行读数)都**只登记一次请求**
 //      (置 FL_ROWS_REQ), 由 tick 在"没有跑批在动"的那一拍排一次整页重建 ——
 //      不再原地 row_update。理由见 tick 里 FL_ROWS_REQ 那段与 font_apply::apply_finish。
-//   3. 定时器侧(删除流水线)一概不直接碰对象, 只置 render_req(FONT_PID as usize)。
+//   3. 定时器侧(删除流水线)一概不直接碰对象, 只置 render_req(FONT_PID)。
 // ---------------------------------------------------------------------------
 
 /// 清单里有几个自定义字体(不含固定在第一行的官方字体)
@@ -670,7 +670,7 @@ pub(crate) unsafe fn tick() {
             // 框是全屏模态, 这期间能点的只有框上的叉/勾, 不会有别的请求积压。
         } else if window_is_quiet() {
             st_wr!(FL_ROWS_REQ, 0);
-            render_req(FONT_PID as usize);
+            render_req(FONT_PID);
         }
     }
     // 在用的池位变了: 只登记请求(原来是立刻 row_update ×N, 正撞在分拍窗口里)。

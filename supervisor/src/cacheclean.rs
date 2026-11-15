@@ -17,7 +17,7 @@ use crate::mem::rd8;
 use core::ptr::{read_volatile, write_volatile};
 
 static mut CC_MSG: [u8; 96] = [0; 96];
-pub(crate) static mut CC_ARM: u32 = 0;   // 二次确认: 1=已武装, 再点才执行
+pub(crate) static CC_ARM: crate::page::kit::confirm::Arm = crate::page::kit::confirm::Arm::new();   // 二次确认(两次点击模式, 见 kit/confirm.rs)
 pub(crate) static mut CC_REQ: u32 = 0;   // 1=请求执行(tick 消费)
 pub(crate) static mut CC_HAS_RESULT: u32 = 0; // 1=CC_MSG 是刚出的清理结果(渲染消费一次)
 
@@ -97,6 +97,16 @@ unsafe fn walk(plen: usize, depth: u32, clean: bool) {
         }
         write_volatile(CC_WORK.as_mut_ptr().add(o), 0);
         if dt == DT_REG {
+            // Captures are user files, even though their requested location is
+            // offlinelog. Preserve both completed files and worker transactions.
+            if depth == 0 && &CC_WORK[..plen] == b"/data/offlinelog" {
+                let mut len = 0;
+                while len < 64 && read_volatile(nm.add(len)) != 0 { len += 1; }
+                if crate::capture_format::owned(core::slice::from_raw_parts(nm, len)) {
+                    write_volatile(CC_WORK.as_mut_ptr().add(plen), 0);
+                    continue;
+                }
+            }
             add_sat(&mut CC_BYTES, file_size(CC_WORK.as_ptr()));
             CC_FILES += 1;
             if clean && fw_api::fs_remove(CC_WORK.as_ptr()) < 0 { CC_FAIL += 1; }
@@ -189,5 +199,5 @@ pub(crate) unsafe fn clean() {
     // 不重扫的话卡片显示的占用和清理前一模一样(2026-10-15 用户报告)。
     walk_roots(false);
     scan_roots();
-    CC_ARM = 0;
+    CC_ARM.reset();
 }

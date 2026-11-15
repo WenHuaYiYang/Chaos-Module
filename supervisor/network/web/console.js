@@ -28,14 +28,21 @@ $('refresh').onclick=refresh;
 function append(text){ansi+=text;let at=0;while(at<ansi.length){const ch=ansi[at];if(ch==='\x1b'){if(at+1>=ansi.length)break;if(ansi[at+1]==='['){let end=at+2;while(end<ansi.length&&!/[\x40-\x7e]/.test(ansi[end]))end++;if(end===ansi.length)break;at=end+1;continue}at+=2;continue}if(ch==='\b'||ch==='\x7f')output=output.slice(0,-1);else if(ch!=='\r'&&ch!=='\x00')output+=ch;at++}ansi=ansi.slice(at);if(ansi.length>128)ansi='';if(output.length>65536)output=output.slice(-49152);$('terminalOutput').textContent=output;$('terminalOutput').scrollTop=$('terminalOutput').scrollHeight}
 function closeTerminal(){if(ws){const socket=ws;ws=null;clearInterval(socket.heartbeat);socket.close()}$('terminalState').textContent='未连接';$('nshState').textContent='未连接'}
 function send(text){if(!ws||ws.readyState!==WebSocket.OPEN){notice('请先连接终端');return false}const data=encoder.encode(text);if(data.length>1024){notice('单次输入不能超过 1024 字节');return false}ws.send(data);return true}
-$('connectTerminal').onclick=()=>{
-  if(ws||!auth)return;output='';ansi='';$('terminalOutput').textContent='';
+let attempt=0,busyState='';
+function openTerminal(){
+  output='';ansi='';$('terminalOutput').textContent='';busyState='';
   const decoder=new TextDecoder(),socket=new WebSocket('ws://'+location.host+'/ws/nsh');ws=socket;socket.binaryType='arraybuffer';$('terminalState').textContent='正在连接';
   socket.onopen=()=>{if(ws!==socket){socket.close();return}socket.send(encoder.encode('AUTH '+auth));$('terminalState').textContent='正在启动 NSH';socket.heartbeat=setInterval(()=>{if(ws===socket&&socket.readyState===1)socket.send(new Uint8Array())},30000)};
   socket.onmessage=e=>{if(ws!==socket)return;append(typeof e.data==='string'?e.data:decoder.decode(e.data,{stream:true}));$('terminalState').textContent='已连接';$('nshState').textContent='已连接'};
-  socket.onclose=e=>{clearInterval(socket.heartbeat);if(ws!==socket)return;ws=null;$('terminalState').textContent=e.code===1008?'认证失败':e.code===1013?'会话正在回收或繁忙，请稍后重试':'已断开';$('nshState').textContent='未连接';append(decoder.decode())};
+  socket.onclose=e=>{clearInterval(socket.heartbeat);if(ws!==socket)return;ws=null;append(decoder.decode());
+    /* 服务端把占用原因写在 close 帧的 reason 里(如"会话占用 5": 1 启动中 / 2 运行中 / 5 回收中) */
+    if(e.reason)busyState=e.reason;
+    /* 上一次会话还在回收(或刚断开、服务端还没处理完)时自动重试, 别让人手动点 */
+    if(e.code===1013&&attempt<3){attempt++;$('terminalState').textContent='正在回收上一次会话，自动重试 '+attempt+'/3';$('nshState').textContent='未连接';setTimeout(()=>{if(!ws&&auth)openTerminal()},800*attempt);return}
+    attempt=0;$('terminalState').textContent=e.code===1008?'认证失败':e.code===1013?('会话未退出：'+(busyState||'占用中')):'已断开';$('nshState').textContent='未连接'};
   socket.onerror=()=>{if(ws===socket)notice('终端连接失败，请检查网络或稍后重试')};
-};
+}
+$('connectTerminal').onclick=()=>{if(ws||!auth)return;attempt=0;openTerminal()};
 $('disconnectTerminal').onclick=closeTerminal;$('clearTerminal').onclick=()=>{output='';$('terminalOutput').textContent=''};
 $('terminalForm').onsubmit=e=>{e.preventDefault();const text=$('terminalInput').value;if(send(text+'\n')){history.push(text);hist=history.length;$('terminalInput').value=''}};
 $('terminalInput').onkeydown=e=>{if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();hist=Math.max(0,Math.min(history.length,hist+(e.key==='ArrowUp'?-1:1)));$('terminalInput').value=history[hist]||''}if(e.ctrlKey&&e.key==='c'){e.preventDefault();send('\x03')}};

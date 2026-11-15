@@ -132,7 +132,7 @@ unsafe fn tj_save_now() {
         };
         tj_msg(if ok { "已存".as_bytes() } else { "失败".as_bytes() });
     }
-    crate::render_req(st_rd!(FG_PAGE) as usize);
+    crate::render_req(st_rd!(FG_PAGE));
 }
 
 /// 设置页那两行入口：各走自己的压栈跳转。
@@ -365,19 +365,6 @@ unsafe fn tj_field_name(idx: u32) -> *const u8 {
     }
 }
 
-/// 这一屏的基准盒：content 铺满整页、顶对齐 0、不留白。
-///
-/// 框架给每页固定的是 `336x424` 摆在 `y=56`(标题栏固有高 `0x38=56`)再加底部留白 32 ——
-/// 那是列表页的口径。闹钟页那一串字面偏移(滚轮 `dy=0`、遮罩 `+104/-105`、提示标签 `+75`、
-/// 确认按钮 `-16`)是按"content 铺满整页"算的: 滚轮在 `dy=0` 时正好落在整页中心 = 屏幕中心，
-/// 按钮底边离屏幕底 16。照抄偏移而不照抄基准，整组就会比系统低 28px、按钮也跟着抬 16。
-/// LVGL 的这些偏移都是相对"父对象内边距之后的可用区"量的，所以可用区错了整组跟着错。
-unsafe fn tj_base_box(content: u32) {
-    fw_api::obj_set_size(content, 336, 480);
-    fw_api::obj_align(content, fw_api::align::TOP_MID, 0, 0);
-    fw_api::content_pad_bottom(content, 0, 0);
-}
-
 /// 建完轮之后的公共尾部：遮罩、提示标签、反馈回调挂接、确认按钮。
 ///
 /// 次序与闹钟页一致: 轮 -> 遮罩(压在轮上做渐隐) -> 底部标签 -> 挂反馈回调 -> 确认按钮。
@@ -417,7 +404,7 @@ unsafe fn tj_screen_tail(ctx: &PageCtx, nh: usize) -> PageResult {
     fw_api::obj_align(btn, fw_api::align::BOTTOM_MID, 0, -16);
     fw_api::btn_set_src(btn, b"/resource/app/common/icon/confirm.bin\0".as_ptr());
     fw_api::obj_style_color(btn, 0x222222, 0);
-    fw_api::obj_add_event(btn, row_ev_fn(0), fw_api::ev::CLICKED, 0);
+    fw_api::obj_add_event(btn, row_cb(), fw_api::ev::CLICKED, 0);
     Ok(())
 }
 
@@ -443,12 +430,16 @@ pub(crate) struct TimeSetPage;
 pub(super) static PAGE_TIMESET: TimeSetPage = TimeSetPage;
 
 impl Page for TimeSetPage {
+    /// 整页口径: 336x480 摆在 y=0、底部不留白。滚轮那一串字面偏移(滚轮 dy=0、
+    /// 遮罩 +104/-105、提示标签 +75、确认按钮 -16)是按"content 铺满整页"算的,
+    /// 照抄偏移就必须照抄基准 —— 详见 page.rs 的 enum Geom 注释。
+    fn geometry(&self) -> Geom { Geom::FullBleed }
+
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "时间设置\0".as_bytes()); }
     }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            tj_base_box(ctx.content);
             let tm = core::ptr::read_volatile(
                 core::ptr::addr_of!(TJ_TM) as *const [i32; 9]);
             // 横向位置按闹钟页的字面值抄。它的 7 号对齐把 x 当**左边缘**偏移算，
@@ -490,12 +481,14 @@ pub(crate) struct DateMDPage;
 pub(super) static PAGE_DATE_MD: DateMDPage = DateMDPage;
 
 impl Page for DateMDPage {
+    /// 与页2 同口径: 闹钟页那组两列几何按整页可用区算。
+    fn geometry(&self) -> Geom { Geom::FullBleed }
+
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "日期设置\0".as_bytes()); }
     }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            tj_base_box(ctx.content);
             let tm = core::ptr::read_volatile(
                 core::ptr::addr_of!(TJ_TM) as *const [i32; 9]);
             tj_sep(ctx.content, "/\0".as_ptr(), 160);

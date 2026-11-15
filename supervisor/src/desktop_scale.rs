@@ -57,11 +57,8 @@
 //!    内缩档 66/168/270，满档 54/168/282。这里只搬"往中间收"，不搬 RW6 中间三排
 //!    向外鼓的那 15/3/-3/-14 —— 10P 满尺寸盒子 112 宽、左沿已经在 -2，往外挪就是切边。
 //!
-//! ## 读数（运行日志页）
-//!
-//! `law ` 写进去的项数；`law c` 容器地址；`law m` 模式字（不是 1 也不是 0x10001 时不写表）。
 //! 开关选择持久化在 `/data/chaos/applist.cfg`（1 字节位图，缺失=全开），
-//! 开机第一次 tick 读回并自动写入表；运行日志里 `ds cfg <位图>` 是读到的值。
+//! 开机第一次 tick 读回并自动写入表。
 
 use crate::fw_api;
 use crate::mem::{rd32, safe_ptr};
@@ -125,15 +122,18 @@ static mut PITCH_SW: u32 = 1;
 static mut INSET_SW: u32 = 1;
 /// 开关选择的持久化: /data/chaos/applist.cfg, 1 字节位图
 /// (bit0 缩放 / bit1 排距 / bit2 内缩)。文件缺失或越界 = 0b111(全开)。
-/// 回调里只改内存并置脏, 真正落盘与写表都由 tick 做 —— 与"点击只登记"同一条例。
+/// 维护定时器负责重试保存；设置页也可在 UI 事件中立即应用并保存。
 const CFG: &[u8] = b"/data/chaos/applist.cfg\0";
 static mut CFG_LOADED: u32 = 0;
 static mut CFG_DIRTY: u32 = 0;
 /// 上一次写表时的 (容器, 三个开关) 签名。
 static mut LAW_SIG: u32 = 0;
 static mut LAW_CONT: u32 = 0;
-static mut LAW_LOGGED: u32 = 0;
 static mut SCROLL_PREV: i32 = 0;
+// Reset the old RW tables once on entering honeycomb, then leave them alone.
+static mut HONEYCOMB_STOCK_CONT: u32 = 0;
+static mut HONEYCOMB_STOCK_MODE: u32 = 0;
+static mut APPLY_PENDING: bool = true;
 
 /// 开机第一次用到开关时读一次配置; 之后只读内存。
 unsafe fn ensure_loaded() {
@@ -152,7 +152,7 @@ unsafe fn ensure_loaded() {
         st_wr!(LENS_SW, (v & 1) as u32);
         st_wr!(PITCH_SW, ((v >> 1) & 1) as u32);
         st_wr!(INSET_SW, ((v >> 2) & 1) as u32);
-        crate::log::kv("ds cfg", v as u32);
+
     }
 }
 
@@ -161,23 +161,28 @@ unsafe fn save_deferred() {
     if st_rd!(CFG_DIRTY) == 0 {
         return;
     }
-    st_wr!(CFG_DIRTY, 0);
     let v = ((st_rd!(LENS_SW) & 1)
         | ((st_rd!(PITCH_SW) & 1) << 1)
         | ((st_rd!(INSET_SW) & 1) << 2)) as u8;
     let fd = fw_api::open(CFG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
-    if fd >= 0 {
-        let _ = fw_api::write(fd, &v as *const u8, 1);
+    let saved = if fd >= 0 {
+        let n = fw_api::write(fd, &v as *const u8, 1);
         fw_api::close(fd);
+        n == 1
+    } else { false };
+    if saved {
+        st_wr!(CFG_DIRTY, 0);
     }
 }
 
 pub(crate) unsafe fn lens_on() -> bool {
+    let _ = crate::honeycomb::enabled(); // initialize the shared launcher choice first
     ensure_loaded();
     st_rd!(LENS_SW) != 0
 }
 
 pub(crate) unsafe fn set_lens(on: bool) {
+    if on { crate::honeycomb::set_enabled(false); }
     ensure_loaded();
     let v = if on { 1 } else { 0 };
     if st_rd!(LENS_SW) == v {
@@ -188,11 +193,13 @@ pub(crate) unsafe fn set_lens(on: bool) {
 }
 
 pub(crate) unsafe fn pitch_on() -> bool {
+    let _ = crate::honeycomb::enabled();
     ensure_loaded();
     st_rd!(PITCH_SW) != 0
 }
 
 pub(crate) unsafe fn set_pitch(on: bool) {
+    if on { crate::honeycomb::set_enabled(false); }
     ensure_loaded();
     let v = if on { 1 } else { 0 };
     if st_rd!(PITCH_SW) == v {
@@ -203,11 +210,13 @@ pub(crate) unsafe fn set_pitch(on: bool) {
 }
 
 pub(crate) unsafe fn inset_on() -> bool {
+    let _ = crate::honeycomb::enabled();
     ensure_loaded();
     st_rd!(INSET_SW) != 0
 }
 
 pub(crate) unsafe fn set_inset(on: bool) {
+    if on { crate::honeycomb::set_enabled(false); }
     ensure_loaded();
     let v = if on { 1 } else { 0 };
     if st_rd!(INSET_SW) == v {
@@ -215,6 +224,29 @@ pub(crate) unsafe fn set_inset(on: bool) {
     }
     st_wr!(INSET_SW, v);
     st_wr!(CFG_DIRTY, 1);
+}
+
+/// Honeycomb and RW6 are alternative layout owners, including saved settings.
+/// Used by its switch and maintenance timer; does not touch objects.
+pub(crate) unsafe fn disable_for_honeycomb() {
+    ensure_loaded();
+    if st_rd!(LENS_SW) | st_rd!(PITCH_SW) | st_rd!(INSET_SW) != 0 {
+        st_wr!(LENS_SW, 0);
+        st_wr!(PITCH_SW, 0);
+        st_wr!(INSET_SW, 0);
+        st_wr!(CFG_DIRTY, 1);
+        st_wr!(HONEYCOMB_STOCK_CONT, 0);
+    }
+}
+
+/// Force table application and refresh the existing native launcher instance.
+/// If construction/transition is still in progress, tick retries the refresh.
+pub(crate) unsafe fn reapply_now() {
+    st_wr!(LAW_SIG, 0);
+    st_wr!(LAW_CONT, 0);
+    st_wr!(HONEYCOMB_STOCK_CONT, 0);
+    APPLY_PENDING = true;
+    tick();
 }
 
 /// 桌面这一轮有没有在动：读容器里的滚动量与上一拍比。
@@ -402,7 +434,12 @@ unsafe fn law_matches(me: u32, k0: usize) -> bool {
 
 pub(crate) unsafe fn tick() {
     ensure_loaded();
+    let honeycomb = crate::honeycomb::enabled();
+    if honeycomb { disable_for_honeycomb(); }
     save_deferred();
+    // 息屏时桌面不可见, 缩放探测与写值都是白费; 亮屏后 on_resume/页面重建会重算,
+    // 所以这里直接返回安全。配置落盘已在上面做过, 不受息屏影响。
+    if !fw_api::screen_is_on() { return; }
     let cont = rd32(GRID_GLOBAL as *const u32);
     if cont == 0 || !safe_ptr(cont) {
         st_wr!(LAW_SIG, 0);
@@ -419,6 +456,19 @@ pub(crate) unsafe fn tick() {
         st_wr!(LAW_SIG, 0);
         return;
     }
+    if honeycomb {
+        // One transition write removes old RW parameters from this instance.
+        // No RW watch/repair writer runs while honeycomb owns the layout.
+        if st_rd!(HONEYCOMB_STOCK_CONT) != cont || st_rd!(HONEYCOMB_STOCK_MODE) != mode {
+            law_write(me, k0); // all three switches are off: stock tables
+            st_wr!(HONEYCOMB_STOCK_CONT, cont);
+            st_wr!(HONEYCOMB_STOCK_MODE, mode);
+            st_wr!(LAW_SIG, 0);
+        }
+        APPLY_PENDING = false;
+        return;
+    }
+    st_wr!(HONEYCOMB_STOCK_CONT, 0);
     let sig = 1 + (st_rd!(LENS_SW) & 1) + ((st_rd!(PITCH_SW) & 1) << 1)
         + ((st_rd!(INSET_SW) & 1) << 2);
     let changed = st_rd!(LAW_SIG) != sig || st_rd!(LAW_CONT) != cont;
@@ -426,11 +476,8 @@ pub(crate) unsafe fn tick() {
         law_write(me, k0);
         st_wr!(LAW_SIG, sig);
         st_wr!(LAW_CONT, cont);
-        if st_rd!(LAW_LOGGED) == 0 {
-            st_wr!(LAW_LOGGED, 1);
-            crate::log::kv("law ", (ROWS * COLS) as u32);
-            crate::log::kv("law c", cont);
-            crate::log::kv("law m", mode);
-        }
+    }
+    if APPLY_PENDING && fw_api::honeycomb::refresh_native(cont) {
+        APPLY_PENDING = false;
     }
 }

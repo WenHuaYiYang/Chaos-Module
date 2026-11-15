@@ -1,13 +1,12 @@
 //! 原生文件桥开关：持久化到 `/data/chaos/bridge.cfg`，由维护定时器落地。
 //!
 //! 文件格式：`BRG1` + 1 字节 enabled（0/1）。默认关闭；首次安装不会
-//! 自动占用 L2 0x43，用户需要文件桥时在设置页手动打开。
+//! 自动接管私有消息，用户需要ChaosConnect文件桥时在设置页手动打开。
 //!
-//! 开关只改配置并清 `BRIDGE_STATE`，真正的 start/stop 放到 `chaos_shake_timer`
-//! 里做，避免在 LVGL 点击回调里创建/撤销 owner timer。
+//! 开关回调立即切换收发门禁并作废旧队列，timer/VFS收尾仍交给各自owner。
 
 use crate::state::BRIDGE_STATE;
-use crate::{fw_api, log, st_rd, st_wr};
+use crate::{fw_api, connect_log, st_rd, st_wr};
 
 const CFG_PATH: &[u8] = b"/data/chaos/bridge.cfg\0";
 const MAGIC: &[u8; 4] = b"BRG1";
@@ -19,6 +18,7 @@ static mut ENABLED: u32 = 0;
 const STATE_STOP: u32 = 0xFFFF_FFFE;
 
 extern "C" {
+    fn chaos_bridge_set_enabled(enabled:u32);
     fn chaos_bridge_start() -> i32;
     fn chaos_bridge_stop();
 }
@@ -38,6 +38,7 @@ unsafe fn load() {
     if n == 5 && &buf[0..4] == MAGIC && buf[4] <= 1 {
         ENABLED = buf[4] as u32;
     }
+    chaos_bridge_set_enabled(ENABLED);
 }
 
 /// 当前开关状态（默认关）。
@@ -56,40 +57,45 @@ unsafe fn save(on: bool) {
         0o640,
     );
     if fd < 0 {
-        log::line("文件桥开关: 配置写入失败");
+        connect_log::line("ChaosConnect 配置: 配置写入失败");
         return;
     }
     let n = fw_api::write(fd, buf.as_ptr(), buf.len() as u32);
     fw_api::close(fd);
     if n != buf.len() as i32 {
-        log::line("文件桥开关: 配置写入不完整");
+        connect_log::line("ChaosConnect 配置: 配置写入不完整");
     }
 }
 
-/// UI 开关调用：翻转并落盘；实际 start/stop 由下一次维护 tick 执行。
+/// UI先关闭/开启原生门禁，再持久化；无需等待后续维护tick才禁止访问。
 pub(crate) unsafe fn toggle() -> bool {
     let on = !enabled();
     ENABLED = if on { 1 } else { 0 };
+    chaos_bridge_set_enabled(ENABLED);
+    if !on { crate::connect_permission::disconnect(); }
     save(on);
     // 打开时清 0，允许从停止/失败状态重新 start。
     // 关闭时写“停止待执行”，即使快速 关→开→关 也能让 tick 最终 stop；
-    // 不能清 0，否则 tick 会跳过 stop，桥继续处理 L2 0x43。
+    // 不能清 0，否则 tick 会跳过 stop，桥继续处理私有消息。
     st_wr!(BRIDGE_STATE, if on { 0 } else { STATE_STOP });
     on
 }
 
 /// 维护定时器调用：按开关状态启动/停止文件桥。
 pub(crate) unsafe fn tick() {
+    crate::connect_permission::load();
+    crate::connect_radio::load_enabled();
     load();
     let state = st_rd!(BRIDGE_STATE);
     if ENABLED != 0 {
+        crate::connect_radio::ensure_worker();
         if state == 0 {
             let rc = chaos_bridge_start();
             st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
-            log::line(if rc == 0 {
-                "文件桥: CanopusConnect 已启动"
+            connect_log::line(if rc == 0 {
+                "ChaosConnect 已启用，等待插件连接"
             } else {
-                "文件桥: 启动失败"
+                "ChaosConnect 启动失败"
             });
         }
     } else if state != 0 {
@@ -97,6 +103,6 @@ pub(crate) unsafe fn tick() {
         // stop 本身幂等，失败/待停止状态都顺手清回 0。
         chaos_bridge_stop();
         st_wr!(BRIDGE_STATE, 0);
-        log::line("文件桥: 已关闭");
+        connect_log::line("ChaosConnect 已停用");
     }
 }

@@ -220,7 +220,7 @@ pub(crate) unsafe fn excl_toggle(pkg: *const u8) -> bool {
         eset("保存失败\0");
         return false;
     }
-    crate::log::pkg(if idx == usize::MAX { "排除 " } else { "取消排除 " }, pkg);
+
     if idx == usize::MAX {
         // 排除项不参与批量/开机补偿; 摘掉隐藏名单并确保桌面可见, 避免"显示隐藏但实际显示"
         let _ = keep_del(pkg);

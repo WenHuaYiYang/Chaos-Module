@@ -1,0 +1,20 @@
+addr043,name043,symbol,addr65,name65,grade,note
+0xc107790,043.obj_set_local_style_prop_branches,obj_set_local_style_prop,0x00378965,p65.lv_obj_set_local_style_prop,SIM_EXECUTED,样式/几何统一入口；SRAM 真身
+0xc587ed1,043.lv_timer_create,lv_timer_create,0x0C7414D9,p65.lv_timer_create,SIM_CONFIRMED,回调在主循环被调百余次
+0xc5883f1,043.lv_obj_add_event_cb,obj_add_event,0x0C2570BD,p65.lv_obj_add_event_cb,SIM_CONFIRMED,描述符 +0x10=udata/+0x14=filter
+0xc588f31,043.lvx_label_create,label_create,0x0C314608+0x003775BD+0x003776B1,p65.lv_label_class+create/init,SIM_CONFIRMED,类 + create_obj + init
+0xc589491,043.lvx_label_set_text,label_set_text,0x0C78C879,p65.lv_label_set_text,SIM_CONFIRMED,文本在 +0x34
+0xc588de9,043.lvx_object_delete,obj_delete,0x0C1A9E57,p65.lv_obj_delete,STATIC_CONFIRMED,发 DELETE 事件后摘链
+0xc588519,043.obj_clear_state,obj_clear_state,,p65.lv_obj_clear_state,TBD,p65 待定案
+0xc588961,043.obj_set_hidden/add_flag,obj_add_flag,0x00387B99,p65.lv_obj_add_flag,SIM_CONFIRMED,标志字 +0x2C
+0xc587b38,043.style_set_font,obj_set_style_text_font,funnel+0x5A,p65.lv_obj_set_local_style_prop,STATIC_CONFIRMED,TEXT_FONT=0x5A（043 实证）
+0xc54ca3d,043cfg.FW_LVX_LIST_ROW_CREATE,row_create,,p65.lvx_list_item*,TBD,p65 有 lvx_list_item 一族，未定案
+0xc4c8904,043.row_update_branches,lvx_list_item_update,0x159878,p65.lvx_list_item_update,STATIC_RECOVERED,四参版，造型不同，调用点要按 p65 重写
+0xc4c8560,043.row_init,row_init,,p65?,TBD,
+0xc4c8208,043.row_set_trailing,row_set_trailing,,p65?,TBD,
+0xc513a45,043.app_launcher_add,app_launcher_add,0x0C7EC451,p65.app_launcher_add,SIM_CONFIRMED,
+0xc513b2d,043.app_launcher_del,app_launcher_del,0x0C7EC53D,p65.app_launcher_del,SIM_CONFIRMED,
+0xc513bc0,043.launcher_refresh_app,launcher_refresh_app,0x0C7EC745,p65.launcher_refresh_app,SIM_EXECUTED,
+0xca6a30d,043.app_install,app_install,0x0C2418A9,p65.app_install,SIM_CONFIRMED,必须在主循环里调
+0xc4ca6c5,043.lvx_page_title_create,page_title_create,0x0C21B2FD,p65.page_title_create,STATIC_CONFIRMED,
+0xc4c7ed1,043.lv_timer_*,lv_timer_delete,0x0C74154D,p65.lv_timer_delete,STATIC_CONFIRMED,

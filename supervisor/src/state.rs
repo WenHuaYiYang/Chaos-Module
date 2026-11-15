@@ -7,20 +7,20 @@
 // 的包装(代码约定: 业务代码禁止 transmute 地址), 完整清单与依据都在 `fw_api/*` 一侧 ——
 // 同一个地址不留两个真源。
 // 注册链 (symbols: app_registry / launcher)
-pub const FW_REGISTER_DRIVER: u32 = 0x0C1A_FF61;   // register_driver(path,fops,mode,priv)
+pub const FW_REGISTER_DRIVER: u32 = crate::firmware_target::FW_REGISTER_DRIVER;
 
-pub const FW_UNREGISTER_DRIVER: u32 = 0x0C1B_002D; // unregister_driver(path)
+pub const FW_UNREGISTER_DRIVER: u32 = crate::firmware_target::FW_UNREGISTER_DRIVER;
 
-pub const FW_APP_LOOKUP: u32 = 0x0CA6_9935;        // app_lookup(app_id) -> app*
+pub const FW_APP_LOOKUP: u32 = crate::firmware_target::FW_APP_LOOKUP;
 
-pub const FW_APP_INSTALL: u32 = 0x0CA6_A30D;       // app_install(desc, pages*, count)
+pub const FW_APP_INSTALL: u32 = crate::firmware_target::FW_APP_INSTALL;
 
-pub const FW_INIT_BUFFER: u32 = 0x0C51_3A45;       // app_launcher_add(app_id) (036 名 init_buffer, 1参)
+pub const FW_INIT_BUFFER: u32 = crate::firmware_target::FW_INIT_BUFFER;
 
-pub const FW_NOTIFY: u32 = 0x0CA9_A899;            // lvx_notification_insert_message(notif*) 固件完整链(拷贝/登记由它内部自处理; 自己手写那条手动链里的段B memset 实测必崩)
+pub const FW_NOTIFY: u32 = crate::firmware_target::FW_NOTIFY;
 
 // VFS (symbols: nuttx)
-pub const MAX_ROWS_PER_PAGE: usize = 12;
+pub const MAX_ROWS_PER_PAGE: usize = 16;
 
 // 信息页三行实时数值(存储/内存/CPU), 每格 STAT_STRIDE 字节
 pub const STAT_STRIDE: usize = 32;
@@ -32,8 +32,6 @@ pub static mut STAT_TICK: u32 = 0;
 pub static mut HEAL_TRYS: u32 = 0;            // 自愈重试次数(限次防死循环)
 
 // 蓝牙 HID 遥控(页11): 点击置位 → lv_timer 里真正发送(避开事件派发上下文)
-
-pub const RENDER_NONE: u32 = 0xFFFF_FFFF;           // 无待重建请求 // lv_obj_set_hidden(obj,hidden)
 
 pub const STAT_MAGIC: u32 = 0x5348_4332;  // "2CHS"
 
@@ -132,8 +130,8 @@ pub static PAGE_ZONE: [u8; 9] = *b"blurzone\0";
 /// 页16: 主页 -> 震动(三级)。滑动震动开关 + 测试震动。
 pub static PAGE_VIB: [u8; 8] = *b"vibtest\0";
 
-/// 页17: 设置 -> 运行日志。/data/chaos/chaos.log 的尾部展示与清空。
-pub static PAGE_LOG: [u8; 6] = *b"logpg\0";
+/// 页17: ChaosConnect -> 内存操作日志。
+pub static PAGE_CONNECT_LOG: [u8; 11] = *b"connectlog\0";
 
 /// 页18: 设置 -> 关于。版本、编译时间、固件、开发者分列。
 pub static PAGE_ABOUT2: [u8; 7] = *b"about2\0";
@@ -186,10 +184,40 @@ pub static PAGE_NETINFO: [u8; 8] = *b"netinfo\0";
 
 /// 页35: 主页 -> 实验性功能(收拢 btpan联网/网页服务器/连接信息等未稳定入口)。
 pub static PAGE_EXP: [u8; 7] = *b"exp\0\0\0\0";
+/// 页36: 实验性功能 -> 蓝牙诊断(配对/回调/IPC 现场)。
+pub static PAGE_BTDIAG: [u8; 8] = *b"btdiag\0\0";
+/// 页37: 调试模式 -> 调试信息(纯文本)。
+pub static PAGE_DEBUG: [u8; 7] = *b"debug\0\0";
+pub static PAGE_CAPTURE: [u8; 8] = *b"capture\0";
+pub static PAGE_RECORDINGS: [u8; 11] = *b"recordings\0";
+pub static PAGE_SCREENSHOTS: [u8; 12] = *b"screenshots\0";
+pub static PAGE_RECORDSET: [u8; 10] = *b"recordset\0";
+pub static PAGE_SHOTSET: [u8; 8] = *b"shotset\0";
+pub static PAGE_APP_ICON: [u8; 8] = *b"appicon\0";
+pub static PAGE_LOG_LEVEL: [u8; 9] = *b"loglevel\0";
+pub static PAGE_BLUR_DEBUG: [u8; 10] = *b"blurdebug\0";
+pub static PAGE_QUICKAPP_ANIMATION: [u8; 7] = *b"qaanim\0";
 
 pub static mut APP_META: [u32; 16] = [0; 16];
 
-pub const PAGE_COUNT: usize = 36;                   // 注册页数(页0..页35)
+pub static PAGE_CONNECT: [u8; 8] = *b"connect\0";
+pub static PAGE_CONNECT_PERMISSIONS: [u8; 12] = *b"connectperm\0";
+pub static PAGE_CONNECT_DEV_POLICY: [u8; 11] = *b"connectdev\0";
+
+pub static PAGE_FILES: [u8; 11] = *b"localfiles\0";
+pub static PAGE_FILE_DETAIL: [u8; 11] = *b"filedetail\0";
+
+pub static PAGE_BLUR_PARAMS: [u8; 11] = *b"blurparams\0";
+
+pub static PAGE_CONNECT_PAIR:[u8;12]=*b"connectpair\0";
+pub static PAGE_ANDROID_PERMISSIONS:[u8;12]=*b"androidperm\0";
+
+pub static PAGE_BLUR_BACKGROUND_PARAMS: [u8; 13] = *b"blurbgparams\0";
+pub static PAGE_BLUR_BUTTON_PARAMS: [u8; 14] = *b"blurbtnparams\0";
+
+pub static PAGE_PLUGIN_PERMISSIONS:[u8;11]=*b"pluginperm\0";
+
+pub const PAGE_COUNT: usize = 58;                   // 注册页数(页0..页57)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 
@@ -322,6 +350,18 @@ pub static mut WF_RF_RC: i32 = 0;                        // 最近 refresh_cur_w
 // 摇一摇状态
 pub static mut SHAKE_SUB: u32 = 0;                       // eventbus 订阅节点(常驻至重启)
 
+/// 模拟器安全模式(默认 0 = 关闭, 真机行为不变)。
+///
+/// MiBand Studio 的 QEMU 固件环境与真机不同: 桌面对象树、事件总线、字体池、
+/// 图标池的结构/就绪时机都不一样。Chaos 的后台 hook(订阅事件总线、遍历
+/// 字体图标池、读写固件全局表)打上去会让 guest 直接复位 —— QEMU 侧表现为
+/// "guest reset requested; shutting down disposable instance", 实例当场消失。
+///
+/// 打开后只保留「页面框架」这条链: 建页/渲染/事件派发/节拍/Launcher 图标,
+/// 关掉所有会摸固件全局对象的后台 hook。用途只有一个: 在模拟器里把 Chaos
+/// 页面真的打开、截图验观感(字体、候选字、布局)。真机不打开这个开关。
+pub static mut SIM_LITE: u32 = 0;
+
 pub static mut SHAKE_TIMER: u32 = 0;
 pub static mut TIMER_CREATE_N: u32 = 0;   // 诊断: 我们一共创建了几个 lv_timer(应恒为 1)                     // lv_timer 句柄(200ms, UI线程)
 /// 节拍自适应的**许可**: 建完定时器读回 `lv_timer_t+0x00` 等于我们传进去的 50 才置 1。
@@ -329,8 +369,6 @@ pub static mut TIMER_CREATE_N: u32 = 0;   // 诊断: 我们一共创建了几个
 pub static mut TICK_ADAPT: u32 = 0;
 /// 当前已生效的周期(避免每拍都调 set_period; 也用于"变了才写")
 pub static mut TICK_PERIOD_MS: u32 = 50;
-/// 自适应关掉时滚动提速也不会生效 —— 报过一次就置位, 别让真机把它看成"提速了但没效果"。
-pub static mut TICK_ADAPT_WARN: u32 = 0;
 
 pub static mut SHAKE_PENDING: u32 = 0;                   // 回调置旗, timer 消费
 
@@ -362,12 +400,11 @@ pub const LV_GLOBAL: u32 = 0x2010_3174;
 /// 删除路径 0x0C85F94C `ldr r5,[r4,#0x24]` 同读法反证。
 pub const FACE_LINE_HEIGHT_OFF: u32 = 0x0C;
 
-
 pub static mut APP_FG: u32 = 0;                  // 1 = 我们的应用在前台(on_resume 置, on_pause/on_destroy 清)
 
 pub static mut SHAKE_EN: u32 = 0;                        // 开关(信息页行3切换)
 
-pub static mut RENDER_REQ: u32 = RENDER_NONE;            // 待重建页号(由 lv_timer 消费)
+// 待重建请求已迁到 page/dirty.rs 的位图总线(每页一位, 多页请求互不覆盖)。
 
 pub static mut WF_CUR0: u32 = 0;                         // 引擎当前面节点(*0x20119770, 权威标记)
 
@@ -393,8 +430,9 @@ pub static CHAOS_CTOR: unsafe extern "C" fn() = crate::chaos_ctor;
 #[link_section = ".fini_array"]
 pub static CHAOS_DTOR: unsafe extern "C" fn() = crate::chaos_dtor;
 
-// 页面状态集中为一个结构体(替代原来 6 个并行数组)
-pub struct Page {
+// 页面状态集中为一个结构体(替代原来 6 个并行数组)。
+// 名字是 PageState: "Page" 这个名字留给页面行为 trait(page.rs 的 Page)。
+pub struct PageState {
     pub desc: u32,          // 固件给的页面描述符指针(存活判据要从它 +0x30 读 root)
     pub root: u32,
     pub title: u32,
@@ -404,13 +442,13 @@ pub struct Page {
     pub rows: [u32; MAX_ROWS_PER_PAGE],
 }
 
-impl Page {
-    pub const EMPTY: Page = Page {
+impl PageState {
+    pub const EMPTY: PageState = PageState {
         desc: 0, root: 0, title: 0, content: 0, label: 0, built: 0,
         rows: [0; MAX_ROWS_PER_PAGE],
     };
 }
 
-pub static mut PAGES: [Page; PAGE_COUNT] = [Page::EMPTY; PAGE_COUNT];
+pub static mut PAGES: [PageState; PAGE_COUNT] = [PageState::EMPTY; PAGE_COUNT];
 // 每页标题文本缓冲: 标题 = 进入该页时点的行控件名, 目录页/查看页是动态的
 pub static mut TITLE_TXT: [[u8; 48]; PAGE_COUNT] = [[0; 48]; PAGE_COUNT];

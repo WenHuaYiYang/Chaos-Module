@@ -1,0 +1,11 @@
+{
+  "schema": "flint.firmware.v1",
+  "id": "firmware-rw6-flash-slide",
+  "board": "watch6-p65",
+  "target": "redmi-watch6-3.100.043 flash 侧桌面滑动带切片",
+  "reference_bound": false,
+  "_bound_note": "本轮定案：blob 里 slide_cont_scroll_cb 的名字串在 PSRAM 侧，但引用它的代码在 flash XIP 的 file 0x721FE8 池旁。切这一段单独建工程，基址 = 文件偏移 + 0x0C0C0000 口径不变。",
+  "images": {"ap": {"path": "build/rw6_measure/rw6_flash_slide.bin", "size": 49152, "xip_base": "0x0C7DE000"}},
+  "boot": {"pc": "0x0C7DE000", "sp_bootstrap": "0x0"},
+  "_note": "只给 Ghidra 建工程用，不进 flint 跑。"
+}

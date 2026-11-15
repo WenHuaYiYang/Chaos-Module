@@ -1,0 +1,419 @@
+// Shared independent PTY engine. Each including module owns separate state, queues and child task.
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicUsize, Ordering};
+#[path = "nsh_queue.rs"]
+mod queue;
+use queue::Spsc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum State { Idle, Starting, Running, Exited, Failed, Stopping }
+
+const EINTR: i32 = -4;
+const EIO: i32 = -5;
+const EBADF: i32 = -9;
+const EAGAIN: i32 = -11;
+const ENOMEM: i32 = -12;
+const EBUSY: i32 = -16;
+const EINVAL: i32 = -22;
+const EPIPE: i32 = -32;
+const EMSGSIZE: i32 = -90;
+const ENOTSUP: i32 = -95;
+/// 停止超时: 停止序列重发 3 轮仍没换来子进程退出, 放弃这个会话。
+const ETIMEDOUT: i32 = -110;
+const RX_CAP: usize = 8192;
+const TX_CAP: usize = 2048;
+const IO_CHUNK: usize = 256;
+const LIVE_READ_BUDGET: usize = 8;
+const TAIL_READ_BUDGET: usize = 64;
+const ACTIVE_SLEEP_US: u32 = 20_000;
+const IDLE_SLEEP_US: u32 = 200_000;
+
+// p67 readline accepts BS and limits its command line to 255 bytes. Never
+// prepend LF to exit: that could execute an unfinished command. Ctrl-C goes
+// through the verified stock PTY foreground-PID path; BS clears any partial
+// shell line when readline resumes. A command ignoring SIGINT may not exit.
+const STOP_SEQUENCE: [u8; 262] = {
+    let mut bytes = [8u8; 262];
+    bytes[0] = 3;
+    bytes[257] = b'e'; bytes[258] = b'x'; bytes[259] = b'i';
+    bytes[260] = b't'; bytes[261] = b'\n';
+    bytes
+};
+
+static STATE: AtomicU8 = AtomicU8::new(State::Idle as u8);
+static API_ERROR: AtomicI32 = AtomicI32::new(0);
+static SESSION_ERROR: AtomicI32 = AtomicI32::new(0);
+static WORKER_STARTED: AtomicBool = AtomicBool::new(false);
+static REQUEST: AtomicBool = AtomicBool::new(false);
+static STOP_REQUEST: AtomicBool = AtomicBool::new(false);
+static CHILD_DONE: AtomicBool = AtomicBool::new(false);
+static CHILD_EXIT: AtomicI32 = AtomicI32::new(0);
+static CHILD_CONSOLE: AtomicUsize = AtomicUsize::new(0);
+static ORIGINAL_EXIT: AtomicUsize = AtomicUsize::new(0);
+static LOW_FDS_READY: AtomicBool = AtomicBool::new(false);
+static RX: Spsc<RX_CAP> = Spsc::new();
+static TX: Spsc<TX_CAP> = Spsc::new();
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+static NOTICE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static NOTICE_OFFSET: AtomicUsize = AtomicUsize::new(0);
+
+fn state() -> State {
+    match STATE.load(Ordering::Acquire) {
+        0 => State::Idle, 1 => State::Starting, 2 => State::Running,
+        3 => State::Exited, 5 => State::Stopping, _ => State::Failed,
+    }
+}
+fn error() -> i32 {
+    let api = API_ERROR.load(Ordering::Acquire);
+    if api != 0 { api } else { SESSION_ERROR.load(Ordering::Acquire) }
+}
+fn api_error(code: i32) -> Result<(), i32> {
+    API_ERROR.store(code, Ordering::Release);
+    Err(code)
+}
+fn start() -> Result<(), i32> {
+    let current = state();
+    if current == State::Stopping { return api_error(EBUSY); }
+    if matches!(current, State::Starting | State::Running) { return Ok(()); }
+    if STATE.compare_exchange(current as u8, State::Starting as u8,
+        Ordering::AcqRel, Ordering::Acquire).is_err() { return api_error(EBUSY); }
+    // Final-state publication guarantees the previous worker has released
+    // all ring/fd ownership before the sole PAN caller resets these queues.
+    unsafe { RX.reset_quiescent(); TX.reset_quiescent(); }
+    DROPPED.store(0, Ordering::Relaxed);
+    NOTICE_COUNT.store(0, Ordering::Relaxed);
+    NOTICE_OFFSET.store(0, Ordering::Relaxed);
+    API_ERROR.store(0, Ordering::Release);
+    SESSION_ERROR.store(0, Ordering::Release);
+    STOP_REQUEST.store(false, Ordering::Relaxed);
+    REQUEST.store(true, Ordering::Release);
+    if !WORKER_STARTED.swap(true, Ordering::AcqRel) {
+        // 空链与 NULL 等价: task_spawn 读 *actions 取链头, 空链的头是 0。
+        // 这里与下面 child spawn 用同一种形状。
+        let mut head = 0usize;
+        let init_rc = unsafe { crate::fw_api::nsh_actions_init(&mut head) };
+        let pid = if init_rc == 0 {
+            unsafe { crate::fw_api::nsh_spawn(WORKER_NAME.as_ptr(), worker_entry, &mut head) }
+        } else {
+            init_rc
+        };
+        unsafe { crate::fw_api::nsh_actions_destroy(&mut head) };
+        if pid <= 0 {
+            let code = if pid < 0 { pid } else { EIO };
+            REQUEST.store(false, Ordering::Release);
+            WORKER_STARTED.store(false, Ordering::Release);
+            SESSION_ERROR.store(code, Ordering::Release);
+            STATE.store(State::Failed as u8, Ordering::Release);
+            return Err(code);
+        }
+    }
+    Ok(())
+}
+fn send(input: &[u8]) -> Result<(), i32> {
+    if input.len() > TX_CAP { return api_error(EMSGSIZE); }
+    if input.iter().any(|&b| b == 0) { return api_error(EINVAL); }
+    if input.iter().any(|&b| b == 4) { return api_error(ENOTSUP); }
+    if input.is_empty() { API_ERROR.store(0, Ordering::Release); return Ok(()); }
+    if !matches!(state(), State::Starting | State::Running) { return api_error(EBUSY); }
+    let failure = SESSION_ERROR.load(Ordering::Acquire);
+    if failure != 0 { return api_error(failure); }
+    if !unsafe { TX.push_all(input) } { return api_error(EBUSY); }
+    API_ERROR.store(0, Ordering::Release);
+    Ok(())
+}
+fn stop() {
+    loop {
+        let current = state();
+        if !matches!(current, State::Starting | State::Running) { return; }
+        if STATE.compare_exchange(current as u8, State::Stopping as u8,
+            Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            // The PAN caller can no longer send. Publish after closing that
+            // gate; the worker alone discards any queued/in-flight TX suffix.
+            API_ERROR.store(0, Ordering::Release);
+            STOP_REQUEST.store(true, Ordering::Release);
+            return;
+        }
+    }
+}
+
+fn overflow_note(out: &mut [u8], count: usize) -> usize {
+    let mut text = [0u8; 72];
+    let prefix = OVERFLOW_PREFIX;
+    let suffix = b" output bytes]\n";
+    text[..prefix.len()].copy_from_slice(prefix);
+    let mut digits = [0u8; 20];
+    let mut n = count;
+    let mut first = digits.len();
+    loop {
+        first -= 1; digits[first] = b'0' + (n % 10) as u8; n /= 10;
+        if n == 0 { break; }
+    }
+    let end = prefix.len() + digits.len() - first;
+    text[prefix.len()..end].copy_from_slice(&digits[first..]);
+    text[end..end + suffix.len()].copy_from_slice(suffix);
+    let length = end + suffix.len();
+    let offset = NOTICE_OFFSET.load(Ordering::Relaxed);
+    let got = out.len().min(length - offset);
+    out[..got].copy_from_slice(&text[offset..offset + got]);
+    if offset + got == length {
+        NOTICE_OFFSET.store(0, Ordering::Relaxed);
+        NOTICE_COUNT.store(0, Ordering::Relaxed);
+    } else { NOTICE_OFFSET.store(offset + got, Ordering::Relaxed); }
+    got
+}
+fn receive(out: &mut [u8]) -> usize {
+    if out.is_empty() { return 0; }
+    let pending = NOTICE_COUNT.load(Ordering::Relaxed);
+    if pending != 0 { return overflow_note(out, pending); }
+    let got = unsafe { RX.pop(out) };
+    if got != 0 { return got; }
+    let dropped = DROPPED.swap(0, Ordering::AcqRel);
+    if dropped == 0 { return 0; }
+    NOTICE_COUNT.store(dropped, Ordering::Relaxed);
+    overflow_note(out, dropped)
+}
+
+unsafe extern "C" fn shell_exit(console: usize, rc: i32) {
+    CHILD_EXIT.store(rc, Ordering::Relaxed);
+    CHILD_DONE.store(true, Ordering::Release);
+    let callback = ORIGINAL_EXIT.swap(0, Ordering::AcqRel);
+    if callback != 0 {
+        // Stock callback frees console and never normally returns. A signal
+        // in the clear-to-free window may leak, but cannot cause double-free.
+        CHILD_CONSOLE.store(0, Ordering::Release);
+        crate::fw_api::nsh_console_call_exit(callback, console, rc);
+    }
+}
+unsafe extern "C" fn shell_entry(argc: i32, argv: *mut *mut u8) -> i32 {
+    let console = crate::fw_api::nsh_console_new();
+    if console == 0 {
+        CHILD_EXIT.store(ENOMEM, Ordering::Relaxed);
+        CHILD_DONE.store(true, Ordering::Release);
+        return ENOMEM;
+    }
+    CHILD_CONSOLE.store(console, Ordering::Release);
+    let original = crate::fw_api::nsh_console_get_exit(console);
+    if original == 0 {
+        CHILD_EXIT.store(EIO, Ordering::Relaxed);
+        CHILD_DONE.store(true, Ordering::Release);
+        return EIO;
+    }
+    ORIGINAL_EXIT.store(original, Ordering::Release);
+    crate::fw_api::nsh_console_set_exit(console, shell_exit);
+    let rc = crate::fw_api::nsh_console_run(console, argc, argv);
+    if !CHILD_DONE.load(Ordering::Acquire) { shell_exit(console, rc); }
+    rc
+}
+
+struct Fd(i32);
+impl Drop for Fd {
+    fn drop(&mut self) { unsafe { crate::fw_api::nsh_close(self.0); } }
+}
+struct Actions(usize);
+impl Drop for Actions {
+    fn drop(&mut self) { unsafe { crate::fw_api::nsh_actions_destroy(&mut self.0); } }
+}
+
+/// web NSH 的 worker 从 PAN worker 克隆 fd 表; PAN worker 的 0/1/2 不一定开着,
+/// ptmx 会落到 0/1/2 并被 master 保护判成坏 fd。先用 /dev/null 占住 0/1/2
+/// (最多 3 个, worker 常驻, 故意不关), 保证 master 永远 >= 3。
+unsafe fn ensure_low_fds() {
+    if LOW_FDS_READY.load(Ordering::Acquire) { return; }
+    let mut ok = true;
+    for _ in 0..3 {
+        let fd = crate::fw_api::open(b"/dev/null\0".as_ptr(), crate::fw_api::oflag::RDWR, 0);
+        if fd < 0 { ok = false; break; }
+    }
+    if ok { LOW_FDS_READY.store(true, Ordering::Release); }
+}
+struct Session {
+    master: Fd, child: i32, pending: [u8; IO_CHUNK],
+    pending_len: usize, pending_offset: usize, failure: i32,
+    write_failed: bool, stopping: bool, stop_offset: usize,
+    stop_stall: u32, stop_restarts: u32,
+}
+impl Session {
+    unsafe fn open() -> Result<Self, i32> {
+        ensure_low_fds();
+        let master = crate::fw_api::nsh_master_open();
+        if master < 0 { return Err(master); }
+        let master = Fd(master);
+        if master.0 <= 2 { return Err(EBADF); }
+        let index = crate::fw_api::nsh_master_prepare(master.0);
+        if index < 0 { return Err(index); }
+        if index > 255 { return Err(EINVAL); }
+        let slave = crate::fw_api::nsh_slave_open(index);
+        if slave < 0 { return Err(slave); }
+        let slave = Fd(slave);
+        let mut head = 0usize;
+        let rc = crate::fw_api::nsh_actions_init(&mut head);
+        if rc != 0 { return Err(if rc < 0 { rc } else { -rc }); }
+        let mut actions = Actions(head);
+        for target in [0, 1, 2, master.0] {
+            let rc = crate::fw_api::nsh_actions_adddup2(&mut actions.0, slave.0, target);
+            if rc != 0 { return Err(if rc < 0 { rc } else { -rc }); }
+        }
+        CHILD_DONE.store(false, Ordering::Relaxed);
+        CHILD_EXIT.store(0, Ordering::Relaxed);
+        CHILD_CONSOLE.store(0, Ordering::Relaxed);
+        ORIGINAL_EXIT.store(0, Ordering::Relaxed);
+        let child = crate::fw_api::nsh_spawn(TASK_NAME.as_ptr(), shell_entry, &mut actions.0);
+        drop(actions);
+        drop(slave);
+        if child <= 0 { return Err(if child < 0 { child } else { EIO }); }
+        Ok(Self { master, child, pending: [0; IO_CHUNK], pending_len: 0,
+            pending_offset: 0, failure: 0, write_failed: false, stopping: false, stop_offset: 0,
+            stop_stall: 0, stop_restarts: 0 })
+    }
+    fn fail(&mut self, code: i32) {
+        if self.failure == 0 {
+            self.failure = code; SESSION_ERROR.store(code, Ordering::Release);
+        }
+    }
+    unsafe fn begin_stop(&mut self) {
+        self.stopping = true;
+        self.pending_len = 0; self.pending_offset = 0;
+        // Producer is gated by State::Stopping. Only the consumer advances
+        // tail; never reset a live ring or overwrite producer-owned storage.
+        for _ in 0..TX_CAP / IO_CHUNK {
+            if TX.pop(&mut self.pending) == 0 { break; }
+        }
+    }
+    unsafe fn write_once(&mut self) {
+        if self.write_failed { return; }
+        if self.stopping {
+            if self.stop_offset == STOP_SEQUENCE.len() { return; }
+            let remaining = &STOP_SEQUENCE[self.stop_offset..];
+            let result = crate::fw_api::nsh_write(self.master.0, remaining);
+            if result > 0 && result as usize <= remaining.len() {
+                self.stop_offset += result as usize;
+            } else if result == EIO || result == EPIPE {
+                // Ctrl-C can end the shell before the suffix is sent. Retain
+                // ownership and wait for positive waitpid; no early cleanup.
+                self.write_failed = true;
+            } else if result != 0 && result != EINTR && result != EAGAIN {
+                self.fail(if result < 0 { result } else { EIO }); self.write_failed = true;
+            }
+            return;
+        }
+        if self.pending_offset == self.pending_len {
+            self.pending_len = TX.pop(&mut self.pending); self.pending_offset = 0;
+        }
+        if self.pending_len == 0 { return; }
+        let remaining = &self.pending[self.pending_offset..self.pending_len];
+        let result = crate::fw_api::nsh_write(self.master.0, remaining);
+        if result > 0 && result as usize <= remaining.len() {
+            self.pending_offset += result as usize;
+        } else if result != 0 && result != EINTR && result != EAGAIN {
+            self.fail(if result < 0 { result } else { EIO }); self.write_failed = true;
+        }
+    }
+    unsafe fn read_burst(&mut self, budget: usize) -> i32 {
+        let mut chunk = [0u8; IO_CHUNK];
+        for _ in 0..budget {
+            let result = crate::fw_api::nsh_read(self.master.0, &mut chunk);
+            if result > 0 && result as usize <= chunk.len() {
+                let count = result as usize;
+                let kept = RX.push_some(&chunk[..count]);
+                if kept != count {
+                    let lost = count - kept;
+                    let mut previous = DROPPED.load(Ordering::Relaxed);
+                    loop {
+                        match DROPPED.compare_exchange_weak(previous, previous.saturating_add(lost),
+                            Ordering::Release, Ordering::Relaxed) {
+                            Ok(_) => break, Err(current) => previous = current,
+                        }
+                    }
+                }
+            } else if result == EINTR { continue; }
+            else {
+                return if result == 0 || result == EAGAIN { 0 }
+                    else if result < 0 { result } else { EIO };
+            }
+        }
+        0
+    }
+    unsafe fn complete(&mut self, status: i32) -> i32 {
+        let _ = self.read_burst(TAIL_READ_BUDGET);
+        let console = CHILD_CONSOLE.swap(0, Ordering::AcqRel);
+        if console != 0 { crate::fw_api::nsh_console_free_after_exit(console); }
+        ORIGINAL_EXIT.store(0, Ordering::Release);
+        let rc = if CHILD_DONE.load(Ordering::Acquire) { CHILD_EXIT.load(Ordering::Relaxed) }
+            else { ((status as u32 >> 8) & 0xff) as i32 };
+        if self.failure != 0 { self.failure } else { rc }
+    }
+    unsafe fn pump(&mut self) -> Option<i32> {
+        let mut status = 0i32;
+        let waited = crate::fw_api::nsh_waitpid_nohang(self.child, &mut status);
+        if waited == self.child { return Some(self.complete(status)); }
+        if waited != 0 && waited != EINTR && waited != EAGAIN {
+            self.fail(if waited < 0 { waited } else { EIO });
+        }
+        if STOP_REQUEST.swap(false, Ordering::AcqRel) { self.begin_stop(); }
+        let before = self.stop_offset;
+        self.write_once();
+        if self.stopping {
+            // 停止序列可能整段被吃掉(那一刻 shell 不在读输入), 也可能整段发完
+            // 但子进程仍不退。两种都表现为 stop_offset 长时间不推进: 隔 40 拍
+            // (约 0.8s)从头再来一次 Ctrl-C + exit, 最多 3 次。
+            // 没有这个兜底, 状态会永久停在 STOPPING, 之后每次连网页终端都是
+            // 1013 "会话正在回收", 只有重启才能恢复。
+            if self.stop_offset == before { self.stop_stall += 1; } else { self.stop_stall = 0; }
+            if self.stop_stall > 40 && !self.write_failed && self.stop_restarts < 3 {
+                self.stop_offset = 0; self.stop_stall = 0; self.stop_restarts += 1;
+            }
+            /* 三轮停止序列都没换来退出: 放弃这个会话, 让下一次连接能开新的。
+             * 不调 complete(): 子进程还活着, 释放它的 console 会踩内存 —— 代价是
+             * 漏一个 shell 任务和它的 console, 但比"必须重启整机才能再用网页终端"好。
+             * 关掉 master 之后 shell 下次写 PTY 就会失败退出。 */
+            if self.stop_restarts >= 3 && self.stop_stall > 40 && ABANDON_ON_TIMEOUT {
+                self.failure = ETIMEDOUT;
+                return Some(ETIMEDOUT);
+            }
+        }
+        let read_error = self.read_burst(LIVE_READ_BUDGET);
+        if read_error == EIO {
+            let waited = crate::fw_api::nsh_waitpid_nohang(self.child, &mut status);
+            if waited == self.child { return Some(self.complete(status)); }
+            if waited != 0 && waited != EINTR && waited != EAGAIN {
+                self.fail(if waited < 0 { waited } else { EIO });
+            }
+            if !self.stopping && !CHILD_DONE.load(Ordering::Acquire) { self.fail(read_error); }
+        } else if read_error != 0 { self.fail(read_error); }
+        None
+    }
+}
+unsafe fn worker_step(session: &mut Option<Session>) {
+    if let Some(active) = session.as_mut() {
+        if let Some(result) = active.pump() {
+            *session = None; // master/local storage must die before publication
+            SESSION_ERROR.store(result, Ordering::Release);
+            STATE.store(if result < 0 { State::Failed } else { State::Exited } as u8, Ordering::Release);
+        }
+    } else if REQUEST.swap(false, Ordering::AcqRel) {
+        if STOP_REQUEST.swap(false, Ordering::AcqRel) {
+            STATE.store(State::Exited as u8, Ordering::Release);
+            return; // stop before opening: no child, fd or console to reclaim
+        }
+        match Session::open() {
+            Ok(active) => {
+                *session = Some(active);
+                // Do not overwrite Stopping if the PAN task requested stop
+                // while this task was in open/spawn. It pumps on next tick.
+                let _ = STATE.compare_exchange(State::Starting as u8, State::Running as u8,
+                    Ordering::AcqRel, Ordering::Acquire);
+            }
+            Err(code) => {
+                SESSION_ERROR.store(code, Ordering::Release);
+                STATE.store(State::Failed as u8, Ordering::Release);
+            }
+        }
+    }
+}
+unsafe extern "C" fn worker_entry(_argc: i32, _argv: *mut *mut u8) -> i32 {
+    let mut session = None;
+    loop {
+        worker_step(&mut session);
+        let _ = crate::fw_api::nsh_usleep(if session.is_some() { ACTIVE_SLEEP_US } else { IDLE_SLEEP_US });
+    }
+}

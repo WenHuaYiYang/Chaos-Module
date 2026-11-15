@@ -55,3 +55,12 @@ fn reboot_spawn_failure_is_reported_and_retryable() {
     let _g=setup();with(|m|m.spawn_rc=-12);assert_eq!(chaos_network_reboot(),-12);assert_eq!(REBOOT_PID.load(Ordering::Acquire),0);
     with(|m|{assert!(m.system_commands.is_empty());m.spawn_rc=300;});assert_eq!(chaos_network_reboot(),0);
 }
+
+#[test]
+fn blur_clock_does_not_reap_network_owned_tasks() {
+    let _g=setup();REBOOT_PID.store(300,Ordering::Release);
+    with(|m|m.wait_results.push_back(300));
+    assert_eq!(chaos_blur_monotonic_ms(),123456);
+    assert_eq!(REBOOT_PID.load(Ordering::Acquire),300);
+    network_monotonic_ms();assert_eq!(REBOOT_PID.load(Ordering::Acquire),0);
+}

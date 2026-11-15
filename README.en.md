@@ -11,7 +11,7 @@ A kernel module plus a Lua installer that registers native pages through the fir
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#compatibility)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#compatibility)
-[![Release](https://img.shields.io/badge/release-v1.1.4-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.1-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -26,15 +26,18 @@ The module is offline, needs no phone, and does not touch firmware partitions.
 It started as a research harness for the 10 Pro and grew into a full device-management UI:
 apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 
-> **Scale**: ~14k lines of Rust, 19 page ids, a `chaos_sup.ko` of roughly 190 KB.
+> **Implementation**: native Rust (`no_std`) and C modules, 44 page ids, and a Lua installer.
 
 ## Features
 
 - **App manager**: hide/show, batch actions, exclusions, and normal / deep hiding modes ([details](docs/APP-MANAGER.md)).
-- **Customization**: fonts, home-screen icon packs, system blur, translucent watchface background.
+- **Customization**: fonts, static/animated home-screen icon packs, system blur, translucent watchface background. Animated packs keep legacy CIPK compatibility and play all visible animated icons ([delivery guide and format](docs/ICON-PACKS.md)).
+- **Honeycomb app list (experimental)**: two-axis dragging, inertia, independent left-edge spacing, right-edge zoom, boundary navigation and native editing/deletion. The switch persists across restarts; switching between honeycomb and RW6 rebinds the selected layout immediately and keeps them mutually exclusive. Full simulator rendering and frame-time validation remain pending ([implementation and tests](docs/HONEYCOMB.md)).
 - **Watchfaces**: switch built-in/market faces, shake-to-rotate, face management.
 - **Device tools**: brightness, cache cleanup, time/date, vibration test.
+- **Application icon**: Settings → Application icon offers only Original and Dynamic, both 96×96. Fresh installs and upgrades select Dynamic automatically; later manual choices persist. Dynamic keeps the uploaded GIF's 193 frames and 5.2-second cycle. Pausing restores the original file; unused themes and static buffers are removed to reduce size ([implementation and validation](docs/DYNAMIC-ICON.md)).
 - **Runtime log**: key actions go to `/data/chaos/chaos.log`; Settings → Runtime log shows and clears it.
+- **Screenshots and recordings**: background GIF 15 fps / APNG target 60 fps recording, BMP capture after screen-off, independent storage choices (`/data/chaos/media` or `/data/offlinelog`), and paginated file deletion ([formats and validation](docs/CAPTURE.md)).
 - **No external runtime**: talks only to verified firmware APIs; no JS injection, no network.
 
 ## Compatibility
@@ -61,9 +64,12 @@ Full steps and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
 ## Build
 
 ```bash
-python3 tools/build.py            # ko + icons + p67 container
-python3 tools/build.py --skip-ko  # re-pack the container only
+python3 tools/build.py --firmware 10p-3.101.043  # complete, firmware-isolated build
+python3 tools/build.py --skip-ko --skip-fetch   # validate matching cached modules and repack
 ```
+
+The installer is written to `dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin`.
+See [symbol/README.md](symbol/README.md) for extraction and exact firmware bindings.
 
 Dependencies, pipeline, versioning and release checklist: **[docs/BUILD.md](docs/BUILD.md)**.
 

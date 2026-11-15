@@ -36,7 +36,8 @@ Chaos-Module/
 │   │   │   ├── beautify.rs      页 4/5/6/7/13/15/28 美化
 │   │   │   ├── watchface.rs     页 8/9/10 表盘
 │   │   │   ├── settings.rs      页 11/12/14/16/19 设置类
-│   │   │   ├── log.rs           页 17 运行日志
+│   │   │   ├── connect_log.rs   页 17 ChaosConnect内存操作日志
+│   │   │   ├── connect.rs       页 47 ChaosConnect入口与启用开关
 │   │   │   ├── about.rs         页 18/20/21 关于与许可
 │   │   │   ├── system.rs        页 22/24/25/26/27 系统关于
 │   │   │   └── keyboard.rs      页 23 键盘页面包装
@@ -49,9 +50,11 @@ Chaos-Module/
 │   │   ├── fw_api/              已验证固件 API 封装 + 地址表
 │   │   ├── font_*.rs            字体清单、切换、热替换
 │   │   ├── icon_apply.rs        图标包应用/回退
+│   │   ├── icon_pack_animation.rs  图标包动画流式播放/暂停/切包
 │   │   ├── background_*.rs      通透背景、模糊、桌面滑动
 │   │   ├── watchface*.rs        表盘切换、摇一摇轮换
-│   │   ├── log.rs               运行日志（48 KB 滚动）
+│   │   ├── connect_log.rs       ChaosConnect专用INFO日志（32KiB内存，不写闪存）
+│   │   ├── connect_log_buffer.rs 完整记录环形缓冲与分页
 │   │   └── ...
 │   └── build.rs                 注入 CHAOS_BUILD_TIME
 ├── installer/                   Lua 安装器与投递包
@@ -67,7 +70,7 @@ Chaos-Module/
 
 ## 页面模型
 
-- `PAGE_TABLE: [&dyn Page; 36]`（`page.rs`）—— 页号 0..35，`PAGE_COUNT` 与 `MAX_PID` 都从它派生；页0..31 在 `page/` 子模块，32..35 在 `btpan.rs`。
+- `PAGE_TABLE: [&dyn Page; PAGE_COUNT]`（`page.rs`）—— 44 个页面，页号 0..43；38 为截屏与录屏，39/40 分别为录屏/截屏文件管理，41/42 为录屏/截图设置，43 为应用图标单选列表，见 [CAPTURE.md](CAPTURE.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
 - 每个页面实现 `Page`：`fill_title` / `render` / `on_click(ctx, idx)` / 可选的 resume、destroy 钩子。
 - 行控件由 `build_rows(ctx, title, specs)` 统一建立，每行一个 LVGL 对象；行事件按**视图下标**派发，
   页面用 `match idx` 或 `idx >= N && idx < view_count()` 自守边界。
@@ -116,7 +119,7 @@ Chaos 直接调用固件里已静态核对的函数地址（`supervisor/src/fw_a
 | `/data/chaos/settings.cfg` | 模块 | 用户设置 |
 | `/data/chaos/appmgr_*.bin` / `appmgr_apply.cfg` | 模块 | 排除名单、批量操作状态 |
 | `/data/chaos/font/index.txt` | 模块 | 字体槽位清单（定长文本） |
-| `/data/chaos/chaos.log` | 模块 | 运行日志 |
+| `/data/chaos/bridge.cfg` | 模块 | ChaosConnect启用配置；操作日志仅存内存 |
 | `/data/apps.json` / `/data/apps.json_hide` | 固件 + 模块 | 应用注册表（隐藏模式见 APP-MANAGER） |
 | `/data/rc.d/chaos.sh` | 安装器 | 开机加载脚本 |
 
@@ -140,16 +143,17 @@ Chaos 直接调用固件里已静态核对的函数地址（`supervisor/src/fw_a
 - 无固件指纹校验：装错固件时模块可能加载失败或崩溃。
 - 单核、无 MMU 保护：越界写就是 HardFault，没有恢复机会。
 
-## 原生文件桥
+## ChaosConnect 文件桥
 
-`supervisor/bridge/` 内置一个最小 CanopusConnect 兼容端，让 AstroBox 插件直接连接 Chaos：
+`supervisor/bridge/` 直接实现私有 CCN1 协议与 NuttX 文件操作：
 
-- `bridge.c`：CPC2 ConnectListen/Send/Message、L2 0x43 加密队列、owner timer
-- `band_files_embed.c`：原 `band_files` 文件协议，跑在 fake `canopus_context_v1` 上
-- `canopus_protocol.c` / `canopus_abi.h` / `canopus_services.h`：冻结的协议/ABI 头
+- `chaos_connect.c`：CRC帧编解码、私有类型与宿主protobuf承载。
+- `chaos_files.c` / `chaos_io.c`：文件事务、目录、直接固件VFS调用，没有模块ABI或fake context。
+- `bridge.c`：私有消息过滤、有界RX/TX、协商块大小、连接epoch、owner/BT loop分工与停止恢复。
+- `bridge_cfg.rs`：默认关闭的持久开关，由UI维护启动与停止。
 
-它不包含 Canopus 的 registry、descriptor、安装器或 Manager RPC。启动入口是维护定时器 `chaos_shake_timer` 里的
-`chaos_bridge_start()`（UI owner 就绪后）。详见 [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)。
+插件通过官方v4 `transport` / `register` 访问已认证的设备会话，未新增裸L2CAP PSM。
+详见 [ChaosConnect文件桥](24-FILE-BRIDGE.md) 的固件证据、测速与验证边界。
 
 ## 相关文档
 

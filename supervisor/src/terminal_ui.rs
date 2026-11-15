@@ -105,6 +105,13 @@ pub(crate) unsafe fn submit_command(input: *const u8) -> bool {
 
 /// Drain bounded work on the UI thread; this never touches a widget. It is
 /// safe to call while the keyboard is foreground, preserving long output.
+/// 终端会话是否还活着(Starting/Running)。活着的会话在后台也要排水 ——
+/// 维护节拍息屏档加深(1s -> 4s)后, 没有这个信号的话长输出会在 PTY 缓冲里积压。
+pub(crate) unsafe fn busy() -> bool {
+    let st = crate::nsh::state();
+    st == crate::nsh::State::Starting || st == crate::nsh::State::Running
+}
+
 pub(crate) unsafe fn poll_output() {
     let before = MODEL.newlines;
     for _ in 0..8 {
@@ -214,6 +221,11 @@ pub(crate) struct TerminalPage;
 impl crate::page::Page for TerminalPage {
     fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, "NSH终端\0".as_bytes()); } }
 
+    /// 新实例交付与对象树销毁: 终端的行/标签句柄缓存全部归零(原 ui.rs 里两处
+    /// `forget_ui()` 特判搬到这里的 trait 钩子)。
+    fn on_instance_reset(&self) { unsafe { forget_ui(); } }
+    fn on_tree_gone(&self) { unsafe { forget_ui(); } }
+
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
             forget_ui();
@@ -222,14 +234,9 @@ impl crate::page::Page for TerminalPage {
             fw_api::style_apply(STATUS_LABEL, FW_STYLE_HR_NAME, 255, 0);
             fw_api::obj_set_size_wh(STATUS_LABEL, 320, 64);
             fw_api::obj_align(STATUS_LABEL, fw_api::align::TOP_LEFT, 8, 0);
-            OUTPUT_BOX = fw_api::obj_create(ctx.content, 0);
+            // 统一滚动视口(kit/scroll.rs, 绝对定位变体): 横向滚输出, 纵向仍交页面。
+            OUTPUT_BOX = crate::page::kit::scroll::viewport_abs(ctx.content, 4, 72, 328, 260, true);
             if OUTPUT_BOX == 0 { return Err(PageError::RowFailed(1)); }
-            fw_api::obj_clear_box_spacing(OUTPUT_BOX);
-            fw_api::obj_set_size_wh(OUTPUT_BOX, 328, 260);
-            fw_api::obj_align(OUTPUT_BOX, fw_api::align::TOP_LEFT, 4, 72);
-            fw_api::obj_add_flag(OUTPUT_BOX, fw_api::LV_OBJ_FLAG_SCROLLABLE);
-            fw_api::obj_set_scroll_dir(OUTPUT_BOX, fw_api::LV_DIR_HOR);
-            fw_api::obj_clear_flag(OUTPUT_BOX, fw_api::LV_OBJ_FLAG_GESTURE_BUBBLE | fw_api::LV_OBJ_FLAG_SCROLL_ELASTIC);
             // Each label keeps LVGL's natural content width: wide glyphs do
             // not soft-wrap into an unseen seventh line. Swipe horizontally
             // to read a wide line; the native page scrolls vertically.

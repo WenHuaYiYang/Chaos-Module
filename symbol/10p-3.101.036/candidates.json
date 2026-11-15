@@ -1,0 +1,217 @@
+{
+  "ap_sha256": "662d67f5e247e31e194d3161024890ba93b9d29d70b290fadb9aac8ce8ec3c81",
+  "callable_exports": false,
+  "matches": [
+    {
+      "match_bytes": 64,
+      "name": "app_install",
+      "pattern_sha256": "2f2b280ca7edca0e373796983a09c16f60285a88c386926a182783883f2e3b28",
+      "reference_address": "0x0CA6A30D",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x991A54"
+    },
+    {
+      "match_bytes": 64,
+      "name": "chaos_app_install",
+      "pattern_sha256": "2f2b280ca7edca0e373796983a09c16f60285a88c386926a182783883f2e3b28",
+      "reference_address": "0x0CA6A30D",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x991A54"
+    },
+    {
+      "match_bytes": 64,
+      "name": "chaos_register_driver",
+      "pattern_sha256": "cf84340dbf746f433daf580f30ad547b89188947ebfaa94cd8c1e467f59b0858",
+      "reference_address": "0x0C1AFF61",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xE0D50"
+    },
+    {
+      "match_bytes": 64,
+      "name": "chaos_unregister_driver",
+      "pattern_sha256": "933f32572789a90b7bdd42e85e98d63524a31718f38aafb4728861fbc9cbcc60",
+      "reference_address": "0x0C1B002D",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xE0E1C"
+    },
+    {
+      "match_bytes": 64,
+      "name": "driver_ioctl_dispatch",
+      "pattern_sha256": "f5fef3556194a3beeaa1aac1715f05ed81f49b06c3cb96aeed49074a9d6d9fe6",
+      "reference_address": "0x0C1CFF89",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x100B10"
+    },
+    {
+      "match_bytes": 64,
+      "name": "firmware_log",
+      "pattern_sha256": "9c5e000106f77795e6153c1123c3d208c48a83891bb75be2ebab1b523d35eb51",
+      "reference_address": "0x0C1F0D21",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x121208"
+    },
+    {
+      "match_bytes": 64,
+      "name": "interconnect_send",
+      "pattern_sha256": "9f1a8c0728b726dbfb878e148a470c64219d428b498b662645ea22f066d12274",
+      "reference_address": "0x0C2E8685",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x212184"
+    },
+    {
+      "match_bytes": 64,
+      "name": "lvx_msgbox_set_content",
+      "pattern_sha256": "423fec54725c8357dd734e1adfc6e07942e9cad89a97c680a87a624360b6a326",
+      "reference_address": "0x0C4CA131",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x3E9418"
+    },
+    {
+      "match_bytes": 64,
+      "name": "lv_cache_drop",
+      "pattern_sha256": "8afb72488ebaf325feca3528c934aa6d09298fbf3b102b068fe693c27f899132",
+      "reference_address": "0x0C1667DD",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xA64B8"
+    },
+    {
+      "match_bytes": 64,
+      "name": "lv_cache_release",
+      "pattern_sha256": "3222815f4b8f19a3287ecbc7cadb40bef5efe9ad3a2e8ce2b26ba8cb7e359d55",
+      "reference_address": "0x0C1666ED",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xA63C8"
+    },
+    {
+      "match_bytes": 64,
+      "name": "lv_obj_get_style_prop",
+      "pattern_sha256": "3dc1caa56b0d52877c07d905d2c35b8761e9277788feb3117b38720574d3a897",
+      "reference_address": "0x0C1068A9",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x4657C"
+    },
+    {
+      "match_bytes": 64,
+      "name": "lv_obj_set_style_bg_opa",
+      "pattern_sha256": "6e197c36253f6fd1b3787efad4b6e00932a75d17e508cc37223d4d879a52643a",
+      "reference_address": "0x0C108375",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x48048"
+    },
+    {
+      "match_bytes": 64,
+      "name": "lv_obj_tree_walk",
+      "pattern_sha256": "3444d7f83f2768633e4fff704a23c1883e0eee4c10ea791e342c320f2ade6cc7",
+      "reference_address": "0x0C13C691",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x7C36C"
+    },
+    {
+      "match_bytes": 64,
+      "name": "open",
+      "pattern_sha256": "9c21751aa9943387d45d34f2e40b5c27895e10b15264386c2a593b2b294be20d",
+      "reference_address": "0x0C1D0A29",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x1015B0"
+    },
+    {
+      "match_bytes": 64,
+      "name": "page_goto",
+      "pattern_sha256": "aecd4f44b3ae90e2143c668ef1b790544e5433796d920f0d12eb0253e19be80e",
+      "reference_address": "0x0CA6C359",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x993AA0"
+    },
+    {
+      "match_bytes": 64,
+      "name": "poll_notify",
+      "pattern_sha256": "a0ec0eb55e561a4375ce920b90187879e7d39347fed9f611a87dfaedfc0844cd",
+      "reference_address": "0x0C1D0B45",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x1016CC"
+    },
+    {
+      "match_bytes": 64,
+      "name": "register_blockdriver",
+      "pattern_sha256": "44bd827fcd42fa5b361e77bbcbbc6c892bd1ee68475797b71cf5aca70df6a218",
+      "reference_address": "0x0C1AFFD9",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xE0DC8"
+    },
+    {
+      "match_bytes": 64,
+      "name": "register_driver",
+      "pattern_sha256": "cf84340dbf746f433daf580f30ad547b89188947ebfaa94cd8c1e467f59b0858",
+      "reference_address": "0x0C1AFF61",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xE0D50"
+    },
+    {
+      "match_bytes": 64,
+      "name": "rename",
+      "pattern_sha256": "0361600ad02981f1eb17b699e9542151eeeda4ed5341986429c77f82554f29ae",
+      "reference_address": "0x0C1D12E9",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x101E70"
+    },
+    {
+      "match_bytes": 64,
+      "name": "sem_post",
+      "pattern_sha256": "1b8d4c37cf176e57fbe53ca8c47cac7f249ec5c462d742d510ac80744fb11003",
+      "reference_address": "0x0C2070D1",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x1314C4"
+    },
+    {
+      "match_bytes": 64,
+      "name": "sem_trywait",
+      "pattern_sha256": "1055462448e8ea5844ed9d324d565017c22cf5b44d88de8b8f3cc1e58dda483d",
+      "reference_address": "0x0C206BFD",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x130FF0"
+    },
+    {
+      "match_bytes": 64,
+      "name": "sem_wait",
+      "pattern_sha256": "14828e223813769d0a6ea1e88010ea36167ff714da3fb6e088b482c3d2f06430",
+      "reference_address": "0x0C206945",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x130D38"
+    },
+    {
+      "match_bytes": 64,
+      "name": "service_manager_shutdown",
+      "pattern_sha256": "aec9188c89059955c1550b252d3aaa3bd230f2b9eb2198834a8587fbe4a2eaa5",
+      "reference_address": "0x0C3BDCE9",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x2E7754"
+    },
+    {
+      "match_bytes": 64,
+      "name": "service_manager_startup",
+      "pattern_sha256": "5b12aea4f1592299507abd05ca346e52e0bc0bd46a1dc3987899d899f3b30d57",
+      "reference_address": "0x0C3BDC25",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0x2E7690"
+    },
+    {
+      "match_bytes": 64,
+      "name": "unregister_blockdriver",
+      "pattern_sha256": "4da661a01a8d6b9abd9580bcfd0dd437d18591f6e04840255a68c777a7477f7d",
+      "reference_address": "0x0C1B009D",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xE0E8C"
+    },
+    {
+      "match_bytes": 64,
+      "name": "unregister_driver",
+      "pattern_sha256": "933f32572789a90b7bdd42e85e98d63524a31718f38aafb4728861fbc9cbcc60",
+      "reference_address": "0x0C1B002D",
+      "status": "REVIEW_REQUIRED",
+      "target_file_offset": "0xE0E1C"
+    }
+  ],
+  "reference": "10p-3.101.043",
+  "schema": 1,
+  "target": "10p-3.101.036"
+}

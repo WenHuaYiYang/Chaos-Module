@@ -1,0 +1,2917 @@
+{
+  "ap_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+  "schema": 1,
+  "symbols": [
+    {
+      "address": "0x0CA6A30D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.app_install"
+      },
+      "identifier": "APP_INSTALL",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "app_install",
+      "prototype": "int(const launcher_app_descriptor *, const firmware_page_descriptor *const *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C513A45",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.app_launcher_add"
+      },
+      "identifier": "APP_LAUNCHER_ADD",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "app_launcher_add",
+      "prototype": "int(uint16_t app_id)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C513E91",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.app_launcher_data_init"
+      },
+      "identifier": "APP_LAUNCHER_DATA_INIT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "app_launcher_data_init",
+      "prototype": "int(void)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C513B2D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.app_launcher_del"
+      },
+      "identifier": "APP_LAUNCHER_DEL",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "app_launcher_del",
+      "prototype": "int(uint16_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CA69935",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.app_lookup"
+      },
+      "identifier": "APP_LOOKUP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "app_lookup",
+      "prototype": "void *(uint16_t app_id)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C71132D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.app_net.connect_state_update"
+      },
+      "identifier": "APP_NET_CONNECT_STATE_UPDATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "app_net_connect_state_update",
+      "prototype": "int(int, int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CA40F69",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_adapter_get_instance"
+      },
+      "identifier": "BT_ADAPTER_GET_INSTANCE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_adapter_get_instance",
+      "prototype": "void *()",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3B5699",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_adapter_get_scan_mode"
+      },
+      "identifier": "BT_ADAPTER_GET_SCAN_MODE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_adapter_get_scan_mode",
+      "prototype": "int32()",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3AF4F5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_adapter_get_state"
+      },
+      "identifier": "BT_ADAPTER_GET_STATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_adapter_get_state",
+      "prototype": "int32(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3AF3E9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_adapter_register"
+      },
+      "identifier": "BT_ADAPTER_REGISTER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_adapter_register",
+      "prototype": "int32(void *, const uint32_t *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3AF451",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_adapter_unregister"
+      },
+      "identifier": "BT_ADAPTER_UNREGISTER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_adapter_unregister",
+      "prototype": "int32(void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3B60A1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-BOND-STATE-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_get_pairing_state"
+      },
+      "identifier": "BT_GET_PAIRING_STATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_get_pairing_state",
+      "prototype": "uint32(const uint8_t *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C805B0D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-CORE-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_l2cap_connect"
+      },
+      "identifier": "BT_L2CAP_CONNECT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_l2cap_connect",
+      "prototype": "uint32_t(const void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3AFF65",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_pair_display_reply"
+      },
+      "identifier": "BT_PAIR_DISPLAY_REPLY",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_pair_display_reply",
+      "prototype": "int32(void *, const uint8_t *, int32_t, int32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3B0051",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-ADAPTER-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.bt_pair_request_reply"
+      },
+      "identifier": "BT_PAIR_REQUEST_REPLY",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "bt_pair_request_reply",
+      "prototype": "int32(void *, const uint8_t *, int32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CA6A30D",
+      "evidence": {
+        "note": "Preserves current exact .043 entry; does not imply a new device verification.",
+        "source": "supervisor/src/state.rs and supervisor/src/lib.rs before firmware binding migration"
+      },
+      "identifier": "CHAOS_APP_INSTALL",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "chaos_app_install",
+      "prototype": "int(const uint32_t *, const uint32_t *, uint32_t)",
+      "review": "existing-chaos-baseline",
+      "verification_level": "EXISTING_PRODUCTION_BASELINE"
+    },
+    {
+      "address": "0x0CA69935",
+      "evidence": {
+        "note": "Preserves current exact .043 entry; does not imply a new device verification.",
+        "source": "supervisor/src/state.rs and supervisor/src/lib.rs before firmware binding migration"
+      },
+      "identifier": "CHAOS_APP_LOOKUP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "chaos_app_lookup",
+      "prototype": "void *(uint32_t)",
+      "review": "existing-chaos-baseline",
+      "verification_level": "EXISTING_PRODUCTION_BASELINE"
+    },
+    {
+      "address": "0x0C513A45",
+      "evidence": {
+        "note": "Preserves current exact .043 entry; does not imply a new device verification.",
+        "source": "supervisor/src/state.rs and supervisor/src/lib.rs before firmware binding migration"
+      },
+      "identifier": "CHAOS_INIT_BUFFER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "chaos_init_buffer",
+      "prototype": "void *(uint32_t)",
+      "review": "existing-chaos-baseline",
+      "verification_level": "EXISTING_PRODUCTION_BASELINE"
+    },
+    {
+      "address": "0x0CA9A899",
+      "evidence": {
+        "note": "Preserves current exact .043 entry; does not imply a new device verification.",
+        "source": "supervisor/src/state.rs and supervisor/src/lib.rs before firmware binding migration"
+      },
+      "identifier": "CHAOS_NOTIFY",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "chaos_notify",
+      "prototype": "int(void *)",
+      "review": "existing-chaos-baseline",
+      "verification_level": "EXISTING_PRODUCTION_BASELINE"
+    },
+    {
+      "address": "0x0C1AFF61",
+      "evidence": {
+        "note": "Preserves current exact .043 entry; does not imply a new device verification.",
+        "source": "supervisor/src/state.rs and supervisor/src/lib.rs before firmware binding migration"
+      },
+      "identifier": "CHAOS_REGISTER_DRIVER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "chaos_register_driver",
+      "prototype": "int(const char *, void *, uint32_t, void *)",
+      "review": "existing-chaos-baseline",
+      "verification_level": "EXISTING_PRODUCTION_BASELINE"
+    },
+    {
+      "address": "0x0C1B002D",
+      "evidence": {
+        "note": "Preserves current exact .043 entry; does not imply a new device verification.",
+        "source": "supervisor/src/state.rs and supervisor/src/lib.rs before firmware binding migration"
+      },
+      "identifier": "CHAOS_UNREGISTER_DRIVER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "chaos_unregister_driver",
+      "prototype": "int(const char *)",
+      "review": "existing-chaos-baseline",
+      "verification_level": "EXISTING_PRODUCTION_BASELINE"
+    },
+    {
+      "address": "0x0C201FE1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-002",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "managed",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.clock_gettime"
+      },
+      "identifier": "CLOCK_GETTIME",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "clock_gettime",
+      "prototype": "int(uint32_t, stock_timespec_t *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1B9D81",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.close"
+      },
+      "identifier": "CLOSE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "close",
+      "prototype": "int(int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x20126738",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-PAIR-FILTER-003"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.core_bt_adapter_instance"
+      },
+      "identifier": "CORE_BT_ADAPTER_INSTANCE",
+      "instruction_set": "n/a",
+      "kind": "global",
+      "name": "core_bt_adapter_instance",
+      "prototype": "void *",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C709E91",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-CORE-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.core_bt_pair_request_callback"
+      },
+      "identifier": "CORE_BT_PAIR_REQUEST_CALLBACK",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "core_bt_pair_request_callback",
+      "prototype": "int(void *, const uint8_t *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x20126734",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-BT-1043-PAIR-FILTER-003"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.core_bt_registration_handle"
+      },
+      "identifier": "CORE_BT_REGISTRATION_HANDLE",
+      "instruction_set": "n/a",
+      "kind": "global",
+      "name": "core_bt_registration_handle",
+      "prototype": "uint32_t",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1F9689",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.devif_poll"
+      },
+      "identifier": "DEVIF_POLL",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "devif_poll",
+      "prototype": "int(void *, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1CEC09",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-003",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.driver_close_dispatch"
+      },
+      "identifier": "DRIVER_CLOSE_DISPATCH",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "driver_close_dispatch",
+      "prototype": "int(file *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1CFF89",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-003",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.driver_ioctl_dispatch"
+      },
+      "identifier": "DRIVER_IOCTL_DISPATCH",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "driver_ioctl_dispatch",
+      "prototype": "int(file *, uint32_t, ...)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1E45BD",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.errno_location"
+      },
+      "identifier": "ERRNO_LOCATION",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "errno_location",
+      "prototype": "int *(void)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C0C0850",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-ID-1043-001"
+        ],
+        "policy": "managed",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.firmware_build_string"
+      },
+      "identifier": "FIRMWARE_BUILD_STRING",
+      "instruction_set": "n/a",
+      "kind": "string",
+      "name": "firmware_build_string",
+      "prototype": "const char[]",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1F0D21",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.firmware_log"
+      },
+      "identifier": "FIRMWARE_LOG",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "firmware_log",
+      "prototype": "int(int, const char *, ...)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C0C0810",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-ID-1043-001"
+        ],
+        "policy": "managed",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.firmware_version_string"
+      },
+      "identifier": "FIRMWARE_VERSION_STRING",
+      "instruction_set": "n/a",
+      "kind": "string",
+      "name": "firmware_version_string",
+      "prototype": "const char[]",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C86037D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.font_manager_add_path"
+      },
+      "identifier": "FONT_MANAGER_ADD_PATH",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "font_manager_add_path",
+      "prototype": "void *(const char *name, const char *path)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C860399",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.font_manager_remove_path"
+      },
+      "identifier": "FONT_MANAGER_REMOVE_PATH",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "font_manager_remove_path",
+      "prototype": "void(uint32_t node)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1E8E65",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.gethostbyname_r"
+      },
+      "identifier": "GETHOSTBYNAME_R",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "gethostbyname_r",
+      "prototype": "int(const char *, void *, char *, size_t, int *, int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1F8FF9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.heap_free"
+      },
+      "identifier": "HEAP_FREE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "heap_free",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1F900D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.heap_mallinfo"
+      },
+      "identifier": "HEAP_MALLINFO",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "heap_mallinfo",
+      "prototype": "void *(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1F903D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.heap_malloc"
+      },
+      "identifier": "HEAP_MALLOC",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "heap_malloc",
+      "prototype": "void *(uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1F90BD",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.heap_zalloc"
+      },
+      "identifier": "HEAP_ZALLOC",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "heap_zalloc",
+      "prototype": "void *(uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C5141F1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.hidden_and_show_app_cb"
+      },
+      "identifier": "HIDDEN_AND_SHOW_APP_CB",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "hidden_and_show_app_cb",
+      "prototype": "int(launcher_msg_t *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C203A51",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MODLIB-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.insmod"
+      },
+      "identifier": "INSMOD",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "insmod",
+      "prototype": "void *(const char *, const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C2E8759",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.interconnect_close"
+      },
+      "identifier": "INTERCONNECT_CLOSE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "interconnect_close",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C2E85F5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.interconnect_connect"
+      },
+      "identifier": "INTERCONNECT_CONNECT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "interconnect_connect",
+      "prototype": "int(void *, void *, const char *, canopus_interconnect_recv_cb)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C2E8685",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.interconnect_send"
+      },
+      "identifier": "INTERCONNECT_SEND",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "interconnect_send",
+      "prototype": "int(void *, const char *, const canopus_interconnect_message *, canopus_interconnect_send_done, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D01A5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-002",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.ioctl"
+      },
+      "identifier": "IOCTL",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "ioctl",
+      "prototype": "int32_t(int32_t, uint32_t, ...)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1F95C9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.ipv4_input"
+      },
+      "identifier": "IPV4_INPUT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "ipv4_input",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D0525",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-002",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lseek"
+      },
+      "identifier": "LSEEK",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lseek",
+      "prototype": "int64_t(int, int64_t, int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C5893C1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-WIDGET-001",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *object, int32_t value, uint32_t selector)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_content_pad_bottom"
+      },
+      "identifier": "LVX_CONTENT_PAD_BOTTOM",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_content_pad_bottom",
+      "prototype": "void(void *object, int32_t value, uint32_t selector)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x1C06C971",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-CONTROL-001",
+          "EVID-UI-1043-IMAGE-FIT-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-08-23",
+          "device_probe": "pending exact 3.101.043 LyraPlayer control animation comparison",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "borrowed live LVX image object",
+          "prototype": "void(void *, int32_t, int32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.ui.lvx_image_set_scale"
+      },
+      "identifier": "LVX_IMAGE_SET_SCALE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_image_set_scale",
+      "prototype": "void(void *, int32_t, int32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C588F31",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-WIDGET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *parent)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_label_create"
+      },
+      "identifier": "LVX_LABEL_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_label_create",
+      "prototype": "void *(void *parent)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C588BF9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-1043-LABEL-MARQUEE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-08-24",
+          "device_probe": "pending long-title circular-scroll comparison",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "borrowed live LVGL label",
+          "prototype": "void(void *label, uint32_t mode)",
+          "reviewer": "canopus-maintainer",
+          "thread": "target-private UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_label_set_long_mode"
+      },
+      "identifier": "LVX_LABEL_SET_LONG_MODE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_label_set_long_mode",
+      "prototype": "void(void *label, uint32_t mode)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C589491",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-WIDGET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *label, const char *text)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_label_set_text"
+      },
+      "identifier": "LVX_LABEL_SET_TEXT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_label_set_text",
+      "prototype": "void(void *label, const char *text)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C4C8905",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "int(void *, const char *, const char *, const char *, int32_t, uint8_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_list_item_update"
+      },
+      "identifier": "LVX_LIST_ITEM_UPDATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_list_item_update",
+      "prototype": "int(void *, const char *, const char *, const char *, int32_t, uint8_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C54CA3D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *parent, const char *primary, const char *secondary, uint8_t trailing)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_list_row_create"
+      },
+      "identifier": "LVX_LIST_ROW_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_list_row_create",
+      "prototype": "void *(void *parent, const char *primary, const char *secondary, uint8_t trailing)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C4C8C61",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *row)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_list_row_trailing"
+      },
+      "identifier": "LVX_LIST_ROW_TRAILING",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_list_row_trailing",
+      "prototype": "void *(void *row)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C4CA0D9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *parent, void *extra)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_msgbox_create"
+      },
+      "identifier": "LVX_MSGBOX_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_msgbox_create",
+      "prototype": "void *(void *parent, void *extra)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C4CA131",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *box, uint32_t mode, const char *title, const char *body, const char *aux, const void *buttons, uint32_t count)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_msgbox_set_content"
+      },
+      "identifier": "LVX_MSGBOX_SET_CONTENT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_msgbox_set_content",
+      "prototype": "void(void *box, uint32_t mode, const char *title, const char *body, const char *aux, const void *buttons, uint32_t count)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0CA9A899",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_notification_insert_message"
+      },
+      "identifier": "LVX_NOTIFICATION_INSERT_MESSAGE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_notification_insert_message",
+      "prototype": "int(const firmware_notification_message *message)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CAC00C1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, uint32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.ui.lvx_object_add_flag"
+      },
+      "identifier": "LVX_OBJECT_ADD_FLAG",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_object_add_flag",
+      "prototype": "void(void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C589189",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-WIDGET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *object, uint32_t align, int32_t x, int32_t y)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_object_align"
+      },
+      "identifier": "LVX_OBJECT_ALIGN",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_object_align",
+      "prototype": "void(void *object, uint32_t align, int32_t x, int32_t y)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C588DE9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-DIALOG-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *object)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_object_delete"
+      },
+      "identifier": "LVX_OBJECT_DELETE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_object_delete",
+      "prototype": "void(void *object)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C588629",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *object, int32_t width, int32_t height)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_object_set_size"
+      },
+      "identifier": "LVX_OBJECT_SET_SIZE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_object_set_size",
+      "prototype": "void(void *object, int32_t width, int32_t height)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0CA67245",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_page_content_create"
+      },
+      "identifier": "LVX_PAGE_CONTENT_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_page_content_create",
+      "prototype": "void *(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C4CA6C5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *, const char *, uint32_t, canopus_lvx_event_cb, void *)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_page_title_create"
+      },
+      "identifier": "LVX_PAGE_TITLE_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_page_title_create",
+      "prototype": "void *(void *, const char *, uint32_t, canopus_lvx_event_cb, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C4BF899",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "int(void *, const void *, uint32_t, uint32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lvx_style_apply"
+      },
+      "identifier": "LVX_STYLE_APPLY",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lvx_style_apply",
+      "prototype": "int(void *, const void *, uint32_t, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C588B91",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-1043-HOST-001",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_bar_create"
+      },
+      "identifier": "LV_BAR_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_bar_create",
+      "prototype": "void *(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C5883D9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, int32_t, int32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_bar_set_range"
+      },
+      "identifier": "LV_BAR_SET_RANGE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_bar_set_range",
+      "prototype": "void(void *, int32_t, int32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C5890A9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, int32_t, uint32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_bar_set_value"
+      },
+      "identifier": "LV_BAR_SET_VALUE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_bar_set_value",
+      "prototype": "void(void *, int32_t, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C1667DD",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_cache_drop"
+      },
+      "identifier": "LV_CACHE_DROP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_cache_drop",
+      "prototype": "void(uint32_t cache, const void *key, void *user_data)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1666ED",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_cache_release"
+      },
+      "identifier": "LV_CACHE_RELEASE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_cache_release",
+      "prototype": "void(uint32_t cache, void *entry, void *user_data)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C13CD55",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_display_get_horizontal_resolution"
+      },
+      "identifier": "LV_DISPLAY_GET_HORIZONTAL_RESOLUTION",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_display_get_horizontal_resolution",
+      "prototype": "int32_t(uint32_t disp)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C13CD75",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_display_get_vertical_resolution"
+      },
+      "identifier": "LV_DISPLAY_GET_VERTICAL_RESOLUTION",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_display_get_vertical_resolution",
+      "prototype": "int32_t(uint32_t disp)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C105165",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_display_invalidate_area"
+      },
+      "identifier": "LV_DISPLAY_INVALIDATE_AREA",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_display_invalidate_area",
+      "prototype": "void(uint32_t disp, const void *area)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C588211",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-EVENT-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "uint32_t(void *event)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_event_get_code"
+      },
+      "identifier": "LV_EVENT_GET_CODE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_event_get_code",
+      "prototype": "uint32_t(void *event)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C588311",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-EVENT-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_event_get_user_data"
+      },
+      "identifier": "LV_EVENT_GET_USER_DATA",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_event_get_user_data",
+      "prototype": "void *(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x1C06CAC1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void *(void *)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_image_create"
+      },
+      "identifier": "LV_IMAGE_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_image_create",
+      "prototype": "void *(void *, const void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x1C036359",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001",
+          "EVID-UI-1043-IMAGE-FIT-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_image_decoder_get_info"
+      },
+      "identifier": "LV_IMAGE_DECODER_GET_INFO",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_image_decoder_get_info",
+      "prototype": "int(const void *src, void *header)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x1C06CEB5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, const void *)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_image_set_src"
+      },
+      "identifier": "LV_IMAGE_SET_SRC",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_image_set_src",
+      "prototype": "void(void *, const void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C5883F1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, canopus_lvx_event_cb, uint32_t, void *)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_add_event_cb"
+      },
+      "identifier": "LV_OBJ_ADD_EVENT_CB",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_add_event_cb",
+      "prototype": "void(void *, canopus_lvx_event_cb, uint32_t, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C588EF1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, void *, uint32_t, int32_t, int32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_align_to"
+      },
+      "identifier": "LV_OBJ_ALIGN_TO",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_align_to",
+      "prototype": "void(void *, void *, uint32_t, int32_t, int32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C5891B1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-1043-HOST-001",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "void(void *, uint32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.ui.lv_obj_clear_flag"
+      },
+      "identifier": "LV_OBJ_CLEAR_FLAG",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_clear_flag",
+      "prototype": "void(void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C1068A9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_get_style_prop"
+      },
+      "identifier": "LV_OBJ_GET_STYLE_PROP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_get_style_prop",
+      "prototype": "uint32_t(void *obj, uint32_t part, uint32_t prop)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C589551",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_move_to_index"
+      },
+      "identifier": "LV_OBJ_MOVE_TO_INDEX",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_move_to_index",
+      "prototype": "void (void *, int32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1070AD",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_refresh_style"
+      },
+      "identifier": "LV_OBJ_REFRESH_STYLE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_refresh_style",
+      "prototype": "void(void *obj, uint32_t selector, uint32_t prop)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x002BD925",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-LAYER-001",
+          "EVID-UI-1043-LOCAL-STYLE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-08-24",
+          "device_probe": "pending exact 3.101.043 LyraPlayer title and author centering comparison",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "borrowed live LVGL object",
+          "prototype": "void (void *, uint32_t, uint32_t, uint32_t)",
+          "reviewer": "canopus-maintainer",
+          "thread": "target-private UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_set_local_style_prop"
+      },
+      "identifier": "LV_OBJ_SET_LOCAL_STYLE_PROP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_set_local_style_prop",
+      "prototype": "void (void *, uint32_t, uint32_t, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C108375",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_set_style_bg_opa"
+      },
+      "identifier": "LV_OBJ_SET_STYLE_BG_OPA",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_set_style_bg_opa",
+      "prototype": "void (void *, uint32_t, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C13C691",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-RESOURCE-1043-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_obj_tree_walk"
+      },
+      "identifier": "LV_OBJ_TREE_WALK",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_obj_tree_walk",
+      "prototype": "void(void *obj, int (*cb)(void *, void *), void *user_data)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C587ED1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_timer_create"
+      },
+      "identifier": "LV_TIMER_CREATE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_timer_create",
+      "prototype": "void *(canopus_lvx_event_cb, uint32_t, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C588129",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.lv_timer_del"
+      },
+      "identifier": "LV_TIMER_DEL",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "lv_timer_del",
+      "prototype": "void(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C203A69",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.modhandle"
+      },
+      "identifier": "MODHANDLE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "modhandle",
+      "prototype": "void *(const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1FC9F5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.netdev_input"
+      },
+      "identifier": "NETDEV_INPUT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "netdev_input",
+      "prototype": "int(void *, void *, int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1FC215",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.netdev_register"
+      },
+      "identifier": "NETDEV_REGISTER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "netdev_register",
+      "prototype": "int(void *, int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C201B41",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.net_lock"
+      },
+      "identifier": "NET_LOCK",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "net_lock",
+      "prototype": "int(void)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C201B51",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.net_unlock"
+      },
+      "identifier": "NET_UNLOCK",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "net_unlock",
+      "prototype": "void(int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D0A29",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.open"
+      },
+      "identifier": "OPEN",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "open",
+      "prototype": "int(const char *, int, ...)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CA6B9E9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "int32_t(void *page_descriptor)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.page_finish"
+      },
+      "identifier": "PAGE_FINISH",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "page_finish",
+      "prototype": "int32_t(void *page_descriptor)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0CA6C359",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "caller-owned pointers / borrowed for call",
+          "prototype": "int32_t(uint32_t page_key, uint32_t start_data, uint32_t param, uint32_t callbacks)",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.page_goto"
+      },
+      "identifier": "PAGE_GOTO",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "page_goto",
+      "prototype": "int32_t(uint32_t page_key, uint32_t start_data, uint32_t param, uint32_t callbacks)",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x0C1D0B45",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.poll_notify"
+      },
+      "identifier": "POLL_NOTIFY",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "poll_notify",
+      "prototype": "void(void *, int, unsigned int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C513529",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.protobuf_set_ordered_app_list"
+      },
+      "identifier": "PROTOBUF_SET_ORDERED_APP_LIST",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "protobuf_set_ordered_app_list",
+      "prototype": "int(ordered_app_list_t *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C549679",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.quickapp_register_app"
+      },
+      "identifier": "QUICKAPP_REGISTER_APP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "quickapp_register_app",
+      "prototype": "int(uint16_t, const canopus_interconnect_app_info *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D129D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.read"
+      },
+      "identifier": "READ",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "read",
+      "prototype": "int32(int, void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1FD571",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.recvfrom"
+      },
+      "identifier": "RECVFROM",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "recvfrom",
+      "prototype": "int32_t(int, void *, uint32_t, int, void *, uint32_t *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1AFFD9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-003",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.register_blockdriver"
+      },
+      "identifier": "REGISTER_BLOCKDRIVER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "register_blockdriver",
+      "prototype": "int(const char *, const void *, uint32_t, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1AFF61",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-002",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "managed",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.register_driver"
+      },
+      "identifier": "REGISTER_DRIVER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "register_driver",
+      "prototype": "int(const char *, const void *, uint32_t, void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D12E9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.rename"
+      },
+      "identifier": "RENAME",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "rename",
+      "prototype": "int(const char *, const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C203A5D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.rmmod"
+      },
+      "identifier": "RMMOD",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "rmmod",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C2070D1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.sem_post"
+      },
+      "identifier": "SEM_POST",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "sem_post",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C206BFD",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.sem_trywait"
+      },
+      "identifier": "SEM_TRYWAIT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "sem_trywait",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C206945",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.sem_wait"
+      },
+      "identifier": "SEM_WAIT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "sem_wait",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1FD665",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.sendto"
+      },
+      "identifier": "SENDTO",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "sendto",
+      "prototype": "int32_t(int, const void *, uint32_t, int, const void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C3BDD89",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.service_manager_get_profile"
+      },
+      "identifier": "SERVICE_MANAGER_GET_PROFILE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "service_manager_get_profile",
+      "prototype": "void *(uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C3BDBAD",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.service_manager_register"
+      },
+      "identifier": "SERVICE_MANAGER_REGISTER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "service_manager_register",
+      "prototype": "int(void *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C3BDCE9",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.service_manager_shutdown"
+      },
+      "identifier": "SERVICE_MANAGER_SHUTDOWN",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "service_manager_shutdown",
+      "prototype": "int(int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C3BDC25",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.service_manager_startup"
+      },
+      "identifier": "SERVICE_MANAGER_STARTUP",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "service_manager_startup",
+      "prototype": "int(int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1FDAB5",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.setsockopt"
+      },
+      "identifier": "SETSOCKOPT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "setsockopt",
+      "prototype": "int(int, int, int, const void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1CAD35",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-NET-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.nuttx.socket"
+      },
+      "identifier": "SOCKET",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "socket",
+      "prototype": "int(int, int, int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x2010D054",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-ID-1043-001",
+          "EVID-UI-1043-FONT-001"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {
+          "date": "2026-08-23",
+          "device_probe": "pending exact 3.101.043 LyraPlayer typography comparison",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "read-only borrow of firmware-owned initialized style object",
+          "prototype": "void *",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.probe.style_misans_demibold_32"
+      },
+      "identifier": "STYLE_MISANS_DEMIBOLD_32",
+      "instruction_set": "n/a",
+      "kind": "global",
+      "name": "style_misans_demibold_32",
+      "prototype": "void *",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x2010CEE0",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-1043-HOST-001",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "read-only borrow of a firmware-owned style object",
+          "prototype": "void *",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.private_abi.style_misans_medium_24"
+      },
+      "identifier": "STYLE_MISANS_MEDIUM_24",
+      "instruction_set": "n/a",
+      "kind": "global",
+      "name": "style_misans_medium_24",
+      "prototype": "void *",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x2010CEF8",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-1043-HOST-001",
+          "EVID-UI-1043-DEVICE-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-10-19",
+          "device_probe": "Maintainer-reported on-device run of the UI host on a real Xiaomi Band 10 Pro, firmware 3.101.043 (EVID-UI-1043-DEVICE-001, 2026-10-19)",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "read-only borrow of a firmware-owned style object",
+          "prototype": "void *",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.private_abi.style_misans_medium_28"
+      },
+      "identifier": "STYLE_MISANS_MEDIUM_28",
+      "instruction_set": "n/a",
+      "kind": "global",
+      "name": "style_misans_medium_28",
+      "prototype": "void *",
+      "review": "exact-target-reviewed",
+      "verification_level": "DEVICE_PROVEN"
+    },
+    {
+      "address": "0x2010CE44",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-UI-1043-FONT-001"
+        ],
+        "policy": "restricted",
+        "promotion": {
+          "date": "2026-08-23",
+          "device_probe": "pending exact 3.101.043 LyraPlayer typography comparison",
+          "firmware_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+          "ownership": "read-only borrow of firmware-owned initialized style object",
+          "prototype": "void *",
+          "reviewer": "canopus-maintainer",
+          "thread": "UI owner thread"
+        },
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.probe.style_misans_regular_24"
+      },
+      "identifier": "STYLE_MISANS_REGULAR_24",
+      "instruction_set": "n/a",
+      "kind": "global",
+      "name": "style_misans_regular_24",
+      "prototype": "void *",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CAA5205",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.thirdparty_submit_message_content"
+      },
+      "identifier": "THIRDPARTY_SUBMIT_MESSAGE_CONTENT",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "thirdparty_submit_message_content",
+      "prototype": "int(const void *, uint32_t, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D2355",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.unlink"
+      },
+      "identifier": "UNLINK",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "unlink",
+      "prototype": "int(const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1B009D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-003",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.unregister_blockdriver"
+      },
+      "identifier": "UNREGISTER_BLOCKDRIVER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "unregister_blockdriver",
+      "prototype": "int(const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_CONFIRMED"
+    },
+    {
+      "address": "0x0C1B002D",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-002",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "managed",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.unregister_driver"
+      },
+      "identifier": "UNREGISTER_DRIVER",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "unregister_driver",
+      "prototype": "int(const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0CA95C69",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-MATCH-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.watchface_manager_delete_watchface"
+      },
+      "identifier": "WATCHFACE_MANAGER_DELETE_WATCHFACE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "watchface_manager_delete_watchface",
+      "prototype": "int(const char *)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C5F36C1",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-WATCHFACE-1043-RESET-001"
+        ],
+        "policy": "restricted",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.watchface_reset_watchface"
+      },
+      "identifier": "WATCHFACE_RESET_WATCHFACE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "watchface_reset_watchface",
+      "prototype": "int(int)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    },
+    {
+      "address": "0x0C1D2641",
+      "evidence": {
+        "approval_state": "APPROVED",
+        "evidence_ids": [
+          "EVID-IO-1043-001",
+          "EVID-FW-MATCH-ENSEMBLE-1036-1043"
+        ],
+        "policy": "native-full-trust",
+        "promotion": {},
+        "source": "Existing exact-target Canopus symbol record; addresses/types are analysis facts.",
+        "source_symbol_id": "xiaomi-band-10-pro-3.101.043.write"
+      },
+      "identifier": "WRITE",
+      "instruction_set": "thumb",
+      "kind": "function",
+      "name": "write",
+      "prototype": "int32(int, const void *, uint32_t)",
+      "review": "exact-target-reviewed",
+      "verification_level": "STATIC_RECOVERED"
+    }
+  ],
+  "target": "10p-3.101.043"
+}

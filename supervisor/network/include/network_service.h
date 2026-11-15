@@ -13,6 +13,8 @@ struct network_view {
 /* UI sends commands; only PAN worker executes Bluetooth operations. */
 void network_scan(void);
 void network_connect(unsigned index);
+/* 记住的对端直连(不走 inquiry); 成功入队返回 0, 忙/未启用返回 -16。 */
+int network_connect_address(const uint8_t address[6],const char *name);
 void network_disconnect(void);
 void network_pair_confirm(void);
 void network_enable(int enabled);

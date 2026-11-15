@@ -134,6 +134,6 @@ pub(crate) unsafe fn tick() {
         }
     }
     if st_rd!(UI_DIRTY) && font_apply::quiet() && !icon_apply::restore_busy() && page_is_live(13) {
-        st_wr!(UI_DIRTY, false); render_req(13);
+        st_wr!(UI_DIRTY, false); render_req(Pid::Beautify as u32);
     }
 }

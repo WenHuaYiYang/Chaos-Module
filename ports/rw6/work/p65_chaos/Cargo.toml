@@ -1,0 +1,36 @@
+[package]
+name = "p65_chaos"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["procfs"]
+# 装载后由固件自己打开应用（调试冒烟用）
+autoopen = []
+# 装载后由固件打开系统「设置」（id 22），取系统原生列表页基准
+opensettings = []
+# 试装载器能不能解析未定义符号（clock_gettime）
+symtest = []
+# 内存/存储数据行：走 /proc 文本接口。装载器的符号表不导出 libc 的 open/read/close，
+# 这三支改调固件自己的 VFS 入口（从 nsh 的 cat 实现里读出来）。
+procfs = []
+wfprobe = []
+openvib = []
+openwatch = []
+openbright = []
+openabout = []
+openlog = []
+navdbg = []
+backprobe = []
+tour = []
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+lto = true
+codegen-units = 1
+debug = false

@@ -25,6 +25,7 @@ static char web_user[32];static char web_pass[65];static unsigned have_credentia
 void chaos_pan_enable(int on){network_enable(on);}
 void chaos_pan_scan(void){network_scan();}
 void chaos_pan_connect(unsigned index){network_connect(index);}
+int chaos_pan_connect_address(const unsigned char *address,const char *name){return network_connect_address(address,name);}
 void chaos_pan_disconnect(void){network_disconnect();}
 void chaos_pan_pair_confirm(void){network_pair_confirm();}
 void chaos_httpd_set_enable(int on){unsigned p=lock();chaos_httpd_enable(on && have_credential);unlock(p);}
@@ -93,7 +94,7 @@ int chaos_net_set_credentials(const char *user, const char *pass)
 {
     if(!user || !pass || strncmp(user,"chaos",6)!=0)return -22;
     unsigned w=0;while(w<=31 && pass[w]){if(pass[w]<32 || pass[w]>126)return -22;w++;}
-    if(w<8 || w>31 || pass[w]!=0)return -22;
+    if(w<5 || w>31 || pass[w]!=0)return -22; /* 默认密码 chaos 为 5 位 */
     unsigned p=lock();
     int changed=!have_credential || strcmp(web_user,"chaos")!=0 || strcmp(web_pass,pass)!=0;
     if(changed){

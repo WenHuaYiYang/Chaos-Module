@@ -25,6 +25,19 @@ void __wrap_bt_probe_connect_device(uint32_t index)
     }
     __real_bt_probe_connect_device(index);
 }
+/* "记住的对端直连"是第二条连接入口(v65554 起)。它同样必须记下对端 MAC:
+ * DHCP 与 BNEP 的帧头都要用, 缺它 pan_radio_addresses() 恒为 0,
+ * pan_ip_poll 的 link 条件永远不成立, 一个包都不发 —— 真机表现就是
+ * 连接状态一直停在"正在获取IP"。这里与上面那条入口保持同一口径。 */
+int __real_bt_probe_connect_address(const uint8_t address[6],const char *name);
+int __wrap_bt_probe_connect_address(const uint8_t address[6],const char *name)
+{
+    struct bt_probe_view view;bt_probe_view(&view);
+    if((view.phase==0 || view.phase==1) && address){
+        unsigned p=lock();for(unsigned i=0;i<6;i++)remote[i]=address[5-i];remote_ready=valid(remote);unlock(p);
+    }
+    return __real_bt_probe_connect_address(address,name);
+}
 void __real_bnep_init(void);
 void __wrap_bnep_init(void)
 {

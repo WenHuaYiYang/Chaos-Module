@@ -59,12 +59,18 @@ fn reap_reboot() {
 /// The same single PAN caller also reaps its optional one-shot reboot task.
 pub fn network_monotonic_ms() -> u32 {
     reap_reboot();
+    monotonic_ms()
+}
+/// Read the shared monotonic clock without reaping PAN-owned child tasks.
+pub fn monotonic_ms() -> u32 {
     if let Ok(ts) = monotonic() {
         let ms = (ts.sec as u32).wrapping_mul(1000).wrapping_add(ts.nsec as u32 / 1_000_000);
         LAST_MS.store(ms, Ordering::Release);
         ms
     } else { LAST_MS.load(Ordering::Acquire) }
 }
+#[no_mangle]
+pub extern "C" fn chaos_blur_monotonic_ms() -> u32 { monotonic_ms() }
 #[no_mangle]
 pub extern "C" fn chaos_network_monotonic_ms() -> u32 { network_monotonic_ms() }
 #[no_mangle]

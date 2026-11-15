@@ -1,0 +1,20 @@
+{
+  "schema": "flint.firmware.v1",
+  "id": "firmware-psram-rw6-rel",
+  "board": "watch6-p65",
+  "target": "redmi-watch6-3.100.043 PSRAM 8MB, 指针已转成镜像内偏移",
+  "reference_bound": false,
+  "_bound_note": "Ghidra 对裸镜像按文件偏移建地址, 所以把 PSRAM 绝对指针(0x1C/0x38/0x3C 三个别名统一后)整体减去 0x1C000000 存成相对偏移, xref 才连得起来。读函数时: 镜像内偏移 + 0x1C000000 = 运行地址。",
+  "images": {
+    "ap": {
+      "path": "build/rw6_measure/rw6_psram_rel.bin",
+      "size": 8388608,
+      "xip_base": "0x0"
+    }
+  },
+  "boot": {
+    "pc": "0x0",
+    "sp_bootstrap": "0x0"
+  },
+  "_note": "只给 Ghidra 建工程用, 不参与 flint 引导。"
+}

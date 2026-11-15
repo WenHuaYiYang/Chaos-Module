@@ -220,7 +220,6 @@ pub unsafe fn persist_get(key: *const u8, def: i32) -> i32 {
 /// `persist.switch_guestre_state` —— 固件自带摇一摇功能的开关
 pub static KEY_SWITCH_GUESTRE: [u8; 29] = *b"persist.switch_guestre_state\0";
 
-
 // ===== 链表原语(固件 lv_ll; 从 vg_font_create_core/lvx 字体遍历反汇编取形) =====
 
 /// `0x0C589050(list_head*)` 返回首个节点(空=0)。 静态核对
@@ -300,6 +299,13 @@ pub unsafe extern "C" fn fw_img_free_by_path(path: u32) {
 pub unsafe extern "C" fn vibrate(vib_type: u32) {
     let f: unsafe extern "C" fn(u32) = transmute(0x0C4C_56CDusize);
     f(vib_type)
+}
+
+/// .043 MiWearScreen screen_turn_on(tag, source), UI owner only.
+/// 0x0CA7323C forwards r0/r1 to 0x0CA717B8; source 26 is stock wakelock.
+pub(crate) unsafe fn screen_wake_for_connect() {
+    let f: unsafe extern "C" fn(*const u8,u32)=transmute(0x0CA7323Dusize);
+    f(b"chaos-connect\0".as_ptr(),26);
 }
 
 /// `translate(消息号)` 取当前语言下的词，返回 NUL 结尾字符串
@@ -440,7 +446,7 @@ pub unsafe fn quickapp_launch_app(pkg: *const u8) -> i32 {
 pub unsafe fn quickapp_proxy_init() -> bool {
     let n = quickapp_app_count();
     if n > 0 { return true; }
-    crate::log::line("补建节点: 应用表未就绪");
+
     false
 }
 
@@ -451,9 +457,9 @@ pub unsafe fn quickapp_proxy_init() -> bool {
 /// 建节点（会加图标, 调用方随后 `apply_pkg(false)` 会先 del 再 add, 不会重复）。
 pub unsafe fn quickapp_register_pkg(pkg: *const u8) -> bool {
     let mut n = quickapp_app_count();
-    // 表没就绪时只记录状态，不手动初始化 proxyquickapp（见 quickapp_proxy_init）。
+    // 表没就绪时只检查状态，不手动初始化 proxyquickapp（见 quickapp_proxy_init）。
     if n <= 0 {
-        crate::log::kv("补建节点-应用表 ", if quickapp_proxy_init() { 1 } else { 0 });
+        let _ = quickapp_proxy_init();
         n = quickapp_app_count();
     }
     if n <= 0 { return false; }
@@ -483,7 +489,6 @@ unsafe fn cstr_same(a: *const u8, b: *const u8) -> bool {
     }
     false
 }
-
 
 /// 遍历已装应用表，**只给注册表里查不到的 app 补节点**，返回 `(扫描数, 补建数)`。
 ///
@@ -522,4 +527,33 @@ pub unsafe fn quickapp_resync_missing() -> (u32, u32) {
         i += 1;
     }
     (total, rebuilt)
+}
+/// p67 3.101.043: setlogmask 命令 0x0C6EE840 调用的全局掩码 setter。
+/// 0x0C1F0CE0 读写 0x200C8958 的单字节掩码并返回旧值，位0..7对应 EMERG..DEBUG。
+pub unsafe fn system_log_mask() -> u8 {
+    core::ptr::read_volatile(0x200C8958 as *const u8)
+}
+
+pub unsafe fn system_log_mask_set(mask: u8) {
+    let f: unsafe extern "C" fn(u32) -> u32 = core::mem::transmute(0x0C1F0CE1usize);
+    f(mask as u32);
+}
+
+/// p67 3.101.043 的 property_get_int32；充电事件 0x0C5D887E 取得
+/// CLOCK_REALTIME 秒数后经 0x0C3DAF80 写入 persist.charge_timestamp。
+pub unsafe fn last_charge_timestamp() -> i32 {
+    let get: unsafe extern "C" fn(*const u8, i32) -> i32 =
+        transmute(0x0C3DAFE1usize);
+    get(b"persist.charge_timestamp\0".as_ptr(), 0)
+}
+
+pub unsafe fn charge_time_local(timestamp: i64) -> Option<([i32; 11], i64)> {
+    let mut now = [0u64; 2];
+    let clock: unsafe extern "C" fn(u32, *mut u64) -> i32 = transmute(0x0C201FE1usize);
+    if clock(0, now.as_mut_ptr()) != 0 { return None; }
+    let mut tm = [0i32; 11];
+    let local: unsafe extern "C" fn(*const i64, *mut i32) -> *mut i32 =
+        transmute(0x0C1F49ADusize);
+    if local(&timestamp, tm.as_mut_ptr()).is_null() { return None; }
+    Some((tm, now[0] as i64))
 }

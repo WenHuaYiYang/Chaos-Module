@@ -1,0 +1,8 @@
+{
+  "source": "Vela_NativeApp-syspatch 4/ELF/src",
+  "files": {
+    "syspatch_blur.c": "c07ff722e80f4b7f17bc2a7a6806f0bafc8654204da1c5bae2560f0697d2d294",
+    "syspatch_blur.h": "7d2120ee0f6b947e4279a98dce01a73938491274f108b6d0dcbc2bdb58239f98"
+  },
+  "port": "p67 3.101.043 stage 1; original IIR, existing audited p67 lifecycle retained"
+}

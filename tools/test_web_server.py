@@ -67,7 +67,7 @@ class WebTests(unittest.TestCase):
         compiler = os.environ.get('CC') or shutil.which('clang') or shutil.which('cc')
         if not compiler:
             raise RuntimeError('clang or a C11 host compiler is required')
-        subprocess.run([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
+        subprocess.run([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation', '-O1', '-g',
                         '-DCHAOS_HTTPD_TEST', '-shared', '-fPIC', '-I' + str(WEB),
                         '-I' + str(ROOT / 'supervisor/network/include'),
                         str(WEB / 'chaos_httpd.c'), str(WEB / 'websocket_codec.c'),

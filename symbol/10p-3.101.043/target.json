@@ -1,0 +1,26 @@
+{
+  "ap_sha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+  "ap_size": 13795728,
+  "bindings": {
+    "FW_APP_INSTALL": "chaos_app_install",
+    "FW_APP_LOOKUP": "chaos_app_lookup",
+    "FW_INIT_BUFFER": "chaos_init_buffer",
+    "FW_NOTIFY": "chaos_notify",
+    "FW_REGISTER_DRIVER": "chaos_register_driver",
+    "FW_UNREGISTER_DRIVER": "chaos_unregister_driver"
+  },
+  "build_blockers": [],
+  "chaos_abi": "p67-043",
+  "cpu": "cortex-m33",
+  "device_dir": "xiaomi-band-10-pro",
+  "float_abi": "soft",
+  "id": "10p-3.101.043",
+  "model": "10p",
+  "rust_target": "thumbv8m.main-none-eabi",
+  "schema": 1,
+  "screen": [
+    336,
+    480
+  ],
+  "version": "3.101.043"
+}

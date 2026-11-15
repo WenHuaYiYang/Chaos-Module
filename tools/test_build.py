@@ -3,11 +3,13 @@
 
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import build
+import p67_pack
 
 
 class IconPythonTests(unittest.TestCase):
@@ -65,6 +67,10 @@ class IconPythonTests(unittest.TestCase):
 
 
 class BuildPreflightTests(unittest.TestCase):
+    def prepare_profile(self, repo):
+        shutil.copytree(build.DEFAULT_ROOT / 'symbol' / build.DEFAULT_TARGET,
+                        Path(repo) / 'symbol' / build.DEFAULT_TARGET)
+
     def test_missing_pillow_fails_before_compilation_or_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(build.sys, "argv", ["build.py", "--repo", tmp]):
@@ -77,6 +83,7 @@ class BuildPreflightTests(unittest.TestCase):
 
     def test_no_icons_does_not_require_pillow(self):
         with tempfile.TemporaryDirectory() as tmp:
+            self.prepare_profile(tmp)
             with patch.object(build.sys, "argv", ["build.py", "--repo", tmp, "--no-icons"]):
                 with patch.object(build, "find_icon_python") as probe:
                     with patch.object(build, "build_ko", side_effect=RuntimeError("compile reached")):
@@ -98,6 +105,35 @@ class BuildPreflightTests(unittest.TestCase):
                 ])
                 self.assertEqual(cwd, repo)
                 self.assertEqual(env["CHAOS_ICON_SIZE"], "64")
+
+    def test_preview_generation_uses_pillow_interpreter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            output = repo / "dist/preview.bin"
+            with patch.object(build, "run") as run:
+                build.build_preview(repo, output, "project-python")
+                run.assert_called_once_with([
+                    "project-python", str(repo / "tools/gen_preview.py"), str(output),
+                ], repo)
+
+
+class ContainerIntegrityTests(unittest.TestCase):
+    def test_container_preserves_every_payload_byte_including_fetch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory); assets = repo / 'dist/assets'; stage = repo / 'dist/stage'
+            assets.mkdir(parents=True); stage.mkdir(); (repo / 'installer').mkdir()
+            (repo / 'installer/chaos_installer.lua').write_text('return true')
+            names = ('chaos_sup.bin', 'fetch-module.bin', 'capatch.bin', 'ca.pem',
+                     'chaos_icon.bin', 'chaos_icon_settings.bin', 'lxgw.ttf')
+            for i, name in enumerate(names): (assets / name).write_bytes(bytes([i]) * (10 + i))
+            (assets.parent / 'THIRD-PARTY-NETWORK.txt').write_text('license')
+            preview = build.DEFAULT_ROOT / 'tools/p67-preview.block'
+            out = repo / 'installer.bin'
+            build.build_container(repo, out, preview, stage, assets, '979820260926', 'Test', 'Test')
+            self.assertEqual(len(p67_pack.inspect(out)['files']), 9)
+            (assets / 'fetch-module.bin').unlink()
+            with self.assertRaisesRegex(RuntimeError, 'fetch-module'):
+                build.build_container(repo, out, preview, stage, assets, '979820260926', 'Test', 'Test')
 
 
 if __name__ == "__main__":
