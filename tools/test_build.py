@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -66,6 +67,10 @@ class IconPythonTests(unittest.TestCase):
 
 
 class BuildPreflightTests(unittest.TestCase):
+    def prepare_profile(self, repo):
+        shutil.copytree(build.DEFAULT_ROOT / 'symbol' / build.DEFAULT_TARGET,
+                        Path(repo) / 'symbol' / build.DEFAULT_TARGET)
+
     def test_missing_pillow_fails_before_compilation_or_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(build.sys, "argv", ["build.py", "--repo", tmp]):
@@ -78,6 +83,7 @@ class BuildPreflightTests(unittest.TestCase):
 
     def test_no_icons_does_not_require_pillow(self):
         with tempfile.TemporaryDirectory() as tmp:
+            self.prepare_profile(tmp)
             with patch.object(build.sys, "argv", ["build.py", "--repo", tmp, "--no-icons"]):
                 with patch.object(build, "find_icon_python") as probe:
                     with patch.object(build, "build_ko", side_effect=RuntimeError("compile reached")):

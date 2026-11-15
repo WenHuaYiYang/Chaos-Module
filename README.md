@@ -63,9 +63,12 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 ## 构建
 
 ```bash
-python3 tools/build.py            # ko + 图标 + p67 容器
-python3 tools/build.py --skip-ko  # 只重打容器
+python3 tools/build.py --firmware 10p-3.101.043  # 完整构建，产物按固件隔离
+python3 tools/build.py --skip-ko --skip-fetch   # 校验同固件缓存后重打容器
 ```
+
+安装包输出为 `dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin`。
+固件提取与 symbol 目录说明见 [symbol/README.md](symbol/README.md)。
 
 依赖、流程、版本号规则与发版检查单见 **[docs/BUILD.md](docs/BUILD.md)**。
 

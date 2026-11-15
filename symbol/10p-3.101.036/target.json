@@ -1,0 +1,23 @@
+{
+  "ap_sha256": "662d67f5e247e31e194d3161024890ba93b9d29d70b290fadb9aac8ce8ec3c81",
+  "ap_size": 13616208,
+  "bindings": {},
+  "build_blockers": [
+    "036 的字体对象清单、模糊四区私有结构及 hook 槽尚未逐项核验",
+    "PAN、ChaosConnect、fetch 和 capatch 的完整 036 ABI 尚未核验",
+    "已核验函数导出不等于完整 Chaos 依赖闭包，禁止使用 043 地址兜底"
+  ],
+  "chaos_abi": null,
+  "cpu": "cortex-m33",
+  "device_dir": "xiaomi-band-10-pro",
+  "float_abi": "soft",
+  "id": "10p-3.101.036",
+  "model": "10p",
+  "rust_target": "thumbv8m.main-none-eabi",
+  "schema": 1,
+  "screen": [
+    336,
+    480
+  ],
+  "version": "3.101.036"
+}

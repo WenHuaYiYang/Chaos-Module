@@ -22,7 +22,7 @@ python3.12 -m venv .venv
 之后直接执行，不需要激活虚拟环境：
 
 ```bash
-python3 tools/build.py
+python3 tools/build.py --firmware 10p-3.101.043
 ```
 
 脚本会在编译前检查 Pillow：优先使用启动脚本的 Python，缺依赖时自动尝试项目
@@ -32,19 +32,23 @@ python3 tools/build.py
 输出：
 
 ```text
-dist/chaos_sup.ko               内核模块
-dist/chaos-installer-p67.bin    可直接安装的 p67 容器
-dist/assets/                    容器内 ko 副本、图标、字体占位
-dist/stage/                     打包临时目录（不入库）
+dist/10p-3.101.043/chaos_sup.ko        内核模块
+dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin  安装包
+dist/10p-3.101.043/assets/             容器内模块、图标、字体占位
+dist/10p-3.101.043/stage/              打包临时目录（不入库）
 ```
 
 常用组合：
 
 ```bash
-python3 tools/build.py --skip-ko        # 复用 dist/chaos_sup.ko，只重打容器
+python3 tools/build.py --skip-ko --skip-fetch  # 核验同固件缓存后只重打容器
 python3 tools/build.py --no-container   # 只出 ko 和图标
-python3 tools/build.py --no-icons       # 复用 dist/assets 的图标（无 Pillow 时用）
+python3 tools/build.py --no-icons       # 复用当前固件目录下 assets 的图标
 ```
+
+`--firmware` 读取 `symbol/<机型-系统版本>/`，不传时默认 10p-3.101.043。
+提取、导入、生成物核验和完整构建范围见 [固件 symbol](../symbol/README.md)。
+当前 .036 的局部 symbol 不满足完整 Chaos ABI，构建会明确拒绝，不会回退到 .043。
 
 ## 构建流程
 
@@ -101,7 +105,7 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 1. `git pull`，确认在最新 `master` / 特性分支上。
 2. 同步上述版本标识并更新 CHANGELOG。
 3. `python3 tools/build.py`（或 `--skip-ko`，如果只改了安装器）。
-4. 确认 `dist/chaos_sup.ko` 与 `dist/assets/chaos_sup.bin` 哈希一致、`dist/stage` 已更新。
+4. 核验目标目录的 `build-report.json`、两份主模块 ELF 和容器资源完整性；容器副本经 strip，不能要求其与原 ko 文件哈希相同。
 5. 真机验证：安装 → 重启 → 打开应用 → 看版本号与日志。
 6. 提交源码与 `dist/` 产物（同一提交），打 tag `vX.Y.Z`，写 Release 说明（附 CHANGELOG 段落）。
 
@@ -114,12 +118,11 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 3. 执行两项图标单选、默认动态/配置升级、193 帧 GIF 及 96×96 原版图标回归；
    图标投递回归执行 `tools/test_icon_pack.py`，需要 `tools/requirements-test.txt` 中的 Lupa，验证真实 Lua 脚本与流式播放器；
 4. 执行截图/录屏回归与 `CC=cc python3 tools/test_corona_blur.py` 背景协作回归；
-5. 执行 `sh tools/build_ko.sh` 编译模块，并上传 `supervisor/chaos_sup.ko` 作为 artifact；
-6. 执行 `python3 tools/build.py --skip-ko`（`apt-get install llvm` 补 objcopy，
-   `pip install pillow` 供图标生成）产出完整安装包；
-7. 上传 `dist/chaos-installer-p67.bin` 作为 artifact。
+5. 执行固件绑定/构建缓存身份测试；
+6. 执行 `python3 tools/build.py --firmware 10p-3.101.043`（安装 llvm、Pillow）一次构建所有模块与安装包；
+7. 上传 `dist/10p-3.101.043/` 下的主模块和带固件版本名称的安装包。
 
-CI 运行上述主机测试，不打容器、不校验 `dist/` 可复现性——发布前请在本地跑一次完整构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
+CI 运行上述主机测试并构建容器，不代表真机验证或可复现构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
 
 ## 无 cc 的环境
 

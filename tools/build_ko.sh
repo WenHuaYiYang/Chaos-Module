@@ -33,6 +33,12 @@ case $out in
 esac
 
 cd "$src"
+CHAOS_FIRMWARE=${CHAOS_FIRMWARE:-10p-3.101.043}
+export CHAOS_FIRMWARE
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$src/target}/$CHAOS_FIRMWARE"
+obj_dir="$CARGO_TARGET_DIR/thumbv8m.main-none-eabi/release"
+python3 "$here/firmware_symbols.py" --repo "$root" prepare --target "$CHAOS_FIRMWARE" --out "$obj_dir/firmware"
+export CHAOS_SYMBOL_DIR="$obj_dir/firmware"
 python3 "$here/pack_embedded_assets.py" "$root"
 
 # 关于页的“编译时间”：以前没人设这个变量，option_env! 拿不到就显示 unknown。
@@ -48,7 +54,7 @@ RUSTFLAGS="-C target-cpu=cortex-m33 -C target-feature=-fpregs" \
     -Z build-std=core,compiler_builtins
 
 # 不能从旧输出目录随意取第一个.a，否则会混入其他模块/旧版本。
-lib=target/thumbv8m.main-none-eabi/release/libchaos_sup.a
+lib="$obj_dir/libchaos_sup.a"
 [ -s "$lib" ] || { echo "error: missing $lib" >&2; exit 1; }
 host=$(rustc +nightly -vV | sed -n 's/^host: //p')
 lld="$(rustc +nightly --print sysroot)/lib/rustlib/$host/bin/rust-lld"
@@ -73,13 +79,12 @@ case "$cc" in
   *gcc) cflags_target="-mcpu=cortex-m33 -mthumb -mfloat-abi=soft" ;;
   *)    cflags_target="--target=thumbv8m.main-none-eabi -mcpu=cortex-m33 -mthumb -mfloat-abi=soft" ;;
 esac
-obj_dir="$src/target/thumbv8m.main-none-eabi/release"
 corona_obj="$obj_dir/chaos_corona_blur.o"
 "$cc" $cflags_target \
        -ffreestanding -fno-builtin -fno-stack-protector \
        -fno-unwind-tables -fno-asynchronous-unwind-tables \
        -ffunction-sections -fdata-sections -O2 \
-       -I"$src" -I"$src/corona_vendor/include" \
+       -I"$src" -I"$src/corona_vendor/include" -include "$CHAOS_SYMBOL_DIR/firmware.h" \
        -c "$src/corona_blur.c" -o "$corona_obj"
 
 # Network features are part of the Rust UI; their C implementation is required.
@@ -98,17 +103,18 @@ for f in chaos_connect chaos_files chaos_io bridge; do
          -ffreestanding -fno-builtin -fno-stack-protector \
          -fno-unwind-tables -fno-asynchronous-unwind-tables \
          -ffunction-sections -fdata-sections -O2 \
-         -I"$src/bridge" -c "$src/bridge/$f.c" -o "$o"
+         -I"$src/bridge" -include "$CHAOS_SYMBOL_DIR/firmware.h" -c "$src/bridge/$f.c" -o "$o"
   printf '"%s"\n' "$(win "$o")" >> "$bridge_rsp"
 done
 
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
+       -u chaos_firmware_target \
        -u chaos_bridge_start -u chaos_bridge_stop \
        -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
        -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
        --wrap=bnep_register_frame_callback --wrap=bnep_init --wrap=bt_probe_connect_device \
        -T "$(win "$here/merge_sections.ld")" -o "$(win "$out")" "$(win "$lib")" "$(win "$corona_obj")" \
-       "@$(win "$bridge_rsp")" "@$(win "$src/network/build/objects.rsp")"
+       "@$(win "$bridge_rsp")" "@$(win "$src/network/build/$CHAOS_FIRMWARE/objects.rsp")"
 
 # 本机可能没有 python3: 有就用原脚本, 没有就用同逻辑的 node 移植。
 if command -v python3 >/dev/null 2>&1; then

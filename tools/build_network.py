@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from firmware_symbols import DEFAULT_TARGET, load_target
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [
@@ -26,7 +27,8 @@ def main():
     parser.add_argument("--source", type=Path, default=ROOT / "supervisor/network")
     args = parser.parse_args()
     source = args.source.resolve()
-    output = source / "build"
+    target = load_target(ROOT, os.environ.get("CHAOS_FIRMWARE", DEFAULT_TARGET))
+    output = source / "build" / target["id"]
     output.mkdir(parents=True, exist_ok=True)
     subprocess.run([sys.executable, str(ROOT / "tools/embed_web.py"),
                     "--web-dir", str(source / "web")], check=True)
@@ -37,6 +39,7 @@ def main():
     for include in ("include", "web", "ports/libc", "ports/lwip", "third_party/lwip/src/include"):
         flags.extend(["-I", str(source / include)])
     flags.extend(["-include", str(source / "include/tinypan_port.h"),
+                  "-include", str(target["symbol_dir"] / "firmware.h"),
                   "-DCHAOS_BUILD_ID=" + json.dumps("Chaos " + os.environ.get("CHAOS_BUILD_TIME", "local build"))])
     objects = []
     for item in SOURCES:

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Chaos 一键构建：Rust 模块 + fetch 模块 -> 图标 -> p67 安装器容器。
 
-所有编译产物都写在 dist/ 下，源目录 installer/ 只保留源码：
+所有编译产物都按精确固件隔离在 dist/<机型-系统版本>/ 下，源目录 installer/ 只保留源码：
 
-  dist/chaos_sup.ko                Chaos 内核模块
-  dist/fetch-module.ko             恢复 fetch 支持的 TUN 内核模块
-  dist/chaos-installer-p67.bin     可直接安装的 p67 容器
-  dist/assets/chaos_sup.bin        容器内使用的 Chaos ko 副本
-  dist/assets/fetch-module.bin     容器内使用的 fetch ko 副本
-  dist/assets/chaos_icon.bin       96px 应用图标
-  dist/assets/chaos_icon_settings.bin  96px 设置图标
-  dist/assets/lxgw.ttf             字体槽占位文件
-  dist/stage/                      打包临时目录（spec.json 等）
-  dist/THIRD-PARTY-NETWORK.txt      网络组件来源、版权与许可（也随容器分发）
+  dist/10p-3.101.043/chaos_sup.ko   Chaos 内核模块
+  dist/10p-3.101.043/fetch-module.ko 恢复 fetch 支持的 TUN 内核模块
+  dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin  带目标标识的容器
+  dist/<目标>/assets/chaos_sup.bin 容器内使用的 Chaos ko 副本
+  dist/<目标>/assets/fetch-module.bin  容器内使用的 fetch ko 副本
+  dist/<目标>/assets/chaos_icon.bin 96px 应用图标
+  dist/<目标>/assets/chaos_icon_settings.bin 96px 设置图标
+  dist/<目标>/assets/lxgw.ttf      字体槽占位文件
+  dist/<目标>/stage/              打包临时目录（spec.json 等）
+  dist/<目标>/THIRD-PARTY-NETWORK.txt 网络组件来源、版权与许可（也随容器分发）
 
 依赖：
   * nightly Rust + rust-src + thumbv8m.main-none-eabi（build_ko.sh 使用）
@@ -21,10 +21,10 @@
   * p67_pack.py（本仓库，纯 Python，无额外依赖）
 
 常用参数：
-  --skip-ko        不重新编译 Rust，复用 dist/chaos_sup.ko
-  --skip-fetch     不重新编译 fetch，复用 dist/fetch-module.ko
+  --skip-ko        核验后复用当前固件目录下的 chaos_sup.ko
+  --skip-fetch     核验后复用当前固件目录下的 fetch/capatch
   --no-container   只出 ko 和图标，不打容器
-  --no-icons       不重新生成图标，复用 dist/assets 里的图标
+  --no-icons       不重新生成图标，复用当前固件目录下 assets 里的图标
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ import struct
 from pathlib import Path
 
 from network_notices import network_notices
+from firmware_symbols import DEFAULT_TARGET, load_target
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 DEVICE_DIR = "xiaomi-band-10-pro"
@@ -81,27 +82,34 @@ def find_icon_python(repo: Path) -> str:
     )
 
 
-def build_ko(repo: Path, out: Path, build_time: str) -> None:
-    out.parent.mkdir(parents=True, exist_ok=True)
+def firmware_env(ident: str) -> dict:
     env = os.environ.copy()
+    env["CHAOS_FIRMWARE"] = ident
+    env["PYTHON"] = sys.executable
+    return env
+
+
+def build_ko(repo: Path, out: Path, build_time: str, ident: str = DEFAULT_TARGET) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    env = firmware_env(ident)
     env["CHAOS_BUILD_TIME"] = build_time
     run(["sh", str(repo / "tools" / "build_ko.sh"), "supervisor", str(out)], repo, env)
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError(f"没有生成有效 ko: {out}")
 
 
-def build_fetch(repo: Path, out: Path) -> None:
+def build_fetch(repo: Path, out: Path, ident: str = DEFAULT_TARGET) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     run([sys.executable, str(repo / "chaos-fetch" / "build.py"),
-         "--output", str(out)], repo)
+         "--output", str(out)], repo, firmware_env(ident))
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError(f"没有生成有效 fetch 模块: {out}")
 
 
-def build_capatch(repo: Path, out: Path) -> None:
+def build_capatch(repo: Path, out: Path, ident: str = DEFAULT_TARGET) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     run([sys.executable, str(repo / "chaos-fetch" / "capatch" / "build_capatch.py"),
-         "--output", str(out)], repo)
+         "--output", str(out)], repo, firmware_env(ident))
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError(f"没有生成有效 capatch 模块: {out}")
 
@@ -149,12 +157,16 @@ def module_sections(path: Path) -> dict:
     return sections
 
 
-def write_build_report(dist: Path, ko: Path, assets: Path, container: Path | None) -> None:
+def write_build_report(dist: Path, ko: Path, assets: Path, container: Path | None,
+                       target: dict | None = None) -> None:
     paths = [ko, dist / 'fetch-module.ko', dist / 'capatch.elf',
              dist / 'THIRD-PARTY-NETWORK.txt', *sorted(assets.iterdir())]
     if container is not None:
         paths.append(container)
     report = {'module_sections': module_sections(ko), 'files': {}}
+    if target is not None:
+        report['firmware'] = {k: target[k] for k in
+                              ('id', 'version', 'ap_sha256', 'manifest_sha256', 'chaos_abi')}
     for path in paths:
         if path.is_file():
             data = path.read_bytes()
@@ -162,6 +174,26 @@ def write_build_report(dist: Path, ko: Path, assets: Path, container: Path | Non
     (dist / 'build-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print('模块节大小:', {k: v['stored_bytes'] for k, v in report['module_sections'].items() if v['stored_bytes']})
     print(f'构建资源清单与SHA-256: {dist / "build-report.json"}')
+
+
+def validate_cached(dist: Path, target: dict, names: tuple[str, ...]) -> None:
+    path = dist / 'artifact-target.json'
+    if not path.is_file():
+        raise RuntimeError('复用产物缺少固件身份记录，请先不带 --skip-ko/--skip-fetch 完整构建')
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    if saved.get('target') != target['id'] or saved.get('symbol_manifest_sha256') != target['manifest_sha256']:
+        raise RuntimeError('复用产物与所选固件/symbol 不一致，拒绝跨固件混包')
+    for name in names:
+        item = dist / name
+        if not item.is_file() or hashlib.sha256(item.read_bytes()).hexdigest() != saved.get('files', {}).get(name):
+            raise RuntimeError(f'复用产物内容与固件身份记录不符：{name}')
+
+
+def record_artifacts(dist: Path, target: dict) -> None:
+    value = {'target': target['id'], 'symbol_manifest_sha256': target['manifest_sha256'],
+             'files': {name: hashlib.sha256((dist / name).read_bytes()).hexdigest()
+                       for name in ('chaos_sup.ko', 'fetch-module.ko', 'capatch.elf')}}
+    (dist / 'artifact-target.json').write_text(json.dumps(value, sort_keys=True, indent=2) + '\n')
 
 
 def find_objcopy() -> str | None:
@@ -291,9 +323,11 @@ def build_container(repo: Path, out: Path, preview: Path, stage: Path, assets: P
 def main() -> int:
     ap = argparse.ArgumentParser(description="Chaos 一键构建（双 ko + 图标 + p67 容器）")
     ap.add_argument("--repo", type=Path, default=DEFAULT_ROOT)
-    ap.add_argument("--out", type=Path, default=None, help="容器输出路径，默认 dist/chaos-installer-p67.bin")
-    ap.add_argument("--skip-ko", action="store_true", help="复用 dist/chaos_sup.ko")
-    ap.add_argument("--skip-fetch", action="store_true", help="复用 dist/fetch-module.ko")
+    ap.add_argument("--firmware", default=DEFAULT_TARGET,
+                    help="symbol/<机型-系统版本> 下的精确固件目标")
+    ap.add_argument("--out", type=Path, default=None, help="容器输出路径，默认 dist/<目标>/chaos-installer-<目标>.bin")
+    ap.add_argument("--skip-ko", action="store_true", help="复用目标目录下已核验身份的 chaos_sup.ko")
+    ap.add_argument("--skip-fetch", action="store_true", help="复用目标目录下已核验身份的 fetch/capatch")
     ap.add_argument("--no-container", action="store_true")
     ap.add_argument("--no-icons", action="store_true")
     ap.add_argument("--id", default=DEFAULT_ID)
@@ -304,14 +338,19 @@ def main() -> int:
 
     repo = args.repo.expanduser().resolve()
     icon_python = None if args.no_icons else find_icon_python(repo)
+    target = load_target(repo, args.firmware)
     if icon_python is not None:
         print(f"图标 Python: {icon_python}", flush=True)
-    dist = repo / "dist"
+    dist = repo / "dist" / target['id']
     assets = dist / "assets"
     stage = dist / "stage"
     assets.mkdir(parents=True, exist_ok=True)
     stage.mkdir(parents=True, exist_ok=True)
     build_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    if args.skip_ko:
+        validate_cached(dist, target, ('chaos_sup.ko',))
+    if args.skip_fetch:
+        validate_cached(dist, target, ('fetch-module.ko', 'capatch.elf'))
 
     ko = dist / "chaos_sup.ko"
     if not args.skip_ko:
@@ -320,9 +359,9 @@ def main() -> int:
         # build_ko.sh统一执行无损素材预处理，直接编译也使用同一资源。
         if icon_python is not None and (repo / "tools/chaos.gif").is_file():
             run([icon_python, str(repo / "tools/build_gif_icon.py")], repo)
-        build_ko(repo, ko, build_time)
+        build_ko(repo, ko, build_time, target['id'])
     elif not ko.is_file():
-        raise RuntimeError("--skip-ko 但 dist/chaos_sup.ko 不存在")
+        raise RuntimeError(f"--skip-ko 但 {ko} 不存在")
     else:
         print('注意: --skip-ko复用已有模块，不会把新增源码或内置图片编入旧模块。')
     shutil.copyfile(ko, assets / "chaos_sup.bin")
@@ -332,15 +371,16 @@ def main() -> int:
     fetch = dist / "fetch-module.ko"
     capatch = dist / "capatch.elf"
     if not args.skip_fetch:
-        build_fetch(repo, fetch)
-        build_capatch(repo, capatch)
+        build_fetch(repo, fetch, target['id'])
+        build_capatch(repo, capatch, target['id'])
     elif not fetch.is_file() or not capatch.is_file():
-        raise RuntimeError("--skip-fetch 但 dist/fetch-module.ko 或 dist/capatch.elf 不存在")
+        raise RuntimeError(f"--skip-fetch 但 {fetch} 或 {capatch} 不存在")
     shutil.copyfile(fetch, assets / "fetch-module.bin")
     shutil.copyfile(capatch, assets / "capatch.bin")
     shutil.copyfile(repo / "chaos-fetch" / "assets" / "ca.pem", assets / "ca.pem")
     print(f"fetch: {fetch} ({fetch.stat().st_size} bytes)")
     print(f"capatch: {capatch} ({capatch.stat().st_size} bytes)")
+    record_artifacts(dist, target)
 
     if icon_python is not None:
         build_icon(repo, assets / "chaos_icon.bin", 96, icon_python)
@@ -354,7 +394,7 @@ def main() -> int:
                 shutil.copyfile(src, dst)
 
     if args.no_container:
-        write_build_report(dist, ko, assets, None)
+        write_build_report(dist, ko, assets, None, target)
         print(f"完成（未打容器）: {dist}")
         return 0
 
@@ -366,12 +406,13 @@ def main() -> int:
         build_preview(repo, preview, icon_python or find_icon_python(repo))
         blob = preview.read_bytes()
         print(f"预览块: gen_preview 自产 {len(blob)} bytes -> {preview}")
-    out = args.out or dist / "chaos-installer-p67.bin"
-    info = build_container(repo, out, preview, stage, assets, args.id, args.name, args.style)
+    out = args.out or dist / f"chaos-installer-{target['id']}.bin"
+    display_name = f"{args.name} {target['model']} {target['version']}"
+    info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")
     for name, size in info["blocks"]:
         print(f"  {name}  {size}")
-    write_build_report(dist, ko, assets, out)
+    write_build_report(dist, ko, assets, out, target)
     print(f"完成: {out}")
     return 0
 

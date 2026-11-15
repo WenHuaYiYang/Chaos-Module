@@ -29,6 +29,10 @@ import shutil
 import struct
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from firmware_symbols import DEFAULT_TARGET, load_target
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src", "tun_module.c")
@@ -356,11 +360,14 @@ def main():
     ap.add_argument("--output", help="验证通过后，额外复制产物到指定路径")
     args = ap.parse_args()
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    obj = os.path.join(OUT_DIR, "tun_module.o")
-    dns_obj = os.path.join(OUT_DIR, "dns_codec.o")
-    elf = os.path.join(OUT_DIR, "tun_module.elf")
-    out = os.path.join(OUT_DIR, "%s-%s.bin" % (MODULE_NAME, FIRMWARE_VERSION))
+    target = load_target(Path(HERE).parent, os.environ.get("CHAOS_FIRMWARE", DEFAULT_TARGET))
+    output_dir = os.path.join(OUT_DIR, target['id'])
+
+    os.makedirs(output_dir, exist_ok=True)
+    obj = os.path.join(output_dir, "tun_module.o")
+    dns_obj = os.path.join(output_dir, "dns_codec.o")
+    elf = os.path.join(output_dir, "tun_module.elf")
+    out = os.path.join(output_dir, "%s-%s.bin" % (MODULE_NAME, target['version']))
 
     for p in (CLANG, LLD):
         if not os.path.exists(p):
@@ -371,7 +378,7 @@ def main():
     print("   lld   :", LLD)
     print("   target: %s  cpu=%s float=%s" % (TARGET_ID, CPU, FLOAT_ABI))
 
-    flags = CFLAGS + warning_opt_outs(CLANG)
+    flags = CFLAGS + warning_opt_outs(CLANG) + ["-include", str(target['symbol_dir'] / 'firmware.h')]
     print("\n== [1/3] 编译 ==")
     cmd = [CLANG] + flags + ["-c", SRC, "-o", obj]
     print("   " + " ".join(cmd))

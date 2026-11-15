@@ -1,0 +1,21 @@
+{
+  "ap_sha256": "662d67f5e247e31e194d3161024890ba93b9d29d70b290fadb9aac8ce8ec3c81",
+  "ap_size": 13616208,
+  "files": {
+    "firmware.h": "bc353f672bed8bf270dfaa7bd86fc0ec7e47d6ce8dfdab5115711bbcc32cecbe",
+    "firmware.ld": "efc1636574b90934900969470b67694291c0c6225b50a20ef0b41e820d5cd6ed",
+    "firmware.rs": "7ba1a4f9d2e9dd30aa78a08096fc580c09f0ac1df8b57df815c574cf2db5df32",
+    "reviewed.json": "14a40ce87e218c0f5039a28f501e5ea21102a480ad633ab6c243d3959d0321a2",
+    "symbols.json": "9b7c3a172eaa7511a2a11fb792ee495baa7054695ffafc66bf83f7452d98bce3",
+    "target.json": "ff592e81a052ad5819372e76d03467102e9f8068b1bf262e6d86154ecf00ccf4"
+  },
+  "format": "vela-ota-zip",
+  "input_name": "miwear.watch.p67tc_v3.101.036_full_17a1ea48.bin",
+  "input_sha256": "17a1ea48d58117c50223faf36ecc66bd0d42828495ef9a219e84ef3168e11f71",
+  "member": "vela_ap.bin",
+  "reviewed_exports": 63,
+  "schema": 1,
+  "search_results": 26,
+  "target": "10p-3.101.036",
+  "zip_crc32": "05c47c88"
+}

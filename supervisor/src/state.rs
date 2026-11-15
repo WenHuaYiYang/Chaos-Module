@@ -7,17 +7,17 @@
 // 的包装(代码约定: 业务代码禁止 transmute 地址), 完整清单与依据都在 `fw_api/*` 一侧 ——
 // 同一个地址不留两个真源。
 // 注册链 (symbols: app_registry / launcher)
-pub const FW_REGISTER_DRIVER: u32 = 0x0C1A_FF61;   // register_driver(path,fops,mode,priv)
+pub const FW_REGISTER_DRIVER: u32 = crate::firmware_target::FW_REGISTER_DRIVER;
 
-pub const FW_UNREGISTER_DRIVER: u32 = 0x0C1B_002D; // unregister_driver(path)
+pub const FW_UNREGISTER_DRIVER: u32 = crate::firmware_target::FW_UNREGISTER_DRIVER;
 
-pub const FW_APP_LOOKUP: u32 = 0x0CA6_9935;        // app_lookup(app_id) -> app*
+pub const FW_APP_LOOKUP: u32 = crate::firmware_target::FW_APP_LOOKUP;
 
-pub const FW_APP_INSTALL: u32 = 0x0CA6_A30D;       // app_install(desc, pages*, count)
+pub const FW_APP_INSTALL: u32 = crate::firmware_target::FW_APP_INSTALL;
 
-pub const FW_INIT_BUFFER: u32 = 0x0C51_3A45;       // app_launcher_add(app_id) (036 名 init_buffer, 1参)
+pub const FW_INIT_BUFFER: u32 = crate::firmware_target::FW_INIT_BUFFER;
 
-pub const FW_NOTIFY: u32 = 0x0CA9_A899;            // lvx_notification_insert_message(notif*) 固件完整链(拷贝/登记由它内部自处理; 自己手写那条手动链里的段B memset 实测必崩)
+pub const FW_NOTIFY: u32 = crate::firmware_target::FW_NOTIFY;
 
 // VFS (symbols: nuttx)
 pub const MAX_ROWS_PER_PAGE: usize = 16;

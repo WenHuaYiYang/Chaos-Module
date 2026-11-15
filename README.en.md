@@ -64,9 +64,12 @@ Full steps and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
 ## Build
 
 ```bash
-python3 tools/build.py            # ko + icons + p67 container
-python3 tools/build.py --skip-ko  # re-pack the container only
+python3 tools/build.py --firmware 10p-3.101.043  # complete, firmware-isolated build
+python3 tools/build.py --skip-ko --skip-fetch   # validate matching cached modules and repack
 ```
+
+The installer is written to `dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin`.
+See [symbol/README.md](symbol/README.md) for extraction and exact firmware bindings.
 
 Dependencies, pipeline, versioning and release checklist: **[docs/BUILD.md](docs/BUILD.md)**.
 

@@ -6,6 +6,7 @@
 #![allow(static_mut_refs)]
 
 mod state;
+mod firmware_target;
 pub(crate) use state::*;
 
 mod font_apply;

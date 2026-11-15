@@ -18,6 +18,7 @@ dist/stage/
 installer/lxgw.ttf
 
 dist/
+supervisor/network/build/*/
 dist/assets/chaos_sup.bin
 dist/chaos-installer-p67.bin
 dist/chaos_sup.ko
