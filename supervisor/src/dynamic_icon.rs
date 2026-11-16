@@ -107,7 +107,18 @@ unsafe fn drive() {
         port::animation_active(false, 20); START = None; LAST_FRAME = usize::MAX;
         return;
     }
+    // The native launch transition owns the image's geometry and snapshot.
+    // Reassigning its source here can reset native scaling and visibly jump.
+    if port::launcher_transition_active() {
+        port::animation_active(false, 20);
+        return;
+    }
     let active = port::launcher_active();
+    if !active && choice != ORIGINAL {
+        // Keep the last frame, without repeatedly scanning a hidden launcher.
+        port::animation_active(false, 20); START = None;
+        return;
+    }
     if !active && !PENDING && OWNER == 0 { port::animation_active(false, 20); return; }
     let Some(icon) = port::current(crate::st_rd!(crate::state::APP_ID)) else {
         port::animation_active(false, 20); forget(); return;
@@ -115,7 +126,14 @@ unsafe fn drive() {
     if !icon.original && !port::owns(icon.source) && !FORCE {
         port::animation_active(false, 20); PENDING = false; forget(); return;
     }
-    if choice == ORIGINAL || !active || !icon.visible {
+    if port::icon_pressed(icon) || (choice != ORIGINAL && (!active || !icon.visible)) {
+        // Keep the selected image frozen across press, hiding and app launch.
+        // Inactive does not mean "switch to Original": its setter changes the
+        // native image's layout before transition flags necessarily exist.
+        port::animation_active(false, 20); START = None;
+        return;
+    }
+    if choice == ORIGINAL {
         port::animation_active(false, 20);
         if !icon.original {
             // File assignment can fail on OOM or dispatch DELETE. Confirm it

@@ -44,6 +44,9 @@ jobs:
       - name: Test ChaosConnect protocol and native file operations
         run: python3 tools/test_chaos_connect.py
 
+      - name: Test installer feedback, streaming copy and fetch opt-in
+        run: .capture-test-venv/bin/python tools/test_installer.py
+
       - name: Test local file manager and filename paths
         run: python3 tools/test_local_files.py
 

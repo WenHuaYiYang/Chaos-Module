@@ -131,13 +131,23 @@ unsafe fn original_path(source: u32) -> bool {
     true
 }
 
+pub(crate) unsafe fn launcher_transition_active() -> bool {
+    rd8(a::LAUNCHER_TRANSITION_SLOT as *const u8) != 0
+        || rd32(a::LAUNCHER_SNAPSHOT_SLOT as *const u32) != 0
+}
+
+pub(crate) unsafe fn icon_pressed(icon: Icon) -> bool {
+    // Press feedback starts before the launcher transition/snapshot flags.
+    // This is interaction state, not visibility (PRESSED / PRESS_LOST).
+    rd16((icon.object + 0x30) as *const u16) & 0x60 != 0
+}
+
 pub(crate) unsafe fn launcher_active() -> bool {
     if top_app_id() != HOME_APP_ID || watchface_is_on() != 0 { return false; }
     let grid = honeycomb::launcher();
     grid != 0 && (honeycomb::supported(grid) || honeycomb::s541_supported(grid)) && honeycomb::visible(grid)
         && rd32((grid + 0x2C) as *const u32) & 1 == 0
-        && rd8(a::LAUNCHER_TRANSITION_SLOT as *const u8) == 0
-        && rd32(a::LAUNCHER_SNAPSHOT_SLOT as *const u32) == 0
+        && !launcher_transition_active()
 }
 
 /// Native app-id lookup matches the ORIGINAL click callback even when its
@@ -164,7 +174,6 @@ pub(crate) unsafe fn current(app_id: u32) -> Option<Icon> {
             source,
             original: original_path(source),
             visible: rd32((object + 0x2C) as *const u32) & 1 == 0
-                && rd16((object + 0x30) as *const u16) & 0x20 == 0
                 && x1 < 336 && y1 < 480 && x2 >= 0 && y2 >= 0,
         });
     }

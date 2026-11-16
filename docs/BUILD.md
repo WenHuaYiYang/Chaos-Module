@@ -109,11 +109,11 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 源码版本、容器头、锁文件和中英文徽章发版时应同步。
 
-> 当前已知差异：`Cargo.toml` / `Cargo.lock` 为 **1.2.4**，两个打包器的 `VERSION` 仍为 `0x00010201`（**1.2.1**）。中英文徽章表示模块源码版本。本次文档整理未修改二进制版本；发版前需显式对齐，并用提交 ID 标识对应源码。
+> 当前版本 **v1.2.5**：`Cargo.toml` / `Cargo.lock`、两个打包器的 `VERSION = 0x00010205` 和中英文徽章已对齐。此前模块 1.2.4 / 容器头 1.2.1 的差异在此版本消除；仍需用提交 ID 标识对应源码。
 
 | 位置 | 形式 | 说明 |
 |---|---|---|
-| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010201` = **v1.2.1**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
+| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010205` = **v1.2.5**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
 | `supervisor/Cargo.toml` 的 `version` | `X.Y.Z` | 关于页通过 `env!("CARGO_PKG_VERSION")` 自动读取，无需手改 |
 | `supervisor/Cargo.lock` 的 `chaos_sup` 版本 | `X.Y.Z` | 与模块清单保持一致 |
 | `README.md` / `README.en.md` 的版本徽章 | `vX.Y.Z` | 中英文项目入口保持一致 |
@@ -143,6 +143,8 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 5. 执行固件绑定/构建缓存身份测试；
 6. 执行 `python3 tools/build.py --firmware 10p-3.101.043`（安装 llvm、Pillow）一次构建所有模块与安装包；
 7. 上传 `dist/10p-3.101.043/` 下的主模块和带固件版本名称的安装包。
+
+安装器 Lua 回归使用测试虚拟环境中的 Lupa，覆盖首帧反馈、分批复制、回读失败、日志分页和 fetch 自启动默认关闭/重启生效。
 
 CI 运行上述主机测试并构建容器，不代表真机验证或可复现构建。固件 ABI 静态核验和机器指令探针需要自备 3.101.043 AP，见 [HONEYCOMB.md](HONEYCOMB.md) 和 [DYNAMIC-ICON.md](DYNAMIC-ICON.md)。
 
