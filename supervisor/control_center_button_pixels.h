@@ -23,6 +23,8 @@ static int cc_build_atlas_styled(const struct cc_pixels *source,uint32_t *atlas,
     int small=source->width==84 && source->height==120;
     if((!small && (source->width!=336 || source->height!=480)) ||
        source->stride<source->width*3 || source->stride>2048 || source->size<source->stride*source->height) return 0;
+    static struct chaos_blur_color_lut lut; /* serialized UI owner; avoid 772B on its stack */
+    chaos_blur_color_prepare(&lut,style);
     for(unsigned y=0;y<CC_ATLAS_H;++y)for(unsigned x=0;x<CC_ATLAS_W;++x) {
         unsigned char sample[3];
         const unsigned char *p;
@@ -41,7 +43,7 @@ static int cc_build_atlas_styled(const struct cc_pixels *source,uint32_t *atlas,
             }
             p=sample;
         } else p=source->data+y*2u*source->stride+x*6u;
-        unsigned char adjusted[3];chaos_blur_color_apply(p,adjusted,style);
+        unsigned char adjusted[3];chaos_blur_color_apply_lut(p,adjusted,&lut);
         uint32_t packed=0xff000000u;
         for(unsigned c=0;c<3;++c) packed|=(uint32_t)adjusted[c]<<(c*8u);
         atlas[y*CC_ATLAS_W+x]=packed;

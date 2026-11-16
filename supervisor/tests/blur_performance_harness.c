@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include "../syspatch_blur/chaos_filter.h"
+#include "../corona_vendor/include/resource_hook_p67_blur.h"
 static unsigned char input[480*1024],output[480*1024],reference[480*1024];
 static uint16_t plane[84*120],work[84*120];
 static void scalar(unsigned char *out,unsigned stride){
@@ -22,9 +23,38 @@ static void scalar(unsigned char *out,unsigned stride){
     }
 }
 int main(void){
+    /* Pixel-exact color material fast path, including saturation overshoot,
+     * tint endpoints, in-place aliasing and every input channel value. */
+    struct chaos_blur_color_lut lut;
+    uint32_t seed=137;
+    for(unsigned config=0;config<80;++config) {
+        unsigned params[7];
+        for(unsigned j=0;j<7;++j) {
+            seed=seed*1664525u+1013904223u;
+            params[j]=(seed>>8)%(j<3?201u:j==3?101u:256u);
+        }
+        struct chaos_blur_color style={params[0],params[1],params[2],params[3],params[4],params[5],params[6]};
+        if(config==0)style=(struct chaos_blur_color){100,100,100,0,0,0,0};
+        chaos_blur_color_prepare(&lut,&style);
+        for(unsigned value=0;value<256;++value) {
+            unsigned char in[3]={(unsigned char)value,(unsigned char)(255-value),(unsigned char)(value*73)},a[3],b[3];
+            chaos_blur_color_apply(in,a,&style);
+            memcpy(b,in,3);chaos_blur_color_apply_lut(b,b,&lut);
+            assert(!memcmp(a,b,3));
+        }
+    }
     uint32_t random=7;
     for(unsigned i=0;i<sizeof(input);i++){random=random*1664525u+1013904223u;input[i]=(unsigned char)(random>>24);}
     chaos_v2_algorithm=1;chaos_v2_snapshot(input,1024);
+    uint16_t fused[84*120];
+    chaos_v2_snapshot_plane(input,1024,fused);
+    for(unsigned y=0;y<120;y++)for(unsigned x=0;x<84;x++) {
+        unsigned sum[3]={0};
+        for(unsigned dy=0;dy<4;dy++)for(unsigned dx=0;dx<4;dx++)
+            for(unsigned c=0;c<3;c++)sum[c]+=input[(y*4+dy)*1024+(x*4+dx)*3+c];
+        assert(fused[y*84+x]==(((sum[2]/16>>3)<<11)|((sum[1]/16>>2)<<5)|(sum[0]/16>>3)));
+    }
+    chaos_v2_previous_valid=0;chaos_v2_snapshot(input,1024);
     assert(!chaos_v2_unchanged());
     for(unsigned y=0;y<120;y++)for(unsigned x=0;x<84;x++)for(unsigned c=0;c<3;c++){
         unsigned sum=0;for(unsigned dy=0;dy<4;dy++)for(unsigned dx=0;dx<4;dx++)sum+=input[(y*4+dy)*1024+(x*4+dx)*3+c];
@@ -54,4 +84,24 @@ int main(void){
     double fast=(double)(clock()-begin)/CLOCKS_PER_SEC;
     printf("PASS exact snapshot and bilinear pixels/padding; cache publication/config/change gates\n");
     printf("HOST full-frame interpolation x40: scalar %.3f ms, separable %.3f ms (%.2fx); not device FPS\n",old*1000,fast*1000,fast?old/fast:0);
+    struct chaos_blur_color style={73,125,110,12,30,60,90};
+    begin=clock();
+    for(unsigned pass=0;pass<120;++pass) {
+        input[0]=(unsigned char)pass;
+        for(unsigned i=0;i<84*120;++i)chaos_blur_color_apply(input+i*3,reference+i*3,&style);
+    }
+    old=(double)(clock()-begin)/CLOCKS_PER_SEC;begin=clock();
+    for(unsigned pass=0;pass<120;++pass) {
+        input[0]=(unsigned char)pass;chaos_blur_color_prepare(&lut,&style);
+        for(unsigned i=0;i<84*120;++i)chaos_blur_color_apply_lut(input+i*3,output+i*3,&lut);
+    }
+    fast=(double)(clock()-begin)/CLOCKS_PER_SEC;
+    assert(!memcmp(output,reference,84*120*3));
+    printf("HOST material x120: original %.3f ms, LUT %.3f ms (%.2fx); not device FPS\n",old*1000,fast*1000,fast?old/fast:0);
+    struct p67_blur_pixel_view view={input,sizeof(input),1024,336,480,15};
+    begin=clock();for(unsigned pass=0;pass<120;++pass){input[0]=(unsigned char)pass;assert(p67_blur_downsample_bgr888(&view,plane,84*120));chaos_v2_snapshot(input,1024);}
+    old=(double)(clock()-begin)/CLOCKS_PER_SEC;begin=clock();
+    for(unsigned pass=0;pass<120;++pass){input[0]=(unsigned char)pass;chaos_v2_snapshot_plane(input,1024,fused);}
+    fast=(double)(clock()-begin)/CLOCKS_PER_SEC;assert(!memcmp(plane,fused,sizeof(plane)));
+    printf("HOST sampling x120: separate %.3f ms, fused %.3f ms (%.2fx); not device FPS\n",old*1000,fast*1000,fast?old/fast:0);
 }

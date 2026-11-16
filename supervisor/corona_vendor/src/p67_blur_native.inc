@@ -250,10 +250,13 @@ static int p67_blur_native_copy(uint16_t *plane, uint32_t *identity) {
      * large-range invalidator switches to the whole-cache command. */
     p67_blur_native_clean();
     p67_blur_native_invalidate(P67_U32(descriptor + 16u), (uint32_t)view.size);
-    if (!p67_blur_downsample_bgr888(&view, plane, P67_BLUR_PIXELS)) { p67_blur_native_error=12; goto done; }
 #ifdef CHAOS_BLUR_V2_COLOR
-    if(chaos_v2_algorithm) chaos_v2_snapshot(view.pixels,(unsigned)view.stride);
+    /* Same 4x4 samples feed both outputs. Preserve RGB565 truncation and the
+     * separately rounded BGR888 colors without reading the whole input twice. */
+    if(chaos_v2_algorithm) chaos_v2_snapshot_plane(view.pixels,(unsigned)view.stride,plane);
+    else
 #endif
+    if (!p67_blur_downsample_bgr888(&view, plane, P67_BLUR_PIXELS)) { p67_blur_native_error=12; goto done; }
     p67_blur_native_nonzero=0;
     for (unsigned i=0;i<P67_BLUR_PIXELS;++i) p67_blur_native_nonzero += plane[i] != 0;
     if (root != p67_blur_native_watchface()) { p67_blur_native_error=10; goto done; }

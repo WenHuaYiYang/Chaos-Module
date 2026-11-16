@@ -15,7 +15,7 @@ static uint32_t chaos_v2_filtered_epoch;
 static int chaos_v2_unchanged(void) {
     return chaos_v2_algorithm && chaos_v2_cached_ready && chaos_v2_snapshot_same && chaos_v2_filtered_epoch==chaos_v2_params_epoch;
 }
-static void chaos_v2_snapshot(const unsigned char *data,unsigned stride) {
+static void chaos_v2_snapshot_plane(const unsigned char *data,unsigned stride,uint16_t *plane) {
     unsigned same=chaos_v2_previous_valid;
     for(unsigned y=0;y<120;y++)for(unsigned x=0;x<84;x++) {
         unsigned sum[3]={0,0,0};
@@ -23,6 +23,7 @@ static void chaos_v2_snapshot(const unsigned char *data,unsigned stride) {
             const unsigned char *row=data+(y*4+dy)*stride+x*12;
             for(unsigned dx=0;dx<4;dx++)for(unsigned c=0;c<3;c++) sum[c]+=row[dx*3+c];
         }
+        if(plane) plane[y*84+x]=(uint16_t)(((sum[2]/16>>3)<<11)|((sum[1]/16>>2)<<5)|(sum[0]/16>>3));
         for(unsigned c=0;c<3;c++) {
             unsigned i=(y*84+x)*3+c;unsigned char v=(unsigned char)((sum[c]+8)/16);
             same &= chaos_v2_previous_raw[i]==v;
@@ -32,6 +33,9 @@ static void chaos_v2_snapshot(const unsigned char *data,unsigned stride) {
     chaos_v2_snapshot_same=same;chaos_v2_previous_valid=1;
     if(!same)chaos_v2_cached_ready=0;
     chaos_v2_color_valid=1;chaos_v2_width=84;chaos_v2_height=120;
+}
+static void chaos_v2_snapshot(const unsigned char *data,unsigned stride) {
+    chaos_v2_snapshot_plane(data,stride,0);
 }
 static int chaos_v2_store_full(void *pixels,unsigned stride,unsigned size) {
     unsigned char *out=pixels;
@@ -99,8 +103,10 @@ static int chaos_blur_filter(uint16_t *src, uint16_t *tmp, unsigned w, unsigned 
         for(unsigned i=0;i<w*h*3;i++) chaos_v2_button_color[i]=chaos_v2_color[i];
     struct chaos_blur_color style={darken,chaos_v2_params[BP_BG_SATURATION],chaos_v2_params[BP_BG_CONTRAST],
         chaos_v2_params[BP_BG_TINT],chaos_v2_params[BP_BG_RED],chaos_v2_params[BP_BG_GREEN],chaos_v2_params[BP_BG_BLUE]};
+    static struct chaos_blur_color_lut lut; /* serialized blur owner, not UI stack */
+    chaos_blur_color_prepare(&lut,&style);
     for (unsigned i=0;i<w*h;i++) {
-        chaos_blur_color_apply(chaos_v2_color+i*3,chaos_v2_color+i*3,&style);
+        chaos_blur_color_apply_lut(chaos_v2_color+i*3,chaos_v2_color+i*3,&lut);
         unsigned char *p=chaos_v2_color+i*3;
         src[i]=(uint16_t)(((p[2]>>3)<<11)|((p[1]>>2)<<5)|(p[0]>>3));
     }

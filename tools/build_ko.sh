@@ -94,7 +94,15 @@ python3 "$here/build_network.py" --source "$src/network"
 # rust-lld 是 Windows 原生程序: 不认 MSYS 的 /c/ 形式路径, 也拆不动带空格的
 # 命令行参数 —— 全部输入统一经 cygpath 转 C:/ 形式, bridge 四个 .o 与 network
 # 的 37 个 .o 一样走响应文件(每行一个带引号路径)。
-win() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
+win() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; return; fi
+  # MinGit ships sh without cygpath. Native rust-lld does not translate paths
+  # inside response files, so handle its /e/... drive form explicitly.
+  case "$1" in
+    /[A-Za-z]/*) p=${1#/}; drive=${p%%/*}; printf '%s:/%s' "$drive" "${p#*/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
 bridge_rsp="$obj_dir/bridge_objs.rsp"
 : > "$bridge_rsp"
 for f in chaos_connect chaos_files chaos_io bridge; do

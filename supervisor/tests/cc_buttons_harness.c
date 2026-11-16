@@ -139,4 +139,5 @@ int main(void){
     assert(node(11)->opacity==77);node(11)->opacity=255;
     empty();
     puts("CC native button lifecycle: no-input/style replacement, live glass, bounded frame work, epochs, stale DELETE, failed fence/allocation/registration and shutdown passed");
+    return 0;
 }

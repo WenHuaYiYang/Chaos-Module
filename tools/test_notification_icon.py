@@ -68,7 +68,10 @@ def main() -> int:
         asset_path = temporary / "production_empty_image.rs"
         owner_path.write_text(included)
         palette_path.write_text(production_function(assets, "clear_black_palette"))
-        asset_path.write_text(path_constant.group() + "\n" + production_function(assets, "empty_image"))
+        # The host VFS models this path by address. A const slice may be promoted
+        # to distinct addresses in separate Windows codegen units; give the
+        # fixture one stable address without changing production owner code.
+        asset_path.write_text(path_constant.group().replace(" const ", " static ", 1) + "\n" + production_function(assets, "empty_image"))
         environment = dict(os.environ, CHAOS_NOTIFICATION_ICON_SOURCE=str(owner_path),
                            CHAOS_NOTIFICATION_PALETTE_SOURCE=str(palette_path),
                            CHAOS_NOTIFICATION_ASSET_SOURCE=str(asset_path))

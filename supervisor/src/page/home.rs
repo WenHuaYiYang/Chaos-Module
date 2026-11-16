@@ -7,6 +7,7 @@ use crate::page::*;
 use crate::page::Page;
 use crate::page::frame;
 use crate::page::kit::{menu_click, MenuSpec, RowModel};
+static mut STAT_CADENCE: crate::cadence::Cadence = crate::cadence::Cadence::new();
 
 pub(crate) struct InfoPage;
 
@@ -131,14 +132,23 @@ impl Page for InfoPage {
     fn is_switch_row(&self,idx:usize)->bool{crate::page::kit::menu_is_switch(self,idx)}
     fn on_switch(&self,idx:usize){unsafe{crate::page::kit::menu_switch(self,idx);}}
 
-    fn needs_tick(&self) -> bool { true }
+    fn needs_tick(&self) -> bool { unsafe {
+        // Page dispatch already selects the live page. A stale APP_FG after
+        // pause/resume must not suppress the first procfs sample forever.
+        fw_api::screen_is_on() &&
+            (st_rd!(STAT_TICK) % 20 == 19 || STAT_CADENCE.due(fw_api::capture_now_ms(), 1000))
+    } }
 
     fn tick(&self) {
         unsafe {
             // 每 20 拍(亮屏 1s)刷新三行实时数据。原先 10 拍(0.5s)一轮要读 5 次 procfs,
             // 现在一轮 3 次、频率减半 —— UI 线程上的文件系统开销降到约 1/3。
             // 存储/内存这类占用率 1 秒一次足够; 跟手靠的是滑动本身, 不是这三个数。
-            let tk = st_rd!(STAT_TICK).wrapping_add(1);
+            let now = fw_api::capture_now_ms();
+            let old = st_rd!(STAT_TICK);
+            if old % 20 != 19 && !STAT_CADENCE.due(now, 1000) { return; }
+            STAT_CADENCE.take(now, 0);
+            let tk = if old % 20 == 19 { 20 } else { ((old / 20 + 1) % 60) * 20 };
             st_wr!(STAT_TICK, tk);
             if tk % 20 != 0 { return; }
             // 息屏 / AOD 一律不刷(续航): 这三行数值只有亮屏时才有人看,

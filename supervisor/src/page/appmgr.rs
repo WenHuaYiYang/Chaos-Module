@@ -421,6 +421,9 @@ static mut DT_LBL_UN: [u8; 32] = [0; 32];
 static mut DT_LBL_UN2: [u8; 32] = [0; 32];
 
 impl Page for AppDetailPage {
+    fn on_enter(&self) { unsafe { crate::appmgr::detail_scan_resume(); } }
+    fn on_pause(&self) { unsafe { crate::appmgr::detail_scan_cancel(); } }
+    fn on_screen_off(&self) { unsafe { crate::appmgr::detail_scan_cancel(); } }
     fn fill_title(&self, buf: *mut u8) {
         unsafe { put_str(buf, "应用详情\0".as_bytes()); }
     }
@@ -500,12 +503,12 @@ impl Page for AppDetailPage {
     }
 
     fn needs_tick(&self) -> bool {
-        unsafe { crate::appmgr::has_req() || crate::appmgr::excl_has_req() }
+        unsafe { crate::appmgr::has_req() || crate::appmgr::excl_has_req() || crate::appmgr::detail_scan_pending() }
     }
 
     fn tick(&self) {
         unsafe {
-            let mut dirty = false;
+            let mut dirty = crate::appmgr::detail_scan_step();
             if crate::appmgr::has_req() {
                 crate::appmgr::do_op();
                 dirty = true;

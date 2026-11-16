@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
 """Validate the shared original 96px icon used by installer and runtime."""
 from pathlib import Path
+import shutil
 import struct
 import sys
 import tempfile
 import unittest
 from PIL import Image
 from gen_chaos_icon import render_icon, encode_icon
-from build import build_icon
+from build import build_icon, build_app_icons
 
 ROOT = Path(__file__).resolve().parents[1]
 
 class StaticIconTests(unittest.TestCase):
     def test_dark_icons_use_the_existing_processing_without_pixel_loss(self):
-        for name in ('dark-potato', 'dark-icon'):
-            with Image.open(ROOT / f'tools/app-icons/{name}.png') as source:
-                expected = encode_icon(render_icon(source, 96))
-            self.assertEqual((ROOT / f'supervisor/assets/app-icons/{name}.bin').read_bytes(), expected)
+        # A clean checkout has PNG sources, but no ignored .bin files or output directory.
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / 'tools').mkdir()
+            shutil.copy2(ROOT / 'tools/gen_chaos_icon.py', repo / 'tools/gen_chaos_icon.py')
+            shutil.copytree(ROOT / 'tools/app-icons', repo / 'tools/app-icons')
+            self.assertFalse((repo / 'supervisor/assets/app-icons').exists())
+            build_app_icons(repo, sys.executable)
+            for name in ('dark-potato', 'dark-icon'):
+                with self.subTest(icon=name):
+                    with Image.open(repo / f'tools/app-icons/{name}.png') as source:
+                        expected = encode_icon(render_icon(source, 96))
+                    actual = (repo / f'supervisor/assets/app-icons/{name}.bin').read_bytes()
+                    self.assertEqual(actual, expected)
     def test_both_installer_icons_match_the_original_source_at_96px(self):
         with Image.open(ROOT / 'tools/chaos.png') as source:
             expected = encode_icon(render_icon(source, 96))

@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/version-v1.2.1-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.5-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -20,12 +20,12 @@
 ## 简介
 
 Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件，让它们在桌面以普通应用的形式出现：
-图标、点击、转场都由固件自己的 launcher 完成。模块不联网、不依赖手机，也不改动固件分区。
+图标、点击、转场都由固件自己的 launcher 完成。核心管理功能无需手机；网络与 ChaosConnect 是可选功能。模块不改动固件分区。
 
 它最初是为了在 10 Pro 上补研究工具链而写的，后来逐渐长成一套完整的设备管理界面：
 应用管理、表盘、字体、图标、亮度、缓存、模糊与震动设置。
 
-> **实现**：Rust（`no_std`）与 C 原生模块，44 个页面 id，Lua 安装器。
+> **实现**：Rust（`no_std`）与 C 原生模块、Lua 安装器。
 
 ## 特性
 
@@ -34,10 +34,10 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 - **蜂窝应用列表（实验）**：双向拖动与惯性、左缘调节间距、右缘整体缩放、边界返回、原生编辑与删除，与 RW6 效果互斥。开关持久保存，切换时重新绑定列表并立即应用；完整模拟器显示与帧率待复测（[实现与验证](docs/HONEYCOMB.md)）。
 - **表盘**：内置/市场表盘切换、摇一摇轮换、表盘管理。
 - **设备工具**：亮度、缓存清理、时间/日期设置、震动测试。
-- **应用图标**：设置 → 应用图标进入三级单选列表，仅保留原版和动态，统一 96×96；首次安装及从旧版升级自动选择动态，之后保存手动选择。动态播放上传的 GIF（193 帧、5.2 秒循环），暂停时复用原版文件，移除其他主题和额外静态缓冲以缩小体积（[说明](docs/DYNAMIC-ICON.md)）。
-- **运行日志**：关键操作写入 `/data/chaos/chaos.log`，设置 → 运行日志可查看与清空。
+- **应用图标**：设置 → 应用图标提供原版、动态、暗色土豆和暗色图标，统一 96×96；默认动态，手动选择持久保存。动态保留 193 帧、5.2 秒循环（[说明](docs/DYNAMIC-ICON.md)）。
+- **ChaosConnect 操作日志**：连接与文件操作使用独立的 32KiB 内存日志，可查看与清空；原通用闪存运行日志已删除。
 - **截屏与录屏**：首页进入控制列表，后台录屏可选 GIF 15 fps / APNG 目标 60 fps，息屏后 BMP 截屏；录屏和截图分别选择 `/data/chaos/media` 或 `/data/offlinelog`，三级列表删除管理（[格式与验证边界](docs/CAPTURE.md)）。
-- **无外部依赖**：只调固件已验证的 API，不注入 JS、不依赖网络。
+- **原生运行**：核心界面调用固件 API，无需额外 JS 运行时；可选连接功能见协议文档。
 - **ChaosConnect 文件桥**：独立私有协议，AstroBox v4 插件通过设备传输接口连接；支持窗口传输、CRC校验和链路测速。需同时更新插件，详见 [文件桥](docs/24-FILE-BRIDGE.md)。
 
 ## 兼容性
@@ -53,7 +53,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/WenHuaYiYang/Chaos-Module/releases) 下载 `chaos-installer-p67.bin`。
+1. 使用与本 fork 对应源码提交匹配的 Release / CI artifact，或[自行构建](docs/BUILD.md) `chaos-installer-10p-3.101.043.bin`。上游安装包不包含本 fork 的修复。
 2. 用 AstroBox 等工具的自定义表盘 / 第三方应用入口安装。
 3. **重启手环**，模块在开机时加载。
 4. 打开 Chaos 应用，按需启用自动注入与后台恢复。
@@ -64,7 +64,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 
 ```bash
 python3 tools/build.py --firmware 10p-3.101.043  # 完整构建，产物按固件隔离
-python3 tools/build.py --skip-ko --skip-fetch   # 校验同固件缓存后重打容器
+python3 tools/build.py --firmware 10p-3.101.043 --no-icons --skip-fetch  # 已有资源后，重编主模块并复用图标/fetch
 ```
 
 安装包输出为 `dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin`。
@@ -85,7 +85,9 @@ python3 tools/build.py --skip-ko --skip-fetch   # 校验同固件缓存后重打
 | [更新日志](docs/CHANGELOG.md) | 版本历史 |
 | [截屏与录屏](docs/CAPTURE.md) | 录屏/截图设置、双目录文件管理、格式与验证边界 |
 
-文档索引：[docs/README.md](docs/README.md)。
+文档索引：[docs/README.md](docs/README.md)。当前修复与取舍见 [性能说明](docs/PERFORMANCE.md)，提交与推送见 [开发工作流](docs/DEVELOPMENT.md)，回归命令见 [测试指南](docs/TESTING.md)。
+
+本 fork 基于上游开发；模块、容器头与徽章已统一为 **v1.2.5**。发布内容和验证范围见 [更新日志](docs/CHANGELOG.md)，版本规则见 [构建指南](docs/BUILD.md#版本号规则)。
 
 ## 贡献
 
@@ -105,7 +107,7 @@ python3 tools/build.py --skip-ko --skip-fetch   # 校验同固件缓存后重打
 保留在 `supervisor/corona_vendor/`；来源、文件校验值、Chaos 适配边界和分发注意事项见
 [Corona 第三方声明](licenses/CANOPUS-MODULE-CORONA-NOTICE.txt)。设备端可在“关于 → 开放源代码许可”查看许可全文。
 “模糊区域”对 Corona 和旧版模糊共同生效；系统模糊页底部“说明”同时列出上游与
-[Chaos 修改后源码](https://github.com/WenHuaYiYang/Chaos-Module/tree/master/supervisor)。
+[Chaos 修改后源码](https://github.com/qxdho/Chaos-Module/tree/master/supervisor)。
 分发二进制时需提供与该二进制对应的完整源码和构建/安装脚本；只附上上游链接或许可证并不足以替代相应源码义务。
 
 ## 致谢

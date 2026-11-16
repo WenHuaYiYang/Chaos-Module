@@ -287,6 +287,7 @@ unsafe fn sweep() {
 
 /// 全局 50ms 拍(watchface 调): 20 拍一轮热替换扫描, quiet 门(分拍建脸不跑才动管理器)。
 pub(crate) unsafe fn tick() {
+    if !crate::fw_api::screen_is_on() { return; }
     let t = st_rd!(FH_TICK).wrapping_add(1);
     st_wr!(FH_TICK, t);
     if t % 20 != 0 { return; }

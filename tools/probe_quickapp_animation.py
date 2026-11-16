@@ -102,6 +102,18 @@ def main():
         m.put(0x20046000+0x2c8,0x20049000)
         m.put(node+0xc,0x20048000);m.u.mem_write(0x20048000,b'/data/quickapp/icon.bin\0')
         m.hooks[0xca69934]=lambda u:node
+        # Regression: launching from Chaos/another app must remain synchronous.
+        # Previously start() accepted it, then launch_ready() discarded it
+        # because the foreground was not HOME, losing the launch request.
+        m.put(0x20050000,0x42)
+        m.call(syms['test_toggle'])
+        before=len(calls);anim_before=len(animations)
+        launch(0x123)
+        assert calls[before:]==[('show',0x123)]
+        assert len(animations)==anim_before
+        m.call(syms['test_tick'])
+        assert len(calls)==before+1 # no delayed duplicate
+        m.call(syms['test_toggle'])
         m.u.mem_map(0x0dfe0000,4096)
         cover=0x20047000;icon_image=0x20047100
         def create_object(u):

@@ -404,11 +404,15 @@ pub(crate) fn boot_pending() -> bool {
 
 pub(crate) unsafe fn boot_apply() {
     if BOOT_APPLIED != 0 { return; }
+    static mut STARTED: Option<u32> = None;
+    let now = fw_api::capture_now_ms();
+    let started = *STARTED.get_or_insert(now);
+    if now.wrapping_sub(started) >= 300000 { BOOT_APPLIED = 1; return; }
     apply_mode_ensure();
     excl_ensure();
-    BOOT_WAIT = BOOT_WAIT.wrapping_add(1);
-    // 注册表/应用表可能比模块晚就绪: 每 40 拍试一次, 最多 5 分钟。
-    if BOOT_WAIT % 40 != 0 { return; }
+    static mut RETRY: crate::cadence::Cadence = crate::cadence::Cadence::new();
+    let interval = match BOOT_TRIES { 0..=4 => 2000, 5..=14 => 4000, _ => 10000 };
+    if !RETRY.take(fw_api::capture_now_ms(), interval) { return; }
     BOOT_TRIES = BOOT_TRIES.wrapping_add(1);
     if apply_mode_is_keep() {
         // 普通隐藏: 条目在 apps.json，等固件把节点建出来后逐项置位、摘图标。
@@ -480,13 +484,13 @@ pub(crate) unsafe fn watch_keep() {
     // 开关请求不能只依赖应用管理页的 tick：用户拨完开关立刻离开页面时，
     // 维护定时器仍要把迁移做完，避免"配置已改、文件没搬"的跨重启不一致。
     if REQ_MODE != 0 { do_mode_apply(); }
-    WATCH_WAIT = WATCH_WAIT.wrapping_add(1);
-    // 维护定时器三档(50/200/4000ms): 4 拍 = 快/中 0.2~0.8s, 足够挡住重注册。
-    // 息屏空闲档 4s 一拍时放宽到 40 拍(160s)：这一段要遍历应用注册表链表
-    // （上限 512 节点），而它防的是"手机同步后固件重注册把隐藏位重置"，
-    // 屏幕都没亮时没人看得见；亮屏后的下一拍就回到 4 拍节奏，最迟 0.8s 内补回。
-    let every = if fw_api::screen_is_on() { 4 } else { 40 };
-    if WATCH_WAIT % every != 0 { return; }
+    static mut POLL: crate::cadence::Cadence = crate::cadence::Cadence::new();
+    static mut FALLBACK: crate::cadence::Cadence = crate::cadence::Cadence::new();
+    let now = fw_api::capture_now_ms();
+    let awake = fw_api::screen_is_on();
+    if !POLL.take(now, if awake { 800 } else { 160000 }) { return; }
+    // Wall-clock polling: animations cannot accelerate the registry traversal.
+    // Screen-off checks remain sparse; mode requests above are still consumed.
     if WATCH_BUSY != 0 { return; }
     WATCH_BUSY = 1;
 
@@ -507,7 +511,7 @@ pub(crate) unsafe fn watch_keep() {
             let _ = fw_api::quickapp_resync_missing();
             let _ = deep_apply_all();
         }
-    } else if WATCH_WAIT % 240 == 0 {
+    } else if FALLBACK.take(now, if awake { 60000 } else { 240000 }) {
         // 兜底: 集合没变但节点被重建/bit0 被清, 每分钟(慢拍 4 分钟)整表重放一次。
         // Periodic fallback is intentionally silent: it runs every minute and
         // used to add identical lines forever. Only actual registry changes

@@ -128,6 +128,11 @@ pub unsafe fn s541_frame_idle() -> bool {
     extern "C" { fn chaos_s541_frame_idle() -> u32; }
     chaos_s541_frame_idle() != 0
 }
+/// Read a published background on the serialized UI owner; never touches fb0.
+pub unsafe fn s541_cached_region(out: &mut [u8;5184],x:u32,y:u32) -> bool {
+    extern "C" { fn chaos_s541_cached_region(out:*mut u8,x:u32,y:u32)->u32; }
+    chaos_s541_cached_region(out.as_mut_ptr(),x,y)!=0
+}
 
 // Exact .043 pollfd: six WORDS (not Linux's 8-byte fd/events/revents).
 // Driver owns the two UnsafeCells until poll teardown. The allocation is

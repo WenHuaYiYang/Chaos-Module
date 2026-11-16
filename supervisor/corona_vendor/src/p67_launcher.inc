@@ -22,6 +22,9 @@ static uint32_t p67_owner, p67_page, p67_draw_owner, p67_generation;
 static int p67_busy, p67_wake_pending;
 static void p67_event(void *event);
 static void p67_scroll(void *event);
+#ifndef P67_BLUR_INTERACTION_EVENT
+#define P67_BLUR_INTERACTION_EVENT(code) ((void)(code))
+#endif
 
 struct p67_lookup { uint32_t wanted, found, count; };
 static int p67_find_live(uint32_t object, void *cookie) {
@@ -121,6 +124,8 @@ static void p67_event(void *event) {
     int32_t area[4] = {0, 0, 335, 479};
     uint32_t layer;
     if (obj != target || *(uint32_t *)((unsigned char *)event + 12) != p67_generation) return;
+    if(obj==p67_draw_owner && load32(P67_ROOT_SLOT)==obj)
+        P67_BLUR_INTERACTION_EVENT(code);
     if (code == 36u) {
         /* Invalidate the pair before any native operation. Do not mutate the
          * currently dispatching subscription or walk the deleting subtree.
@@ -171,6 +176,8 @@ static void p67_scroll(void *event) {
         entry_binding=page && p67_draw_owner && p67_generation &&
             load32(P67_ROOT_SLOT)==p67_draw_owner &&
             (code != 9u || (p67_live(p67_owner) && p67_live(page) && p67_live(p67_draw_owner)));
+        if (entry_binding)
+            P67_BLUR_INTERACTION_EVENT(code);
         if (entry_binding)
             p67_blur_session_event(&p67_launcher_session,1u,p67_generation,page,code,
                 (int32_t)P67_U32(page + 32u),480,*((uint32_t *)event + 1)==p67_owner);

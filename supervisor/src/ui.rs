@@ -386,6 +386,7 @@ pub(crate) unsafe extern "C" fn chaos_on_resume(page: u32) -> i32 {
     if pid > MAX_PID { pid = st_rd!(FG_PAGE) as usize; }
     if pid > MAX_PID { return 0; }
     st_wr!(FG_PAGE, pid as u32);
+    st_wr!(APP_FG, 1); // on_pause clears it even when the next resume reuses the page
     shake_arm();   // 首次进入(UI线程)订阅摇一摇+建timer, 幂等
     // 进页动作交回页面自己(on_enter): 表盘页 8/9 重读清单、图标页 6 重读包清单、
     // 应用管理页 1 重读注册表、字体页 5 重读字体清单。框架只管渲染。

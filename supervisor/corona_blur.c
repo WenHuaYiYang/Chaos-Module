@@ -130,6 +130,20 @@ static int chaos_cc_buttons_demand(void) {
 }
 #define P67_BLUR_EXTRA_DEMAND() chaos_cc_buttons_demand()
 #define P67_BLUR_COPY_UNCHANGED() chaos_v2_unchanged()
+#include "blur_interaction.h"
+extern uint32_t chaos_blur_monotonic_ms(void);
+static struct chaos_blur_interaction chaos_blur_motion;
+static int chaos_blur_interacting(void) {
+    return chaos_blur_interaction_busy(&chaos_blur_motion,chaos_blur_monotonic_ms());
+}
+static void chaos_blur_motion_event(unsigned code) {
+    if(code==9u || code==11u || code==12u)
+        chaos_blur_interaction_note(&chaos_blur_motion,chaos_blur_monotonic_ms(),code);
+}
+#define P67_BLUR_INTERACTION_BUSY() chaos_blur_interacting()
+#define P67_BLUR_INTERACTION_EVENT(code) chaos_blur_motion_event(code)
+#define CC_INTERACTION_BUSY() chaos_blur_interacting()
+#define CC_INTERACTION_NOTE() chaos_blur_motion_event(12u)
 #define P67_BLUR_DID_PUBLISH() (chaos_v2_cached_ready=chaos_v2_algorithm)
 static void cc_buttons_frame(void);
 #define P67_BLUR_FRAME_READY() cc_buttons_frame()
@@ -142,6 +156,26 @@ static void cc_buttons_frame(void);
 
 uint32_t rh_platform_launcher_scroll_callback(void) {
     return (uint32_t)(uintptr_t)p67_scroll;
+}
+
+/* UI-owner read of an immutable, already CPU-generated V2 background. No
+ * framebuffer IO, new capture, GPU fence or cache mutation. S541 must not take
+ * two synchronous fb0 snapshots precisely when its controls enter the screen. */
+uint32_t chaos_s541_cached_region(unsigned char *out,uint32_t x,uint32_t y) {
+    if(!out || x>48u || y>384u || !chaos_corona_enabled || !chaos_v2_algorithm || !p67_blur_source) return 0;
+    for(unsigned i=0;i<2;++i) {
+        const struct p67_blur_native_output *source=&p67_blur_native_outputs[i];
+        if(source->descriptor!=p67_blur_source || source->retired) continue;
+        struct p67_blur_pixel_view view;
+        if(!p67_blur_native_descriptor_for(source->descriptor,15u,336u,480u,&view)) return 0;
+        for(unsigned row=0;row<24;++row) for(unsigned col=0;col<72;++col) {
+            const unsigned char *p=view.pixels+(y+row*4u+2u)*view.stride+(x+col*4u)*3u;
+            for(unsigned c=0;c<3;++c)
+                out[(row*72u+col)*3u+c]=(unsigned char)(((unsigned)p[c]+p[c+3]+p[c+6]+p[c+9])/4u);
+        }
+        return 1;
+    }
+    return 0;
 }
 
 void chaos_blur_control_buttons_set(uint32_t enabled) {
@@ -366,6 +400,7 @@ uint32_t chaos_corona_diagnostics(char *out, uint32_t capacity) {
     unsigned i, surfaces = 0, refs = 0, moving = 0, dirty = 0, swapped = 0, busy = 0;
     if (!out || capacity < 2u) return 0u;
     chaos_text_kv(&w, "enabled", chaos_corona_enabled);
+    chaos_text_kv(&w, "motion_events", chaos_blur_motion.events);
     chaos_text_kv(&w, "algorithm", chaos_v2_algorithm);
     chaos_text_kv(&w, "owned", chaos_corona_backgrounds_owned());
     chaos_text_kv(&w, "owner", p67_owner);

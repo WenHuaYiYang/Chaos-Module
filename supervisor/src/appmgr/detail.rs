@@ -63,6 +63,84 @@ pub(crate) unsafe fn path_exists(path: *const u8) -> bool {
 
 static mut D_WORK: [u8; 300] = [0; 300];
 static mut D_SIZE: u32 = 0;
+// Dedicated bounded iterator: never keep the shared D_WORK scratch across ticks.
+static mut SIZE_PATH: [u8; 300] = [0; 300];
+static mut SIZE_DIR: [u32; 7] = [0; 7];
+static mut SIZE_LEN: [usize; 7] = [0; 7];
+static mut SIZE_COUNT: [u16; 7] = [0; 7];
+static mut SIZE_DEPTH: usize = 0;
+static mut SIZE_ROOT: usize = 0;
+static mut SIZE_PENDING: bool = false;
+static mut SIZE_COMPLETE: bool = false;
+
+pub(crate) unsafe fn detail_scan_cancel() {
+    for i in 0..7 { if SIZE_DIR[i] != 0 { fw_api::closedir(SIZE_DIR[i]); SIZE_DIR[i] = 0; } }
+    SIZE_PENDING = false;
+}
+pub(crate) unsafe fn detail_scan_pending() -> bool { SIZE_PENDING }
+pub(crate) unsafe fn detail_scan_resume() {
+    if detail_valid() && !SIZE_COMPLETE && !SIZE_PENDING {
+        D_SIZE = 0; SIZE_ROOT = 0; SIZE_DEPTH = 0; SIZE_PENDING = true;
+    }
+}
+/// Returns true once the final value is available. Each pass is bounded by
+/// 24 traversal steps and a 2ms soft budget (one VFS call may exceed it).
+pub(crate) unsafe fn detail_scan_step() -> bool {
+    if !SIZE_PENDING { return false; }
+    let start = fw_api::capture_now_ms();
+    let path = core::ptr::addr_of_mut!(SIZE_PATH) as *mut u8;
+    for _ in 0..24 {
+        if fw_api::capture_now_ms().wrapping_sub(start) >= 2 { break; }
+        if SIZE_DIR[SIZE_DEPTH] == 0 {
+            if SIZE_ROOT >= APP_DIRS.len() + SUB_DIRS.len() + 3 {
+                SIZE_PENDING = false; SIZE_COMPLETE = true; return true;
+            }
+            let root = SIZE_ROOT; SIZE_ROOT += 1;
+            let olds: [&[u8]; 3] = [b"/data/app/", b"/data/quickapp/system/", b"/data/app/system/"];
+            let (base, suffix): (&[u8], &[u8]) = if root < APP_DIRS.len() {
+                (APP_DIRS[root], b"")
+            } else if root < APP_DIRS.len() + SUB_DIRS.len() {
+                (SUB_DIRS[root - APP_DIRS.len()], b"")
+            } else { (olds[root - APP_DIRS.len() - SUB_DIRS.len()], b".old") };
+            let len = mk_path3(base, b"", core::ptr::addr_of!(D_PKG) as *const u8, suffix);
+            core::ptr::copy_nonoverlapping(core::ptr::addr_of!(D_WORK) as *const u8, path, len + 1);
+            SIZE_LEN[0] = len; SIZE_COUNT[0] = 0;
+            SIZE_DIR[0] = fw_api::opendir(path);
+            if SIZE_DIR[0] == 0 { D_SIZE = D_SIZE.saturating_add(file_bytes(path)); }
+            continue;
+        }
+        let depth = SIZE_DEPTH;
+        let item = if SIZE_COUNT[depth] < 400 { fw_api::readdir(SIZE_DIR[depth]) } else { 0 };
+        SIZE_COUNT[depth] += if SIZE_COUNT[depth] < 400 { 1 } else { 0 };
+        if item == 0 {
+            fw_api::closedir(SIZE_DIR[depth]); SIZE_DIR[depth] = 0;
+            if depth > 0 { SIZE_DEPTH -= 1; path.add(SIZE_LEN[SIZE_DEPTH]).write(0); }
+            continue;
+        }
+        let name = (item + 1) as *const u8;
+        if name.read() == b'.' && (name.add(1).read() == 0 ||
+            (name.add(1).read() == b'.' && name.add(2).read() == 0)) { continue; }
+        let mut end = SIZE_LEN[depth];
+        if end + 2 >= 300 { continue; }
+        if end > 0 && path.add(end - 1).read() != b'/' { path.add(end).write(b'/'); end += 1; }
+        let mut k = 0;
+        while end + 1 < 300 && name.add(k).read() != 0 { path.add(end).write(name.add(k).read()); end += 1; k += 1; }
+        path.add(end).write(0);
+        if name.add(k).read() != 0 { path.add(SIZE_LEN[depth]).write(0); continue; }
+        let kind = crate::mem::rd8(item as *const u8);
+        if kind != crate::state::DT_REG && depth < 6 {
+            let dir = fw_api::opendir(path);
+            if dir != 0 {
+                SIZE_DEPTH += 1; SIZE_DIR[SIZE_DEPTH] = dir;
+                SIZE_LEN[SIZE_DEPTH] = end; SIZE_COUNT[SIZE_DEPTH] = 0;
+                continue;
+            }
+        }
+        D_SIZE = D_SIZE.saturating_add(file_bytes(path));
+        path.add(SIZE_LEN[depth]).write(0);
+    }
+    false
+}
 static mut D_VERBUF: [u8; 3000] = [0; 3000];
 
 static mut D_IDX: usize = usize::MAX;
@@ -343,6 +421,7 @@ pub(crate) unsafe fn scan_version(pkg: *const u8) {
 pub(crate) unsafe fn detail_open(i: usize) { detail_open_ctx(i, 0) }
 
 pub(crate) unsafe fn detail_open_ctx(i: usize, excl: u32) {
+    detail_scan_cancel();
     D_IDX = usize::MAX;
     D_CONFIRM = 0;
     D_EXCL = excl;
@@ -351,7 +430,7 @@ pub(crate) unsafe fn detail_open_ctx(i: usize, excl: u32) {
     cpy_n(core::ptr::addr_of_mut!(D_PKG) as *mut u8, pkg_ptr(i), PKG_CAP);
     cpy_n(core::ptr::addr_of_mut!(D_NAME) as *mut u8, entry_primary(i), 32);
     D_HIDDEN = if visible(i) { 0 } else { 1 };
-    scan_size(core::ptr::addr_of!(D_PKG) as *const u8);
+    D_SIZE = 0; SIZE_ROOT = 0; SIZE_DEPTH = 0; SIZE_COMPLETE = false; SIZE_PENDING = true;
     scan_version(core::ptr::addr_of!(D_PKG) as *const u8);
 }
 
@@ -409,6 +488,7 @@ pub(crate) unsafe fn detail_refresh() {
 pub(crate) unsafe fn detail_uninstall_click() -> bool {
     if D_CONFIRM == 0 { D_CONFIRM = 1; return false; }
     D_CONFIRM = 0;
+    detail_scan_cancel();
     uninstall_pkg(core::ptr::addr_of!(D_PKG) as *const u8, core::ptr::addr_of!(D_NAME) as *const u8)
 }
 
@@ -592,7 +672,7 @@ static mut D_FMT: [u8; 96] = [0; 96];
 pub(crate) unsafe fn detail_fmt() -> *const u8 {
     let d = core::ptr::addr_of_mut!(D_FMT) as *mut u8;
     let mut w = W::new(d, 96);
-    w.sz(D_SIZE);
+    if !SIZE_COMPLETE { w.s("大小计算中".as_bytes()); } else { w.sz(D_SIZE); }
     let vp = core::ptr::addr_of!(D_VER) as *const u8;
     if read_volatile(vp) != 0 {
         w.s(" · v".as_bytes()).s(cstr_slice(vp));

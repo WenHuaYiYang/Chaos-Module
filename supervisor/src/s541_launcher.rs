@@ -16,7 +16,8 @@ static mut BUTTON_CLICKABLE: bool = false;
 static mut SHOWN_MODE: usize = 3;
 static mut GLASS: u32 = 0;
 static mut GLASS_VALID: bool = false;
-static mut GLASS_ATTEMPTED: bool = false;
+static mut GLASS_RETRY: crate::cadence::Cadence = crate::cadence::Cadence::new();
+static mut LAST_MOVE: u32 = 0;
 static mut GLASS_INDEX: usize = 0;
 static mut LAST_PAN: Point = Point { x: i32::MAX, y: i32::MAX };
 #[repr(align(64))]
@@ -32,7 +33,6 @@ static mut IMAGES: [ImageDescriptor; 3] = [ImageDescriptor([0; 7]), ImageDescrip
 static mut GLASS_IMAGES: [ImageDescriptor; 2] = [ImageDescriptor([0; 7]), ImageDescriptor([0; 7])];
 static mut GLASS_PIXELS: [Pixels; 2] = [Pixels([0; 110592]), Pixels([0; 110592])];
 static mut SAMPLE: [u8; 5184] = [0; 5184];
-static mut WORK: [u8; 5184] = [0; 5184];
 static MASK: &[u8; 27648] = include_bytes!("../assets/s541/background.alpha");
 
 pub(crate) unsafe fn enabled() -> bool {
@@ -74,7 +74,7 @@ unsafe fn clear() {
     }
     VIEW = 0; LAYER = 0; ROOT = 0; OWNER = 0; GLASS = 0; BUTTON = 0;
     SHOWN_MODE = 3;
-    GLASS_VALID = false; GLASS_ATTEMPTED = false;
+    GLASS_VALID = false; GLASS_RETRY = crate::cadence::Cadence::new();
     LAST_PAN = Point { x: i32::MAX, y: i32::MAX };
 }
 unsafe extern "C" fn deleted(event: u32) {
@@ -135,7 +135,7 @@ unsafe fn create(grid: u32, button: u32) -> bool {
         fw::obj_add_flag(b, fw::LV_OBJ_FLAG_CLICKABLE);
         fw::obj_add_event(b, select as *const () as u32, 4, i as u32);
     }
-    hide(VIEW, true); GLASS_VALID = false; GLASS_ATTEMPTED = false;
+    hide(VIEW, true); GLASS_VALID = false; GLASS_RETRY = crate::cadence::Cadence::new();
     true
 }
 pub(crate) unsafe fn render(grid: u32) {
@@ -151,33 +151,36 @@ pub(crate) unsafe fn render(grid: u32) {
     }
     // 仅遮掉原按钮外观和点击，保留原生HIDDEN、坐标及滚动布局计算。
     if fw::fw_style_get_prop(button, 0, 95) != 0 { fw::obj_set_local_style_prop(button, 95, 0, 0); }
-    fw::obj_clear_flag(button, fw::LV_OBJ_FLAG_CLICKABLE);
+    if rd32((button + 0x2c) as *const u32) & fw::LV_OBJ_FLAG_CLICKABLE != 0 {
+        fw::obj_clear_flag(button, fw::LV_OBJ_FLAG_CLICKABLE);
+    }
     if rd32((button + 0x2c) as *const u32) & 1 != 0 { hide(VIEW, true); return; }
     let pos = Point { x, y };
+    let now = if !GLASS_VALID { fw::capture_now_ms() } else { 0 };
     if LAST_PAN != pos {
+        if !GLASS_VALID { LAST_MOVE = now; }
         // 只移动控制条；保留已发布的不可变玻璃图，不能隐藏按钮等待重采样。
         fw::obj_invalidate(VIEW);
         fw::obj_align(VIEW, fw::align::TOP_LEFT, x, y);
         LAST_PAN = pos;
-        fw::obj_invalidate(LAYER);
+        // Align invalidates the new bounds; the old VIEW was invalidated above.
+        // Invalidating the full transparent 336x480 layer repaints the desktop.
     }
-    // 首次发布前至多尝试一次取样；显示后绝不隐藏或采到自身。
-    let first_visible = !GLASS_ATTEMPTED && x >= 0 && x <= 48 && y < 480 && y + 96 > 0;
-    let capture = first_visible && rd32((ROOT + 0x20) as *const u32) == 0 && fw::s541_frame_idle();
-    if first_visible { GLASS_ATTEMPTED = true; }
+    // First show the controls. Prepare optional glass only after scrolling has
+    // settled; retry a missing cached source without ever reading the display.
+    let first_visible = !GLASS_VALID && x >= 0 && x <= 48 && y < 480 && y + 96 > 0;
+    let capture = first_visible && now.wrapping_sub(LAST_MOVE)>=160
+        && rd32((ROOT + 0x20) as *const u32) == 0 && GLASS_RETRY.take(now,500);
     hide(VIEW, false);
     if capture {
-        if fw::s541_capture_region(&mut SAMPLE, x as u32, y.clamp(0, 384) as u32).is_err() {
-
-            return;
-        }
-        // GPU空闲不代表面板DMA或另一帧没有更新fb0。连续读取两次，
-        // 只发布完全一致的局部图，避免把跨帧条纹永久冻结在玻璃底图上。
-        if fw::s541_capture_region(&mut WORK, x as u32, y.clamp(0, 384) as u32).is_err()
-            || SAMPLE != WORK { return; }
-        if !fw::s541_frame_idle() { return; }
-        crate::s541_pixels::blur(&mut SAMPLE, &mut WORK);
+        // Already blurred, immutable background; no blocking fb0 reads and no
+        // capture of our own controls. Without a published source, show the
+        // selector artwork immediately and omit only the optional glass layer.
+        if !fw::s541_cached_region(&mut SAMPLE,x as u32,y.clamp(0,384) as u32) { return; }
         let next = GLASS_INDEX ^ 1;
+        // An unpublished private buffer has never been consumed by the GPU.
+        // Reused descriptors still require the original safe fence.
+        if GLASS_IMAGES[next].0[0] != 0 && !fw::s541_frame_idle() { return; }
         if GLASS_IMAGES[next].0[0] != 0 { fw::fw_img_free_by_path(GLASS_IMAGES[next].0.as_ptr() as u32); }
         crate::s541_pixels::glass(&SAMPLE, MASK, &mut GLASS_PIXELS[next].0);
         fw::s541_clean_pixels(GLASS_PIXELS[next].0.as_ptr(), 110592);

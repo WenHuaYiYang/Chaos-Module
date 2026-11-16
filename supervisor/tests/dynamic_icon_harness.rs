@@ -14,7 +14,7 @@ struct Handle { path: Vec<u8>, offset: usize }
 struct Ui {
     files: BTreeMap<Vec<u8>, Vec<u8>>, handles: BTreeMap<i32, Handle>, next_fd: i32,
     chunk: usize, fail_write: bool, fail_rename: bool, fail_image: bool, fail_restore: bool,
-    opens: usize, commits: usize, reads: usize, screen: bool, active: bool,
+    opens: usize, commits: usize, reads: usize, screen: bool, active: bool, transition: bool, pressed: bool,
     icon: Option<Icon>, frame: Option<usize>, now: u32,
     writes: Vec<(u32, u8, usize)>, timer: bool, period: u32, retired: usize,
 }
@@ -28,7 +28,7 @@ fn setup(config: Option<&[u8]>) {
     *UI.lock().unwrap() = Some(Ui {
         files, handles: BTreeMap::new(), next_fd: 3, chunk: usize::MAX,
         fail_write: false, fail_rename: false, fail_image: false, fail_restore: false,
-        opens: 0, commits: 0, reads: 0, screen: true, active: true,
+        opens: 0, commits: 0, reads: 0, screen: true, active: true, transition: false, pressed: false,
         icon: Some(original(123)), frame: None, now: 0,
         writes: Vec::new(), timer: false, period: 1000, retired: 0,
     });
@@ -82,6 +82,8 @@ mod fw_api {
         use super::*;
         use crate::dynamic_icon_frames::{Animation, PIXELS};
         pub unsafe fn launcher_active() -> bool { with(|u| u.active) }
+        pub unsafe fn launcher_transition_active() -> bool { with(|u| u.transition) }
+        pub unsafe fn icon_pressed(_: Icon) -> bool { with(|u| u.pressed) }
         pub unsafe fn current(app_id: u32) -> Option<Icon> { assert_eq!(app_id, 200); with(|u| { u.reads += 1; u.icon }) }
         pub unsafe fn owns(source: u32) -> bool { PLAYBACK.contains(&source) || [0xBB00,0xBB80].contains(&source) }
         pub unsafe fn show_static(icon: Icon, choice: u8) -> Option<u32> {
@@ -201,11 +203,66 @@ fn file_assignment_oom_retries_even_after_leaving_the_launcher() {
     tick(100); with(|u| assert!(u.icon.unwrap().original)); tick(150); with(|u| assert_eq!(u.retired,1));
 }
 #[test]
-fn dynamic_pauses_to_original_and_restarts_when_visible() {
+fn dynamic_keeps_last_source_when_inactive_and_restarts_when_visible() {
     setup(Some(b"AIC2\x01")); tick(0); animation_tick(500);
-    with(|u| u.active=false); animation_tick(520); tick(570);
-    with(|u| { assert!(u.icon.unwrap().original); assert!(!u.timer); u.active=true; });
+    let source = with(|u| { u.active=false; u.icon.unwrap().source });
+    animation_tick(520); tick(570);
+    with(|u| { assert_eq!(u.icon.unwrap().source,source); assert!(!u.timer); u.active=true; });
     tick(1000); assert_eq!(with(|u| u.frame),Some(0));
+}
+#[test]
+fn native_launch_transition_keeps_the_current_source_until_it_finishes() {
+    for choice in 1..4 {
+        setup(None); choose(choice); tick(0);
+        let before = with(|u| {
+            u.transition = true; u.active = false;
+            (u.icon.unwrap().source, u.writes.len(), u.reads, u.retired)
+        });
+        for now in [20, 100, 240, 500] { animation_tick(now); tick(now); }
+        with(|u| {
+            assert_eq!((u.icon.unwrap().source, u.writes.len(), u.reads, u.retired), before);
+            assert!(!u.timer); u.transition = false;
+        });
+        tick(600); tick(650);
+        with(|u| { assert_eq!(u.icon.unwrap().source,before.0); u.active = true; });
+        tick(700);
+        with(|u| assert!(!u.icon.unwrap().original));
+    }
+}
+#[test]
+fn press_before_transition_flags_never_changes_source_or_evicts_pixels() {
+    for choice in 1..4 {
+        setup(None); choose(choice); tick(0);
+        let before = with(|u| {
+            u.pressed = true;
+            (u.icon.unwrap().source, u.writes.len(), u.retired)
+        });
+        for now in [20, 80, 120] { animation_tick(now); tick(now); }
+        with(|u| {
+            assert_eq!((u.icon.unwrap().source,u.writes.len(),u.retired),before);
+            assert!(!u.timer); u.pressed = false; u.active = false;
+        });
+        // The app can become foreground even without a transition flag.
+        tick(200); animation_tick(240);
+        with(|u| assert_eq!((u.icon.unwrap().source,u.writes.len(),u.retired),before));
+        // Explicit Original selection still restores and retires normally.
+        choose(0); tick(300); tick(350);
+        with(|u| { assert!(u.icon.unwrap().original); assert_eq!(u.retired,1); });
+    }
+}
+#[test]
+fn hidden_selected_icon_is_frozen_without_restoring_the_file_source() {
+    setup(Some(b"AIC2\x01")); tick(0);
+    let before=with(|u| {
+        u.icon.as_mut().unwrap().visible=false;
+        (u.icon.unwrap().source,u.writes.len(),u.retired)
+    });
+    for now in [20,80,160] { animation_tick(now); tick(now); }
+    with(|u| {
+        assert_eq!((u.icon.unwrap().source,u.writes.len(),u.retired),before);
+        assert!(!u.timer);u.icon.as_mut().unwrap().visible=true;
+    });
+    tick(200);with(|u|assert!(u.timer));
 }
 #[test]
 fn sleep_stops_fast_timer_without_scanning_or_drawing() {

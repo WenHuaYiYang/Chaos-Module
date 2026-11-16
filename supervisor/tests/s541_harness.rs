@@ -5,11 +5,13 @@ use std::collections::HashMap;
 struct State { next: u32, objects: HashMap<u32, u32>, flags: HashMap<u32, u32>,
     events: Vec<(u32,u32,u32)>, labels: Vec<Vec<u8>>, file: Vec<u8>, fail: bool, launches: u32, event_code: u32,
     preference: u32, selections: Vec<u32>, honeycomb_writes: u32, desktop_writes: u32,
-    positions: Vec<(u32,i32,i32)>, anchor_y: Option<i32>, samples: u32, cleans: u32, gpu_busy: bool, unstable: bool }
+    positions: Vec<(u32,i32,i32)>, anchor_y: Option<i32>, samples: u32, cleans: u32, gpu_busy: bool, unstable: bool,
+    now:u32,fb_reads:u32,invalidations:Vec<u32>,cache_missing:bool }
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
 fn state<T>(f: impl FnOnce(&mut State)->T)->T { STATE.with(|s| f(&mut s.borrow_mut())) }
 const FW_STYLE_HR_NAME: u32 = 1;
 #[path = "../src/honeycomb_layout.rs"] mod honeycomb_layout;
+#[path = "../src/cadence.rs"] mod cadence;
 #[path = "../src/s541_launcher.rs"] mod s541_launcher;
 #[path = "../src/s541_pixels.rs"] mod s541_pixels;
 mod honeycomb {
@@ -55,7 +57,7 @@ mod fw_api {
     pub unsafe fn obj_clear_scrollable(_:u32){}
     pub unsafe fn obj_set_size_wh(_:u32,_:u32,_:u32){}
     pub unsafe fn obj_align(o:u32,_:u32,x:i32,y:i32){crate::state(|s|s.positions.push((o,x,y)));}
-    pub unsafe fn obj_invalidate(_:u32){}
+    pub unsafe fn obj_invalidate(o:u32){crate::state(|s|s.invalidations.push(o));}
     pub unsafe fn obj_set_scroll_dir(_:u32,_:u32){}
     pub unsafe fn obj_add_event(o:u32,_:u32,c:u32,d:u32)->u32{crate::state(|s|s.events.push((o,c,d)));1}
     pub unsafe fn event_get_code(_:u32)->u32{crate::state(|s|if s.event_code==0{4}else{s.event_code})}
@@ -72,7 +74,13 @@ mod fw_api {
     pub unsafe fn screen_is_on()->bool{true}
     pub unsafe fn top_app_id()->u32{HOME_APP_ID}
     pub unsafe fn s541_capture_region(out:&mut[u8;5184],_:u32,_:u32)->Result<(),i32>{
+        crate::state(|s|s.fb_reads+=1);
         out.fill(crate::state(|s|{s.samples+=1;120+if s.unstable{(s.samples%2)as u8}else{0}}));Ok(())}
+    pub unsafe fn capture_now_ms()->u32{crate::state(|s|s.now)}
+    pub unsafe fn s541_cached_region(out:&mut[u8;5184],_:u32,_:u32)->bool {
+        if crate::state(|s|s.cache_missing){return false;}
+        out.fill(120);crate::state(|s|s.samples+=1);true
+    }
     pub unsafe fn s541_clean_pixels(_: *const u8,_:u32){crate::state(|s|s.cleans+=1);}
     pub unsafe fn s541_frame_idle()->bool{crate::state(|s|!s.gpu_busy)}
     pub unsafe fn fw_img_free_by_path(_:u32){}

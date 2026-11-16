@@ -36,6 +36,7 @@ HARNESSES = (
     "p67_battery_harness.c", "test_p67_battery_pixels.c",
 )
 ADAPTED = {
+    'src/p67_backgrounds.inc': '2d35367fef7cf8ee4428f836363deb602b702e91feb35bc04e9df25ac6a52391',
     'src/p67_blur.inc': 'ce1e31d34756631222bc2f377b76763f0b6639c1988f8a82cf40fd78fa082927',
     'src/p67_blur_native.inc': '57118c0874dc4773185a77902f02e2ff1d886c62ff52b58d3e992e644329c031',
     'src/p67_launcher.inc': '34b660d317cbc63c9e910976209d39873b1be96a3f3b227eec19d2fc9a5a40a9',
@@ -64,7 +65,7 @@ def verify_sources(upstream: Path | None) -> None:
             continue
         digest, relative = line.split(None, 1)
         pinned[relative] = digest
-    require(set(pinned) == {str(path.relative_to(ROOT)) for path, _ in entries},
+    require(set(pinned) == {path.relative_to(ROOT).as_posix() for path, _ in entries},
             "upstream checksum manifest must cover exactly the vendored dependencies and harnesses")
     for relative, digest in pinned.items():
         require(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == digest,
@@ -193,6 +194,10 @@ def run_harnesses() -> None:
         (temp / "tests").mkdir()
         flags = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
                  "-fsanitize=address,undefined", "-I", str(temp / "include")]
+        if os.name == "nt" and "clang" in Path(cc).name:
+            # Clang 23 diagnoses legacy harness counters set only for debugging.
+            # Keep all other warnings fatal and leave vendored harnesses intact.
+            flags += ["-Wno-error=unused-but-set-variable", "-Wno-error=unused-but-set-global"]
         for name in HARNESSES:
             source = temp / "tests" / name
             shutil.copy2(TESTS / name, source)
@@ -298,7 +303,9 @@ def run_abi_harness() -> None:
         included = temp / "production_abi.c"
         included.write_text(generated)
         binary = temp / "abi.test"
+        extra = ["-Wno-error=unused-but-set-variable", "-Wno-error=unused-but-set-global"] if os.name == "nt" and "clang" in Path(os.environ.get("CC", "cc")).name else []
         subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
+                        *extra,
                         "-fsanitize=address,undefined", "-I", str(VENDOR / "include"),
                         '-DCHAOS_CORONA_ABI_SOURCE="' + str(included) + '"',
                         str(ROOT / "supervisor/tests/corona_abi_harness.c"), "-o", str(binary)], check=True)

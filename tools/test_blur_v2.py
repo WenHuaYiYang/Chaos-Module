@@ -21,10 +21,12 @@ def main():
         subprocess.run([str(test)], check=True)
         native=(ROOT/'supervisor/corona_vendor/src/p67_blur_native.inc').read_text()
         buttons=(ROOT/'supervisor/control_center_buttons.inc').read_text()
+        adapter=(ROOT/'supervisor/corona_blur.c').read_text()
         extracted={
             'STRUCT':native[native.index('struct p67_blur_native_output {'):native.index('static struct p67_blur_native_output')],
             'PUBLISH':native[native.index('static uintptr_t p67_blur_native_publish('):],
             'SOURCE':buttons[buttons.index('static int cc_source('):buttons.index('static void cc_submit(')],
+            'CACHED':adapter[adapter.index('uint32_t chaos_s541_cached_region('):adapter.index('void chaos_blur_control_buttons_set(')],
         }
         flags=[]
         for name,code in extracted.items():

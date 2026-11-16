@@ -26,6 +26,8 @@ static int p67_blur_native_descriptor_for(uint32_t d,unsigned format,unsigned w,
 static int p67_blur_native_output_descriptor(uint32_t d,struct p67_blur_pixel_view *v){(void)d;(void)v;assert(0);return 0;}
 #include CHAOS_OUTPUT_PUBLISH
 #include CHAOS_BUTTON_SOURCE
+static unsigned chaos_corona_enabled=1;
+#include CHAOS_OUTPUT_CACHED
 int main(void){
     uint16_t plane[P67_BLUR_PIXELS]={0};struct cc_pixels pixels;uint32_t stamp;
     chaos_v2_algorithm=1;chaos_v2_width=84;chaos_v2_height=120;
@@ -35,6 +37,13 @@ int main(void){
     idle=0;assert(!p67_blur_native_publish(plane,1));idle=1;
     uintptr_t first=p67_blur_native_publish(plane,1);assert(first==1 && cleans==1);
     p67_blur_source=first;p67_blur_publishes=10;
+    unsigned char region[5184];
+    assert(chaos_s541_cached_region(region,24,384));
+    for(unsigned i=0;i<sizeof(region);++i)assert(region[i]==70);
+    assert(!chaos_s541_cached_region(region,49,384));
+    assert(!chaos_s541_cached_region(region,24,385));
+    assert(!chaos_s541_cached_region(0,0,0));
+    chaos_corona_enabled=0;assert(!chaos_s541_cached_region(region,24,384));chaos_corona_enabled=1;
     assert(cc_source(&pixels,&stamp) && stamp==10 && pixels.width==84 && pixels.height==120);
     for(unsigned i=0;i<pixels.size;++i)assert(pixels.data[i]==111);
     const unsigned char *old=pixels.data;
@@ -45,11 +54,22 @@ int main(void){
     assert(cc_source(&pixels,&stamp) && pixels.data==old && stamp==10);
     for(unsigned i=0;i<pixels.size;++i)assert(pixels.data[i]==111);
     p67_blur_source=second;p67_blur_publishes=11;
+    assert(chaos_s541_cached_region(region,0,0));
+    for(unsigned i=0;i<sizeof(region);++i)assert(region[i]==30);
     assert(cc_source(&pixels,&stamp) && pixels.data!=old && stamp==11);
     for(unsigned i=0;i<pixels.size;++i)assert(pixels.data[i]==222);
     assert(full[0][0]==70 && full[1][0]==30);
+    for(unsigned y=0;y<480;++y)for(unsigned x=0;x<336;++x)for(unsigned c=0;c<3;++c)
+        full[1][(y*336+x)*3+c]=(unsigned char)(x+y*2+c);
+    assert(chaos_s541_cached_region(region,48,384));
+    for(unsigned y=0;y<24;++y)for(unsigned x=0;x<72;++x)for(unsigned c=0;c<3;++c) {
+        unsigned sum=0;
+        for(unsigned dx=0;dx<4;++dx)sum+=(unsigned char)(48+x*4+dx+(384+y*4+2)*2+c);
+        assert(region[(y*72+x)*3+c]==sum/4);
+    }
     assert(!p67_blur_native_publish(plane,3));
     p67_blur_native_outputs[1].retired=1;assert(!cc_source(&pixels,&stamp));
+    assert(!chaos_s541_cached_region(region,0,0));
     p67_blur_source=999;assert(!cc_source(&pixels,&stamp));
     p67_blur_native_outputs[0].descriptor=0;next_descriptor=1;bad_descriptor=1;
     memset(chaos_v2_button_color,99,sizeof(chaos_v2_button_color));

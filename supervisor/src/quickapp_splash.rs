@@ -32,6 +32,10 @@ unsafe extern "C" fn event(e:u32){
     match fw::event_get_code(e){25=>DRAWN=true,36=>{COVER=0;APP=0;},_=>{}}
 }
 pub(crate) unsafe fn start(id:u32,context:*const u32)->bool{
+    // 延迟启动的 launch_ready() 只允许在桌面等待。
+    // Chaos/其他应用内发起的启动必须同步转交原 show_app，否则下一拍
+    // 会因前台不是 HOME 而取消遮罩，并连同尚未提交的请求一起丢弃。
+    if !fw::screen_is_on()||fw::top_app_id()!=fw::HOME_APP_ID{return false;}
     cancel();
     let display=fw::display_default();if !safe_ptr(display){return false;}
     // miwear get_layer_top -> 0x0CAC0219 -> 原生display+0x2C8。

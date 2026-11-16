@@ -1,5 +1,8 @@
 /* Active, owned static blur. Draw callers only read the immutable source. */
 #include "resource_hook_p67_blur.h"
+#ifndef P67_BLUR_INTERACTION_BUSY
+#define P67_BLUR_INTERACTION_BUSY() 0
+#endif
 #ifndef P67_BLUR_AVAILABLE
 #define P67_BLUR_AVAILABLE 0
 #endif
@@ -284,6 +287,7 @@ static void p67_blur_display_event(void *event) {
  if(code==36) { p67_blur_display=0; p67_blur_display_generation=++p67_blur_display_serial; p67_blur_drop(); return; }
  if(p67_blur_busy || p67_blur_polling) return;
  if(code==53) {
+  if(p67_blur_demand && P67_BLUR_INTERACTION_BUSY()) return;
   epoch=p67_blur_epoch; generation=p67_blur_display_generation;
   request=p67_blur_request_serial;
   if(p67_blur_capture_allowed() &&
@@ -333,6 +337,9 @@ static void p67_blur_display_event(void *event) {
   p67_blur_busy=0;
   return;
  }
+ /* Preserve pending work and the immutable old source during a gesture.
+  * Do not consume the START budget or execute COPY/fences/filter/publish. */
+ if(P67_BLUR_INTERACTION_BUSY()) return;
  if(!p67_blur_capture_allowed()) return;
  visible=!!P67_BLUR_VISIBLE();
  if(visible && !p67_blur_visible && !p67_blur_entry_scoped && !p67_blur_pending)
@@ -414,7 +421,7 @@ static void p67_blur_poll_rearm(void) {
  p67_blur_cleanup_armed=0;
  if(!P67_BLUR_AVAILABLE) return;
  if(p67_blur_demand) {
-  if(p67_blur_capture_allowed() && p67_blur_pending) {
+  if(p67_blur_capture_allowed() && p67_blur_pending && !P67_BLUR_INTERACTION_BUSY()) {
    p67_blur_armed=1; p67_blur_request_wake=0; p67_wake_pending=1;
   }
  } else if(p67_blur_cleanup_pending()) {

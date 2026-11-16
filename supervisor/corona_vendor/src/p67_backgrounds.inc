@@ -180,9 +180,10 @@ static void p67_surface_scroll_for(struct p67_surface *s,void *event) {
              * identity gates SCROLL; begin alone revalidates tree membership. */
             if(page && s->root && s->generation && load32(s->root_slot)==s->root &&
                (code!=9 || (p67_live(s->owner) && p67_live(page) && p67_live(s->root))))
+                { P67_BLUR_INTERACTION_EVENT(code);
                 p67_blur_session_event(&s->session,p67_surface_entry_bit(s),
                     s->generation,page,code,p67_surface_position(s,page),p67_surface_closed(s),
-                    *((uint32_t *)event+1)==s->owner);
+                    *((uint32_t *)event+1)==s->owner); }
             else p67_blur_session_clear(&s->session,p67_surface_entry_bit(s));
         }
         /* ALL also receives layout and render notifications. Only the audited
@@ -252,6 +253,8 @@ static void p67_surface_event(void *event) {
         int32_t saved[4],clip[4],area[4]={0,0,335,479};
         if(obj!=target || (obj!=s->owner && obj!=s->root && obj!=s->list) ||
            *((uint32_t *)event+3)!=s->generation) continue;
+        if((obj==s->root || obj==s->list) && load32(s->root_slot)==s->root)
+            P67_BLUR_INTERACTION_EVENT(code);
         if(code==36) {
             /* A transient list DELETE is not the root entry lifecycle. */
             if(obj==s->owner || obj==s->root)

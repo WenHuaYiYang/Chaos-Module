@@ -21,6 +21,14 @@ static uint32_t cc_default_params[BP_COUNT]=BP_DEFAULTS;
 static uint32_t cc_atlas[CC_ATLAS_W*CC_ATLAS_H] __attribute__((aligned(64)));
 static uint32_t cc_atlas_source,cc_atlas_params,cc_atlas_serial,cc_frame_updates,cc_last_capture;
 static unsigned cc_atlas_ready;
+#ifndef CC_INTERACTION_BUSY
+#define CC_INTERACTION_BUSY() 0
+#endif
+#ifndef CC_INTERACTION_NOTE
+#define CC_INTERACTION_NOTE() ((void)0)
+#endif
+static int cc_observed_area[CC_BUTTON_LIMIT][4];
+static uint32_t cc_observed_generation[CC_BUTTON_LIMIT];
 static void cc_button_event(void *event);
 
 #ifndef CHAOS_CC_BUTTONS_HOST
@@ -272,10 +280,32 @@ static void cc_update_pixels(int frame) {
 }
 static void cc_buttons_frame(void) {
     if(cc_working || !cc_wanted() || !cc_resources() || !cc_idle()) return;
+    // Observe geometry separately from published texture coordinates. Comparing
+    // only b->x/y would renew the gate forever while a stale texture is held.
+    uint32_t root=cc_root_slot();
+    unsigned geometry_moved=0;
+    for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
+        struct cc_button *b=&cc_buttons[i];
+        if(!b->object || !b->ready || b->root!=root || !cc_attached(b->object,root)) continue;
+        int area[4];cc_coords(b->object,area);
+        unsigned moved=0;
+        if(cc_observed_generation[i]==b->generation) {
+            for(unsigned j=0;j<4;++j) moved|=cc_observed_area[i][j]!=area[j];
+        } else moved=area[0]!=b->x || area[1]!=b->y ||
+            area[2]-area[0]+1!=(int)b->w || area[3]-area[1]+1!=(int)b->h;
+        for(unsigned j=0;j<4;++j) cc_observed_area[i][j]=area[j];
+        cc_observed_generation[i]=b->generation;
+        geometry_moved|=moved;
+    }
+    if(geometry_moved) CC_INTERACTION_NOTE();
+    if(CC_INTERACTION_BUSY()) return;
     cc_working=1;cc_update_pixels(1);cc_working=0;
 }
 static void cc_buttons_poll(void) {
     if(!cc_wanted() && !cc_resources()) return;
+    // DELETE still clears logical ownership immediately; off/cleanup bypasses
+    // this gate and retains all original fence/retirement protections.
+    if(cc_wanted() && CC_INTERACTION_BUSY()) return;
     /* Draw events use the native GPU image path and raw root identity. Bound
      * expensive integrity scans to one in eight owner polls when cached. */
     if(cc_wanted() && cc_scan_ticks && cc_root_slot()==cc_buttons[0].root) {

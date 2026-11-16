@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
 """Build the bounded PAN/lwIP/HTTP port and an exact linker response file."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 from firmware_symbols import DEFAULT_TARGET, load_target
 
 ROOT = Path(__file__).resolve().parents[1]
+
+def compile_cached(command, output, dependencies, force=False):
+    """Content/command cache; also verify the object itself before reusing it."""
+    key=hashlib.sha256(json.dumps([command,dependencies],sort_keys=True).encode()).hexdigest()
+    stamp=output.with_suffix('.cache.json')
+    if not force and output.is_file() and stamp.is_file():
+        try:
+            saved=json.loads(stamp.read_text())
+            if saved.get('key')==key and saved.get('object')==hashlib.sha256(output.read_bytes()).hexdigest(): return False
+        except (OSError,ValueError): pass
+    subprocess.run(command,check=True)
+    value={'key':key,'object':hashlib.sha256(output.read_bytes()).hexdigest()}
+    temporary=stamp.with_suffix('.tmp')
+    temporary.write_text(json.dumps(value,sort_keys=True)+'\n')
+    temporary.replace(stamp)
+    return True
 SOURCES = [
     "third_party/tinypan/src/tinypan_bnep.c",
     *[f"src/{name}.c" for name in (
@@ -39,16 +57,34 @@ def main():
     for include in ("include", "web", "ports/libc", "ports/lwip", "third_party/lwip/src/include"):
         flags.extend(["-I", str(source / include)])
     flags.extend(["-include", str(source / "include/tinypan_port.h"),
-                  "-include", str(target["symbol_dir"] / "firmware.h"),
-                  "-DCHAOS_BUILD_ID=" + json.dumps("Chaos " + os.environ.get("CHAOS_BUILD_TIME", "local build"))])
+                  "-include", str(target["symbol_dir"] / "firmware.h")])
+    compiler=os.environ.get("CC","clang")
+    resolved=Path(shutil.which(compiler) or compiler).resolve()
+    digest=hashlib.sha256()
+    digest.update(subprocess.check_output([compiler,'--version']))
+    digest.update(str((resolved,resolved.stat().st_mtime_ns,resolved.stat().st_size)).encode())
+    # Conservative closure: every source/header/web input, not timestamps.
+    # A changed shared header or firmware ABI invalidates all network objects.
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and 'build' not in path.relative_to(source).parts and '__pycache__' not in path.parts:
+            digest.update(path.relative_to(source).as_posix().encode());digest.update(path.read_bytes())
+    digest.update((target['symbol_dir']/'firmware.h').read_bytes())
+    dependencies=digest.hexdigest()
+    compiled=0
     objects = []
     for item in SOURCES:
         obj = output / (item.replace("/", "_")[:-2] + ".o")
-        subprocess.run([os.environ.get("CC", "clang"), *flags, "-c", str(source / item), "-o", str(obj)], check=True)
+        local_flags=list(flags)
+        # Only this translation unit uses the build ID. Changing the timestamp
+        # must not invalidate the other 36 unrelated translation units.
+        if item=='src/net_glue.c':
+            local_flags.append("-DCHAOS_BUILD_ID="+json.dumps("Chaos "+os.environ.get("CHAOS_BUILD_TIME","local build")))
+        compiled+=compile_cached([compiler,*local_flags,"-c",str(source/item),"-o",str(obj)],obj,dependencies,
+                                 os.environ.get('CHAOS_NO_C_CACHE')=='1')
         objects.append(obj)
     # lld response syntax preserves spaces. Never glob stale objects into the link.
     (output / "objects.rsp").write_text("\n".join(json.dumps(str(obj)) for obj in objects) + "\n")
-    print(f"network C OK: {len(objects)} objects", flush=True)
+    print(f"network C OK: {len(objects)} objects ({compiled} compiled, {len(objects)-compiled} verified cache hits)", flush=True)
 
 if __name__ == "__main__":
     main()

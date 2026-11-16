@@ -386,7 +386,7 @@ unsafe fn tick_busy() -> bool {
     || crate::desktop_scale::scrolling()
     || crate::honeycomb::busy()
     || crate::fw_api::dynamic_icon::pack_animation_busy()
-    || (st_rd!(SIM_LITE) == 0 && crate::appmgr::boot_pending())
+    // Boot retry deadlines run on idle ticks; waiting is not active work.
     || crate::terminal_ui::busy()
     || crate::connect_permission::pending()!=0
 }

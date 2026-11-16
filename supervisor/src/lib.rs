@@ -63,6 +63,7 @@ mod ipc;
 mod bridge_cfg;
 mod screen_rotation;
 mod quickapp_animation;
+mod cadence;
 mod quickapp_splash;
 mod quickapp_exit;
 mod touch_palm;

@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import struct
+import time
 from pathlib import Path
 
 from network_notices import network_notices
@@ -51,7 +52,9 @@ DEFAULT_NAME = "Chaos 安装器"
 
 def run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
     print("+", " ".join(cmd), flush=True)
+    started=time.perf_counter()
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
+    print(f"  completed in {time.perf_counter()-started:.2f}s",flush=True)
 
 
 def find_icon_python(repo: Path) -> str:
@@ -127,6 +130,7 @@ def build_icon(repo: Path, out: Path, size: int, python: str) -> None:
 
 
 def build_app_icons(repo: Path, python: str) -> None:
+    (repo / "supervisor/assets/app-icons").mkdir(parents=True, exist_ok=True)
     for name in ("dark-potato", "dark-icon"):
         run([python, str(repo / "tools/gen_chaos_icon.py"),
              str(repo / f"tools/app-icons/{name}.png"),

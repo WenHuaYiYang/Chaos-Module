@@ -22,6 +22,16 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
             tick(); // 首拍即显示，不等待背景采样倒计时。
             crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
             assert_eq!(MODE,visual as usize);
+            assert!(!GLASS_VALID); // moving/first frame never builds glass
+            if visual==0 {
+                for i in 0..120 {
+                    crate::state(|s|{s.anchor_y=Some(360+i%2);s.now+=16;});tick();
+                    assert!(!GLASS_VALID);
+                    crate::state(|s|{assert_eq!(s.samples,0);assert_eq!(s.fb_reads,0);});
+                }
+                crate::state(|s|{s.anchor_y=None;s.now+=16;});tick();
+            }
+            crate::state(|s|s.now+=160);tick();
             assert!(GLASS_VALID);
             crate::state(|s| {
                 assert_eq!(s.preference,[0,2,1][visual as usize]);
@@ -53,14 +63,19 @@ fn native_icons_are_not_replaced_and_glass_preserves_alpha() {
         toggle(); tick(); assert_eq!(VIEW,0);
         crate::state(|s|s.gpu_busy=true);
         toggle(); tick();
+        crate::state(|s|s.now+=160);tick();
         assert!(!GLASS_VALID);
         crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
-        assert!(GLASS_ATTEMPTED); // GPU忙碌也立即显示，不进入无限等待。
+        crate::state(|s|assert_eq!(s.fb_reads,0)); // GPU busy cannot fall back to fb0
         toggle(); tick();
-        crate::state(|s|{s.gpu_busy=false;s.unstable=true;});
+        crate::state(|s|{s.gpu_busy=false;s.cache_missing=true;});
         toggle(); tick();
-        assert!(!GLASS_VALID); // 两次取样不一致不能发布到玻璃层。
+        crate::state(|s|s.now+=160);tick();
+        assert!(!GLASS_VALID); // no source: controls still show, no display capture
         crate::state(|s|assert_eq!(s.flags.get(&VIEW).copied().unwrap_or(0)&1,0));
+        crate::state(|s|{s.cache_missing=false;s.now+=500;});tick();
+        assert!(GLASS_VALID); // source arrives later without hiding the controls
+        crate::state(|s|{assert_eq!(s.fb_reads,0);assert!(!s.invalidations.contains(&LAYER));});
         toggle(); tick();
         LOADED=false; assert!(!enabled());
     }
