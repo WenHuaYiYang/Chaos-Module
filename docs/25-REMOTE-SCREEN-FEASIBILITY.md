@@ -46,7 +46,7 @@
 | 销毁绘图缓冲 | `p67_blur_draw_buf_destroy` `0x0cac0db9` | 与 create 配对 |
 | 等 GPU 画完 | `p67_blur_gpu_finish` `0x0c187bb1` | 抓之前要 fence |
 
-证据见 [12-Canopus-地址手册.md](../../../docs/12-Canopus-地址手册.md) 的“手环截屏”一节，以及 [地址表.csv](../../../docs/地址表.csv) 的 `p67_blur_*` 行。注意这些是 **静态恢复、未真机调用** 的符号，第一次用必须有兜底。
+证据见 `12-Canopus-地址手册.md`（外部研究资料，未随仓库提供） 的“手环截屏”一节，以及 `地址表.csv`（外部研究资料，未随仓库提供） 的 `p67_blur_*` 行。注意这些是 **静态恢复、未真机调用** 的符号，第一次用必须有兜底。
 
 ### 2.2 触摸是可以注入的
 
@@ -88,7 +88,7 @@ AstroBox 侧也有正式接口：
 
 工作区里有两代结论：
 
-- 根目录 [05-网络通路.md](../../../docs/05-网络通路.md) 记录的是 `/dev/tun` 不存在、`net_tun_open` 返回 `ENOENT`。
+- 根目录 `05-网络通路.md`（外部研究资料，未随仓库提供） 记录的是 `/dev/tun` 不存在、`net_tun_open` 返回 `ENOENT`。
 - 但 `projects/chaos/chaos-fetch/` 已经补上了 TUN 模块，且当前安装器把 fetch 固定为启用（`chaos_installer.lua` 里 `fetch_enabled = true`）。该模块注册 `bt-net` 网卡、做 DHCP、DNS 拦截/解析；源码注释里有真机读数 `netdev_ready=1`、`ip_configured=1`、`dhcp_state=6`，并提到 HTTP fetch 已经能通。
 
 所以“手环完全没有 IP”已经过时。更准确的说法是：
@@ -367,8 +367,8 @@ CanopusConnect 事件方向。
 
 ## 9. 相关文档
 
-- [12-Canopus-地址手册.md](../../../docs/12-Canopus-地址手册.md)：截屏、GPU fence、draw buf 地址。
-- [地址表.csv](../../../docs/地址表.csv)：`p67_blur_*`、`lv_display_*`、`lv_obj_tree_walk`。
+- `12-Canopus-地址手册.md`（外部研究资料，未随仓库提供）：截屏、GPU fence、draw buf 地址。
+- `地址表.csv`（外部研究资料，未随仓库提供）：`p67_blur_*`、`lv_display_*`、`lv_obj_tree_walk`。
 - [24-FILE-BRIDGE.md](24-FILE-BRIDGE.md)：现有 CanopusConnect/L2 桥。
 - [ARCHITECTURE.md](ARCHITECTURE.md)：Chaos 模块、定时器、页面模型。
 - [LVGL-MAP.md](LVGL-MAP.md)：LVGL 类与函数地址。
@@ -376,5 +376,5 @@ CanopusConnect 事件方向。
 - [chaos-bandpack](https://github.com/WenHuaYiYang/chaos-bandpack)：配套 Android 制作台（当前只做包，不做传输）。
 - [chaos-bandpack AndroidManifest](https://github.com/WenHuaYiYang/chaos-bandpack/blob/master/app/src/main/AndroidManifest.xml)：确认当前无蓝牙/网络权限。
 - [chaos-bandpack ChaosApp.kt](https://github.com/WenHuaYiYang/chaos-bandpack/blob/master/app/src/main/kotlin/com/chaos/bandpack/ui/ChaosApp.kt)：`Dest` 路由与 `NavCapsule`，新增屏幕页的入口。
-- [05-网络通路.md](../../../docs/05-网络通路.md)：早期 `/dev/tun` 结论（已被 fetch 模块部分更新）。
+- `05-网络通路.md`（外部研究资料，未随仓库提供）：早期 `/dev/tun` 结论（已被 fetch 模块部分更新）。
 - AstroBox：[CanopusConnect WIT](https://github.com/AstralSightStudios/AstroBox-Plugin-WIT/blob/main/deps/astrobox-psys-host-v4.wit)、[插件开发](https://abox.run/docs/plugin-development/v4)、[HTTP server](https://abox.run/docs/plugin-development/v4/host-api/http-server)。
