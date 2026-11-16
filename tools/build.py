@@ -130,6 +130,7 @@ def build_icon(repo: Path, out: Path, size: int, python: str) -> None:
 
 
 def build_app_icons(repo: Path, python: str) -> None:
+    (repo / "supervisor/assets/app-icons").mkdir(parents=True, exist_ok=True)
     for name in ("dark-potato", "dark-icon"):
         run([python, str(repo / "tools/gen_chaos_icon.py"),
              str(repo / f"tools/app-icons/{name}.png"),
