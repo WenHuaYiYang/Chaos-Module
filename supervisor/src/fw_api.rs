@@ -58,6 +58,11 @@ pub const MAX_ROWS_PER_PAGE: usize = crate::state::MAX_ROWS_PER_PAGE;
 pub mod align;
 pub(crate) mod honeycomb;
 pub(crate) mod dynamic_icon;
+pub(crate) mod floating_ball;
+mod battery;
+pub(crate) use battery::battery_percent;
+mod navigation;
+pub(crate) use navigation::floating_ball_home;
 
 /// 事件码（与固件自带界面的 `EVENT_*` 常量同值）
 pub mod ev {

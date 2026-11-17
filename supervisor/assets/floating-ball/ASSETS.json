@@ -1,0 +1,26 @@
+{
+  "font_source": "https://github.com/notofonts/noto-cjk/tree/main/Sans",
+  "font_license": "OFL.txt",
+  "font_subset_family": "Chaos Arc UI",
+  "chars": "0123456789:imnt亮动屏常度录截束盘结翻自表转震",
+  "mask_sampling": 4,
+  "battery_stroke": {
+    "start": "bottom",
+    "closed_track": true,
+    "sweep_degrees": 360,
+    "moving_end": "hollow dot",
+    "style": "flat solid colours",
+    "bevel": false,
+    "shadow": false
+  },
+  "sizes": [
+    32,
+    72
+  ],
+  "sha256": {
+    "arc-masks.bin": "bf800f16818df530f1d42ffb76398b934c7d0ae797f624f95aac1f9f48a1c974",
+    "glyphs.bin": "40a750955d94bc5a9174600fb53fd78514246bfe6a4af7806d910e3d819ee53c",
+    "sphere.bgra": "993457d5ff054c54cbc4e47e6f05c7ebed5962ed9bb14117cbceeafb0045f968",
+    "battery-stroke.a8": "3995af902b48d3bab173101e8c6ab33ff3fefc4017f3687a7a36eefbbd8489d8"
+  }
+}

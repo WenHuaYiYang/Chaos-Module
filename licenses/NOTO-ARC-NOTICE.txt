@@ -1,0 +1,10 @@
+Chaos Arc UI glyph subset
+
+Based on Noto Sans CJK SC Regular.
+Copyright: © 2014-2021 Adobe (http://www.adobe.com/).
+Source: https://github.com/notofonts/noto-cjk/tree/main/Sans
+License: SIL Open Font License 1.1.
+
+Chaos modifications: a character subset renamed Chaos Arc UI; glyph coverage
+is rasterized for the floating ball's curved labels. The font subset, atlas
+generator and license are included in supervisor/assets/floating-ball/.

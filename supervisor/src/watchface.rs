@@ -389,6 +389,7 @@ unsafe fn tick_busy() -> bool {
     // Boot retry deadlines run on idle ticks; waiting is not active work.
     || crate::terminal_ui::busy()
     || crate::connect_permission::pending()!=0
+    || crate::floating_ball::busy()
 }
 
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。
@@ -496,6 +497,8 @@ unsafe fn tick_pages(lite: bool) {
     }
     // 2.5 进入微动效推进(只动前台页 content 的 y; 不满足条件时内部立即归零)
     crate::page::motion::tick();
+    // Global top-layer ball runs even when another native/quick application is foreground.
+    crate::floating_ball::tick();
     // 2.6 桌面图标缩放(与页面无关: 固件 launcher 桌面不是我们的页, 前台页 tick 不会跑到)
     if !lite {
         crate::desktop_scale::tick();

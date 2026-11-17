@@ -11,6 +11,7 @@ fn reset() {
     FPS.store(0, Ordering::Relaxed); CONSTRAINED.store(false, Ordering::Relaxed);
     LIMITED.store(false, Ordering::Relaxed);
     REQUEST_SETTINGS.store(0, Ordering::Relaxed); SHOT_STORAGE.store(0, Ordering::Relaxed);
+    SHOT_IMMEDIATE.store(false, Ordering::Relaxed);
     crate::capture_settings::reset_for_test(); unsafe { crate::capture_page::reset_for_test(); }
 }
 fn check_clean() { world(|w| { assert!(w.handles.is_empty()); assert!(w.allocations.is_empty()); assert_eq!(w.readers, 0); }); }
@@ -22,6 +23,26 @@ fn save_fixture(name: &str) { world(|w| {
         std::fs::write(std::path::Path::new(&dir).join(name), data).unwrap();
     }
 }); }
+
+#[test]
+fn immediate_screenshot_captures_visible_screen_without_waiting_for_power_off() {
+    reset(); let mut worker = Worker::new();
+    assert_eq!(request_shot_now(), Ok(())); assert_eq!(shot_state(), 1);
+    unsafe { worker.step(); }
+    assert_eq!(shot_state(), 3); assert_eq!(shot_error(), 0); assert_eq!(file_count(".bmp"), 1);
+    world(|w| assert!(w.on)); check_clean();
+}
+
+#[test]
+fn immediate_screenshot_never_steals_an_existing_one_shot_or_captures_after_sleep() {
+    reset(); let mut worker = Worker::new(); toggle_shot();
+    assert_eq!(request_shot_now(), Err(-16)); assert_eq!(shot_state(), 1);
+    unsafe { worker.step(); } assert_eq!(file_count(".bmp"), 0);
+    toggle_shot(); assert_eq!(shot_state(), 0); assert_eq!(request_shot_now(), Ok(()));
+    world(|w| w.on = false); unsafe { worker.step(); }
+    assert_eq!(shot_state(), 0); assert_eq!(shot_error(), -125);
+    world(|w| w.on = true); unsafe { worker.step(); } assert_eq!(file_count(".bmp"), 0); check_clean();
+}
 
 #[test]
 fn apng_sixty_vsync_frames_have_exact_one_second_duration() {
