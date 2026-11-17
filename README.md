@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/version-v1.2.5-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.6-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -29,6 +29,7 @@ Chaos 把一组 Rust 编写的原生页面注册进小米手环 10 Pro 的固件
 
 ## 特性
 
+- **陀螺仪触控点**：设置 → 触控点进入三级列表，内含启用开关、25%～300% 移动灵敏度、300～5000ms 点击确认时间和1～30px点击位移容差；20px圆心、48px绿色进度环，转腕移动、停稳点击、碰边立即同向滑动；切页回中后暂停0～10秒可调（默认2秒），无需静止，支持实体触摸接管和息屏暂停（[说明与验证边界](docs/GYRO-POINTER.md)）。
 - **灵动点功能球**：默认关闭的全局悬浮快捷菜单，支持电量显示、贴边拖动、时间、常亮、亮度调节、截屏及可配置快捷项（[使用与验证](docs/FLOATING-BALL.md)）。
 - **应用管理**：隐藏/显示、一键批量、排除项；普通/深度隐藏两种模式（[说明](docs/APP-MANAGER.md)）。
 - **系统美化**：字体切换、静态/动态图标包、系统模糊、表盘通透背景。动态图标包兼容原 CIPK 投递格式，当前可见动态图标全部播放（[制作与协议](docs/ICON-PACKS.md)）。
@@ -88,7 +89,7 @@ python3 tools/build.py --firmware 10p-3.101.043 --no-icons --skip-fetch  # 已�
 
 文档索引：[docs/README.md](docs/README.md)。当前修复与取舍见 [性能说明](docs/PERFORMANCE.md)，提交与推送见 [开发工作流](docs/DEVELOPMENT.md)，回归命令见 [测试指南](docs/TESTING.md)。
 
-本 fork 基于上游开发；模块、容器头与徽章已统一为 **v1.2.5**。发布内容和验证范围见 [更新日志](docs/CHANGELOG.md)，版本规则见 [构建指南](docs/BUILD.md#版本号规则)。
+本 fork 基于上游开发；模块、容器头与徽章已统一为 **v1.2.6**。发布内容和验证范围见 [更新日志](docs/CHANGELOG.md)，版本规则见 [构建指南](docs/BUILD.md#版本号规则)。
 
 ## 贡献
 

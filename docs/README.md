@@ -13,6 +13,7 @@
 | [应用管理](APP-MANAGER.md) | 隐藏模式、排除项与固件限制 |
 | [蜂窝列表](HONEYCOMB.md) | 拖动、缩放、编辑与实验边界 |
 | [灵动点](FLOATING-BALL.md) | 全局悬浮球、快捷菜单、常亮与亮度调节 |
+| [陀螺仪触控点](GYRO-POINTER.md) | 单手转腕移动、停留点击、边缘滑动及可调参数 |
 | [截屏与录屏](CAPTURE.md) | 格式、存储目录与文件管理 |
 | [图标包](ICON-PACKS.md) / [应用图标](DYNAMIC-ICON.md) | 投递格式与 Chaos 自身图标选择 |
 | [上次充电](LAST-CHARGE.md) / [屏幕旋转](SCREEN-ROTATION.md) / [键盘](KEYBOARD.md) | 专项功能说明 |

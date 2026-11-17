@@ -50,7 +50,14 @@ mod dimmer_timeout {
     }
 }
 
-mod page { pub mod blur_params {
+mod page { pub mod gyro_pointer {
+    pub unsafe fn title() -> &'static [u8] {"点击确认时间（毫秒）\0".as_bytes()}
+    pub unsafe fn error_text() -> *const u8 {"请输入300～5000毫秒\0".as_ptr()}
+    pub unsafe fn save(text:*const u8)->bool {
+        let bytes=std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
+        crate::mock::with(|ui| {ui.saves.push((8,bytes));ui.save_ok})
+    }
+} pub mod blur_params {
     pub unsafe fn title() -> &'static [u8] {b"Blur parameter\0"}
     pub unsafe fn error_text() -> *const u8 {b"1~40\0".as_ptr()}
     pub unsafe fn save(text:*const u8)->bool {

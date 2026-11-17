@@ -109,11 +109,11 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 源码版本、容器头、锁文件和中英文徽章发版时应同步。
 
-> 当前版本 **v1.2.5**：`Cargo.toml` / `Cargo.lock`、两个打包器的 `VERSION = 0x00010205` 和中英文徽章已对齐。此前模块 1.2.4 / 容器头 1.2.1 的差异在此版本消除；仍需用提交 ID 标识对应源码。
+> 当前版本 **v1.2.6**：`Cargo.toml` / `Cargo.lock`、两个打包器的 `VERSION = 0x00010206` 和中英文徽章已对齐。此前模块 1.2.4 / 容器头 1.2.1 的差异在此版本消除；仍需用提交 ID 标识对应源码。
 
 | 位置 | 形式 | 说明 |
 |---|---|---|
-| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010205` = **v1.2.5**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
+| `tools/p67_pack.py` / `tools/p67_pack.js` 的 `VERSION` | `0x000X0Y0Z` | 两个打包入口的容器头版本一致，`0x00010206` = **v1.2.6**（高 16 位主版本、次 8 位次版本、低 8 位修订号） |
 | `supervisor/Cargo.toml` 的 `version` | `X.Y.Z` | 关于页通过 `env!("CARGO_PKG_VERSION")` 自动读取，无需手改 |
 | `supervisor/Cargo.lock` 的 `chaos_sup` 版本 | `X.Y.Z` | 与模块清单保持一致 |
 | `README.md` / `README.en.md` 的版本徽章 | `vX.Y.Z` | 中英文项目入口保持一致 |
@@ -137,6 +137,7 @@ p67_pack.py             ko + 图标 + main.lua → p67 容器
 
 1. 安装 nightly 工具链（`dtolnay/rust-toolchain@nightly`，未钉版本）；
 2. 执行 `python3 tools/test_honeycomb.py`，运行蜂窝布局/控制器主机回归；
+   同时执行 `python3 tools/test_gyro_pointer.py` 和 `sh tools/test_keyboard.sh`，验证触控点方向/大小、灵敏度、确认时间、虚拟输入生命周期、配置迁移和数字键盘；固件 ARM 探针需要另备指定 AP，见 [GYRO-POINTER.md](GYRO-POINTER.md)。
 3. 执行两项图标单选、默认动态/配置升级、193 帧 GIF 及 96×96 原版图标回归；
    图标投递回归执行 `tools/test_icon_pack.py`，需要 `tools/requirements-test.txt` 中的 Lupa，验证真实 Lua 脚本与流式播放器；
 4. 执行截图/录屏回归与 `CC=cc python3 tools/test_corona_blur.py` 背景协作回归；

@@ -11,7 +11,7 @@ A kernel module plus a Lua installer that registers native pages through the fir
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#compatibility)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#compatibility)
-[![Release](https://img.shields.io/badge/version-v1.2.5-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.6-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -30,6 +30,7 @@ apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 
 ## Features
 
+- **Gyroscope cursor**: Settings → Cursor offers an enable switch, 25–300% movement sensitivity, a 300–5000ms click confirmation time and 1–30px click displacement tolerance. A 20px dot and 48px green ring show dwell clicks; touching an edge immediately swipes toward that edge. Page changes recenter the cursor and pause it for a configurable 0–10 seconds (default 2), without requiring a stationary wrist, with physical-touch priority and screen-off suspension ([behavior and verification limits](docs/GYRO-POINTER.md)).
 - **Floating function ball**: an opt-in global overlay with battery status, edge docking, a clock, keep-awake controls, brightness adjustment, screenshots and configurable shortcuts ([usage and verification](docs/FLOATING-BALL.md)).
 - **App manager**: hide/show, batch actions, exclusions, and normal / deep hiding modes ([details](docs/APP-MANAGER.md)).
 - **Customization**: fonts, static/animated home-screen icon packs, system blur, translucent watchface background. Animated packs keep legacy CIPK compatibility and play all visible animated icons ([delivery guide and format](docs/ICON-PACKS.md)).
@@ -88,7 +89,7 @@ Dependencies, pipeline, versioning and release checklist: **[docs/BUILD.md](docs
 
 Documentation index: [docs/README.md](docs/README.md). See [current performance](docs/PERFORMANCE.md), [development workflow](docs/DEVELOPMENT.md) and [testing](docs/TESTING.md) (Chinese).
 
-This fork builds on the upstream project. The module, container and badge versions are aligned at **v1.2.5**. See the [changelog](docs/CHANGELOG.md) for changes and validation limits, and [versioning](docs/BUILD.md#版本号规则) for release rules.
+This fork builds on the upstream project. The module, container and badge versions are aligned at **v1.2.6**. See the [changelog](docs/CHANGELOG.md) for changes and validation limits, and [versioning](docs/BUILD.md#版本号规则) for release rules.
 
 ## Contributing
 

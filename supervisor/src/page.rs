@@ -21,6 +21,7 @@ mod watchface;
 mod settings;
 mod beautify;
 pub(crate) mod blur_params;
+pub(crate) mod gyro_pointer;
 mod appmgr;
 mod about;
 mod system;
