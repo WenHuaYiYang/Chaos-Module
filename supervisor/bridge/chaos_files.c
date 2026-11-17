@@ -82,8 +82,9 @@ static uint8_t android_client,android_forced,connect_auth,access_granted;
 static uint32_t connect_token,connect_started;
 static uint32_t client_policy(void){return android_client?chaos_connect_android_policy():chaos_connect_plugin_policy();}
 static uint32_t client_mask(void){return android_client?chaos_connect_android_mask():chaos_connect_plugin_mask();}
+static uint8_t pack_state;static uint32_t pack_token;
 static void publish_state(void){chaos_connect_state(g_connected|(uint32_t)g_dev_mode<<1|(uint32_t)auth_state<<2|
-    (uint32_t)android_client<<5|(uint32_t)connect_auth<<6,connect_auth==1?connect_token:auth_token);}
+    (uint32_t)android_client<<5|(uint32_t)connect_auth<<6|(uint32_t)(pack_state==1)<<9,pack_state==1?pack_token:connect_auth==1?connect_token:auth_token);}
 void cc_files_set_android(uint32_t value){android_forced=!!value;}
 static uint32_t next_token(void){auth_serial=(auth_serial+1)&0x3fffffffu;if(!auth_serial)auth_serial++;return auth_serial;}
 
@@ -244,8 +245,10 @@ static int ccf_write_allowed(const char *path)
     if(ccf_under(path,"/data/chaos/connect-permissions.cfg")||
        ccf_under(path,"/data/chaos/connect-permissions.tmp")||
        ccf_under(path,"/data/chaos/connect-plugin.cfg")||ccf_under(path,"/data/chaos/connect-plugin.tmp")||
+       ccf_under(path,"/data/chaos/connect-install.cfg")||ccf_under(path,"/data/chaos/connect-install.tmp")||
        ccf_under(path,"/data/chaos/connect-android.cfg")||ccf_under(path,"/data/chaos/connect-android.tmp")||
        ccf_under("/data/chaos/connect-permissions.cfg",path))return 0;
+    if(android_client&&(ccf_under(path,"/data/chaos/font")||ccf_under(path,"/data/chaos/icons")))return 0;
     if (g_dev_mode) return 1;
     return ccf_under(path, "/data");
 }
@@ -307,7 +310,7 @@ static void ccf_send(uint8_t op,uint16_t req,uint8_t status,const uint8_t *paylo
  if(op==CCF_OP_READ&&status==0)g_read_transferred+=plen;
  if(op==0x31&&status==0)benchmark_bytes+=plen;
  if(status==0&&queued>=0){
-  if(op==CCF_OP_PING||op==0x42||op==0x52)return; /* Polling is presence, not a user file operation. */
+  if(op==CCF_OP_PING||op==0x42||op==0x52||op==0x61||op==0x63)return; /* Polling is presence, not a user file operation. */
   if(op==CCF_OP_READ&&audit_offset!=0&&audit_offset/65536==(audit_offset+plen)/65536&&audit_offset+plen<g_read_size&&plen==audit_length)return;
   if(op==CCF_OP_WRITE&&audit_offset!=0&&audit_offset/65536==(audit_offset+audit_length)/65536&&g_write_written<g_write_expected)return;
   if(op==0x31&&benchmark_bytes!=plen&&(benchmark_bytes-plen)/262144==benchmark_bytes/262144)return;
@@ -336,8 +339,9 @@ static void ccf_discard_write(void){
  g_write_temp[0]=g_write_target[0]=0;g_write_expected=g_write_written=g_write_reported=0;g_write_crc=0xffffffffu;
 }
 #include "chaos_terminal.inc"
+#include "chaos_package.inc"
 void cc_files_reset(void){
- ccf_terminal_stop();
+ ccf_terminal_stop();ccp_reset();
  if(g_read_fd>=0){audit_used=0;audit_text("会话结束/重置：关闭读取文件");audit_path(g_read_target);chaos_connect_log(audit_context);}
  if(g_write_fd>=0){audit_used=0;audit_text("会话结束/重置：取消未提交写入并清理临时文件");audit_path(g_write_target);chaos_connect_log(audit_context);}
  ccf_close_read();ccf_discard_write();g_dev_mode=0;benchmark_bytes=0;
@@ -374,7 +378,7 @@ int cc_files_tick(uint32_t now){
     chaos_connect_log(decision==1?"用户在手环允许插件启用开发者模式":"用户在手环拒绝插件启用开发者模式");}
   }
  }
- publish_state();return 0;
+ ccp_tick(now);publish_state();return 0;
 }
 void cc_files_set_chunk(uint16_t chunk){g_chunk=chunk>0&&chunk<=CC_CHUNK?chunk:CC_CHUNK;}
 static uint32_t ccf_crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
@@ -432,7 +436,7 @@ static void ccf_handle_hello(uint16_t req)
     uint32_t n = 0;
     out[n++] = CCF_PROTO_VERSION;
     ccf_put_u16(&out[n], g_chunk); n += 2u;
-    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | 16u); /* status/authorization support */
+    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | 16u | 32u); /* status/authorization support */
     out[n++] = g_dev_mode;
     ccf_put_u16(&out[n], (uint16_t)CCF_MAX_PATH); n += 2u;
     ccf_put_u32(&out[n], CC_WINDOW); n += 4u;
@@ -959,6 +963,7 @@ void cc_files_dispatch(const struct cc_frame *frame)
      if(op==CCF_OP_COPY)need|=2;
      if(!chaos_bridge_enabled() || !access_granted || client_policy()==CCF_POLICY_DENY || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
     }
+    if(op>=0x60&&op<=0x66){ccp_dispatch(op,req,p,plen);return;}
     switch (op) {
     case 0x50:case 0x51:case 0x52:case 0x53:ccf_terminal_dispatch(op,req,p,plen);break;
     case 0x42: {

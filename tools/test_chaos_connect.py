@@ -409,7 +409,7 @@ class MemoryLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-permission-') as work:
             binary=Path(work)/'permissions'
             subprocess.run(['rustc','--edition=2021',str(ROOT/'supervisor/tests/connect_permission_harness.rs'),'-o',str(binary)],check=True)
-            for case in ['nsh','default','invalid','persist','mailbox','prompt','android','android-load','android-invalid','plugin','plugin-load','plugin-invalid']:
+            for case in ['install','nsh','default','invalid','persist','mailbox','prompt','android','android-load','android-invalid','plugin','plugin-load','plugin-invalid']:
                 subprocess.run([str(binary),case],check=True)
     def test_ring_wrap_pagination_clear_and_utf8(self):
         with tempfile.TemporaryDirectory(prefix='chaos-connect-log-') as work:

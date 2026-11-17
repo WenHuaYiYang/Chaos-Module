@@ -4,6 +4,7 @@ static mut OBJECT:u32=0;
 static mut TOP:u32=0;
 static mut TOKEN:u32=0;
 static mut ALERTED:u32=0;
+static mut INSTALL_TEXT:[u8;128]=[0;128];
 static mut BUTTONS:[u32;10]=[0;10];
 unsafe fn close(){
     let old=OBJECT;OBJECT=0;TOKEN=0;
@@ -42,7 +43,12 @@ pub(crate) unsafe fn tick(){
     if !safe_ptr(mb){TOP=0;permission::decide(token,false);crate::connect_log::line("授权弹窗创建失败，拒绝请求");return;}
     OBJECT=mb;TOKEN=token;
     BUTTONS=[0;10];BUTTONS[0]=(deny as *const ()as u32)|1;BUTTONS[5]=(allow as *const ()as u32)|1;
-    fw::msgbox_fill(mb,5,0,if permission::prompt_is_connection(){if permission::state()&(1<<5)!=0 {"是否允许 Android ChaosConnect 连接？\n可用权限由手环设置决定。\0".as_ptr()}else{"是否允许插件连接 ChaosConnect？\n可用权限由手环设置决定。\0".as_ptr()}}
+    if permission::prompt_is_install(){
+        let prefix="是否允许Android端安装投递包：".as_bytes();let mut name=[0;13];permission::install_name(&mut name);
+        INSTALL_TEXT=[0;128];INSTALL_TEXT[..prefix.len()].copy_from_slice(prefix);
+        let n=name.iter().position(|v|*v==0).unwrap_or(12);INSTALL_TEXT[prefix.len()..prefix.len()+n].copy_from_slice(&name[..n]);
+    }
+    fw::msgbox_fill(mb,5,0,if permission::prompt_is_install(){core::ptr::addr_of!(INSTALL_TEXT).cast()}else if permission::prompt_is_connection(){if permission::state()&(1<<5)!=0 {"是否允许 Android ChaosConnect 连接？\n可用权限由手环设置决定。\0".as_ptr()}else{"是否允许插件连接 ChaosConnect？\n可用权限由手环设置决定。\0".as_ptr()}}
         else if permission::state()&(1<<5)!=0 {"是否允许 Android 启用开发者模式？\0".as_ptr()}
         else {"是否允许插件启用开发者模式？\0".as_ptr()},0,core::ptr::addr_of!(BUTTONS).cast(),2);
     fw::obj_add_event(mb,deleted as *const ()as u32,36,0);

@@ -23,6 +23,10 @@ uint32_t chaos_connect_android_policy(void){return android_policy;}
 uint32_t chaos_connect_android_mask(void){return android_mask;}
 void cc_test_android(uint32_t forced,uint32_t pol,uint32_t mask){cc_files_set_android(forced);android_policy=pol;android_mask=mask;}
 static uint32_t policy,now_ms=100,decision_token,decision,state_flags,state_token;
+static uint32_t install_policy=2;
+uint32_t chaos_connect_install_policy(void){return install_policy;}
+void cc_test_install_policy(uint32_t v){install_policy=v;}
+void chaos_connect_install_name(const uint8_t *p,uint32_t n){(void)p;(void)n;}
 uint32_t chaos_connect_policy(void){return policy;}
 uint32_t chaos_connect_now_ms(void){return now_ms;}
 uint32_t chaos_connect_take_decision(uint32_t token){uint32_t d=decision;decision=0;return token==decision_token?d:0;}

@@ -69,6 +69,8 @@ unsafe fn policy_text()->*const u8{match permission::policy(){0=>"开启\0".as_p
 static mut POLICY_KIND:u32=0;
 unsafe fn open_developer_policy(){POLICY_KIND=0;nav_goto(Pid::ConnectDevPolicy as u32,0);}
 unsafe fn open_android_policy(){POLICY_KIND=1;nav_goto(Pid::ConnectDevPolicy as u32,0);}
+unsafe fn open_install_policy(){POLICY_KIND=3;nav_goto(Pid::ConnectDevPolicy as u32,0);}
+unsafe fn install_policy_text()->*const u8{["开启\0","关闭\0","询问\0"][permission::install_policy().min(2)as usize].as_ptr()}
 unsafe fn open_plugin_policy(){POLICY_KIND=2;nav_goto(Pid::ConnectDevPolicy as u32,0);}
 static PERMISSION_ROWS:&[RowModel]=&[
     RowModel::nav("Android端权限\0".as_bytes(),Pid::AndroidPermissions as u32),
@@ -88,17 +90,18 @@ impl kit::checklist::CheckSpec for PolicyPage{
     fn count(&self)->usize{3}
     unsafe fn label(&self,i:usize)->*const u8{["开启\0","关闭\0","询问\0"][i.min(2)].as_ptr()}
     fn trailing(&self)->u32{fw_api::trailing::RADIO}
-    unsafe fn selected(&self,i:usize)->bool{(match POLICY_KIND{1=>permission::android_policy(),2=>permission::plugin_policy(),_=>permission::policy()})==i as u32}
-    unsafe fn choose(&self,i:usize){match POLICY_KIND {1=>permission::set_android(i as u32,permission::android_mask()),2=>permission::set_plugin(i as u32,permission::plugin_mask()),_=>permission::set_policy(i as u32)}}
+    unsafe fn selected(&self,i:usize)->bool{(match POLICY_KIND{1=>permission::android_policy(),2=>permission::plugin_policy(),3=>permission::install_policy(),_=>permission::policy()})==i as u32}
+    unsafe fn choose(&self,i:usize){match POLICY_KIND {1=>permission::set_android(i as u32,permission::android_mask()),2=>permission::set_plugin(i as u32,permission::plugin_mask()),3=>permission::set_install_policy(i as u32),_=>permission::set_policy(i as u32)}}
 }
 impl Page for PolicyPage{
     fn on_enter(&self){unsafe{permission::load();}}
-    fn fill_title(&self,p:*mut u8){unsafe{put_str(p,match POLICY_KIND{1=>"允许Android连接\0".as_bytes(),2=>"允许插件连接\0".as_bytes(),_=>"开发者模式二次确认\0".as_bytes()});}}
+    fn fill_title(&self,p:*mut u8){unsafe{put_str(p,match POLICY_KIND{1=>"允许Android连接\0".as_bytes(),2=>"允许插件连接\0".as_bytes(),3=>"安装资源包\0".as_bytes(),_=>"开发者模式二次确认\0".as_bytes()});}}
     fn render(&self,c:&PageCtx)->PageResult{unsafe{
         let last=kit::checklist::render(self,c)?;
         kit::section::note_label(c.content,last,match POLICY_KIND {
             1=>"开启：允许Android连接。\n关闭：立即撤销Android访问。\n询问：每次连接需手环确认，60秒未确认拒绝。\0".as_bytes(),
             2=>"开启：允许插件连接。\n关闭：立即撤销插件访问。\n询问：每次连接需手环确认，60秒未确认拒绝。\0".as_bytes(),
+            3=>"开启：允许Android安装投递包。关闭：禁止安装并取消当前任务。询问：每个投递包需手环确认名称，60秒未确认拒绝。只安装字体和图标资源，不执行包内脚本。\0".as_bytes(),
             _=>"两端共用的开发者模式二次确认策略。客户端还必须具备各自的开发者模式权限。开启：允许请求。关闭：撤销开发者模式。询问：每次启用需在手环确认。\0".as_bytes()
         });Ok(())
     }}
@@ -120,6 +123,7 @@ mobile_permission!(DEV_DEF,dev_allowed,toggle_dev,permission::DEVELOPER);
 mobile_permission!(NSH_DEF,nsh_allowed,toggle_nsh,permission::NSH);
 mobile_permission!(CONTROL_DEF,control_allowed,toggle_control,permission::CONTROL);
 static ANDROID_ROWS:&[RowModel]=&[
+    RowModel{label:"安装资源包\0".as_bytes(),sub:RowSub::Dyn(install_policy_text),kind:kit::RowKind::Fn(open_install_policy),trailing:0,refresh:None},
     RowModel{label:"允许Android连接\0".as_bytes(),sub:RowSub::Dyn(connection_policy_text),kind:kit::RowKind::Fn(open_android_policy),trailing:0,refresh:None},
     RowModel::toggle("读取文件\0".as_bytes(),&READ_DEF),
     RowModel::toggle("写入文件\0".as_bytes(),&WRITE_DEF),

@@ -2,7 +2,7 @@
 #![allow(dead_code,static_mut_refs)]
 use std::sync::Mutex;
 #[derive(Default)]
-struct Fixture{config:Option<Vec<u8>>,temp:Vec<u8>,android:Option<Vec<u8>>,android_temp:Vec<u8>,plugin:Option<Vec<u8>>,plugin_temp:Vec<u8>,fault:u8,on:bool,shown:bool,other:bool,wakes:u32,vibrations:u32,creates:u32,prompt:String,logs:Vec<String>}
+struct Fixture{install:Option<Vec<u8>>,install_temp:Vec<u8>,config:Option<Vec<u8>>,temp:Vec<u8>,android:Option<Vec<u8>>,android_temp:Vec<u8>,plugin:Option<Vec<u8>>,plugin_temp:Vec<u8>,fault:u8,on:bool,shown:bool,other:bool,wakes:u32,vibrations:u32,creates:u32,prompt:String,logs:Vec<String>}
 static FIX:Mutex<Option<Fixture>>=Mutex::new(None);
 fn with<T>(f:impl FnOnce(&mut Fixture)->T)->T{f(FIX.lock().unwrap().as_mut().unwrap())}
 const TOP:u32=0x20051000;const MODAL:u32=0x20052000;const OTHER:u32=0x20053000;
@@ -18,21 +18,22 @@ mod fw_api{
     pub fn capture_now_ms()->u32{100}
     pub unsafe fn open(path: *const u8,flags:u32,_:u32)->i32{
         let path=std::ffi::CStr::from_ptr(path.cast()).to_bytes();
-        let android=path.windows(7).any(|s|s==b"android");let plugin=path.windows(6).any(|s|s==b"plugin");
-        super::with(|f|if plugin {if flags&2!=0{f.plugin_temp.clear();6}else if f.plugin.is_some(){5}else{-1}}else if android {if flags&2!=0{f.android_temp.clear();4}else if f.android.is_some(){3}else{-1}}
+        let install=path.windows(7).any(|s|s==b"install");let android=path.windows(7).any(|s|s==b"android");let plugin=path.windows(6).any(|s|s==b"plugin");
+        super::with(|f|if install {if flags&2!=0{f.install_temp.clear();8}else if f.install.is_some(){7}else{-1}}else if plugin {if flags&2!=0{f.plugin_temp.clear();6}else if f.plugin.is_some(){5}else{-1}}else if android {if flags&2!=0{f.android_temp.clear();4}else if f.android.is_some(){3}else{-1}}
             else if flags&2!=0{f.temp.clear();2}else if f.config.is_some(){1}else{-1})
     }
     pub unsafe fn read(fd:i32,p:*mut u8,n:u32)->i32{super::with(|f|{
-        let b=if fd==5{f.plugin.as_ref().unwrap()}else if fd==3{f.android.as_ref().unwrap()}else{f.config.as_ref().unwrap()};let len=b.len().min(n as usize);core::ptr::copy_nonoverlapping(b.as_ptr(),p,len);len as i32
+        let b=if fd==7{f.install.as_ref().unwrap()}else if fd==5{f.plugin.as_ref().unwrap()}else if fd==3{f.android.as_ref().unwrap()}else{f.config.as_ref().unwrap()};let len=b.len().min(n as usize);core::ptr::copy_nonoverlapping(b.as_ptr(),p,len);len as i32
     })}
     pub unsafe fn write(fd:i32,p:*const u8,n:u32)->i32{super::with(|f|{
-        let len=if f.fault==1{2}else{n as usize};if fd==6{f.plugin_temp.extend_from_slice(core::slice::from_raw_parts(p,len));}else if fd==4{f.android_temp.extend_from_slice(core::slice::from_raw_parts(p,len));}else{f.temp.extend_from_slice(core::slice::from_raw_parts(p,len));}len as i32
+        let len=if f.fault==1{2}else{n as usize};if fd==8{f.install_temp.extend_from_slice(core::slice::from_raw_parts(p,len));}else if fd==6{f.plugin_temp.extend_from_slice(core::slice::from_raw_parts(p,len));}else if fd==4{f.android_temp.extend_from_slice(core::slice::from_raw_parts(p,len));}else{f.temp.extend_from_slice(core::slice::from_raw_parts(p,len));}len as i32
     })}
     pub unsafe fn close(_:i32)->i32{super::with(|f|if f.fault==3{-1}else{0})}
     pub unsafe fn capture_rename(path: *const u8,_: *const u8)->i32{
-        let p=std::ffi::CStr::from_ptr(path.cast()).to_bytes();let android=p.windows(7).any(|s|s==b"android");let plugin=p.windows(6).any(|s|s==b"plugin");
+        let p=std::ffi::CStr::from_ptr(path.cast()).to_bytes();let install=p.windows(7).any(|s|s==b"install");let android=p.windows(7).any(|s|s==b"android");let plugin=p.windows(6).any(|s|s==b"plugin");
         super::with(|f|{if f.fault==2{return -1;}
-            if plugin{f.plugin=Some(f.plugin_temp.clone());f.plugin_temp.clear();}
+            if install{f.install=Some(f.install_temp.clone());f.install_temp.clear();}
+            else if plugin{f.plugin=Some(f.plugin_temp.clone());f.plugin_temp.clear();}
             else if android{f.android=Some(f.android_temp.clone());f.android_temp.clear();}
             else{f.config=Some(f.temp.clone());f.temp.clear();}0})
     }
@@ -58,6 +59,16 @@ fn main(){
     let case=std::env::args().nth(1).unwrap();
     *FIX.lock().unwrap()=Some(Fixture{on:true,..Fixture::default()});
     match case.as_str(){
+        "install"=>unsafe{
+            connect_permission::load();assert_eq!(connect_permission::install_policy(),2);
+            connect_permission::set_install_policy(0);assert_eq!(connect_permission::install_policy(),0);
+            with(|f|assert_eq!(f.install.as_deref(),Some(b"CCI1\x00".as_slice())));
+            for fault in [1,2,3]{with(|f|f.fault=fault);connect_permission::set_install_policy(1);assert_eq!(connect_permission::install_policy(),0);}
+            let name="文楷".as_bytes();connect_permission::chaos_connect_install_name(name.as_ptr(),name.len()as u32);
+            connect_permission::chaos_connect_state(1|(1<<5)|(1<<9),70);
+            assert_eq!(connect_permission::pending(),70);assert!(connect_permission::prompt_is_install());
+            with(|f|f.on=false);connect_prompt::tick();with(|f|{assert_eq!(f.prompt,"是否允许Android端安装投递包：文楷");assert_eq!((f.wakes,f.vibrations),(1,1));});
+        },
         "nsh"=>unsafe{
             connect_permission::load();assert_eq!(connect_permission::NSH,32);
             assert_eq!(connect_permission::android_mask()&32,0);assert_eq!(connect_permission::plugin_mask()&32,0);
