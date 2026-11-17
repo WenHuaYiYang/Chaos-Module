@@ -53,6 +53,24 @@ fn blur_parameters_use_digits_and_dispatch_to_parameter_page() {
     }
 }
 
+#[test]
+fn gyro_preferences_use_numeric_keys_and_keep_failed_edits_open() {
+    let _lock=mock::TEST_LOCK.lock().unwrap();
+    unsafe {
+        mock::reset();open(b"900\0".as_ptr(),Completion::GyroPointer);
+        assert!(numeric_mode());assert!(!chinese_capable() && !symbols_enabled());
+        assert_eq!(title(),"点击确认时间（毫秒）\0".as_bytes());
+        let parent=fw_api::obj_create(0,0);assert!(render(parent));
+        let codes:Vec<u32>=mock::with(|ui|ui.objects.iter().filter_map(|o|o.code).collect());
+        assert_eq!(codes.len(),13);
+        press(b'a' as u32);press(b'.' as u32);assert_eq!(input(),b"900");
+        mock::with(|ui|ui.save_ok=false);press(KEY_DONE);
+        mock::with(|ui|{assert_eq!(ui.saves.last(),Some(&(8,b"900".to_vec())));assert_eq!(ui.back_count,0);});
+        mock::with(|ui|ui.save_ok=true);press(KEY_DONE);press(KEY_DONE);
+        mock::with(|ui|{assert_eq!(ui.back_count,1);assert_eq!(ui.saves.len(),2);});
+    }
+}
+
 // 横滑键盘：parent -> viewport -> board(640 宽)。setup 返回 (parent, board)。
 // 中文页候选条固定在 parent 上（y=56），不在 viewport 里。
 unsafe fn setup(completion: Completion) -> (u32, u32) {

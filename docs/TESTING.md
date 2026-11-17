@@ -25,6 +25,7 @@ Windows 可使用项目虚拟环境的 `.venv/Scripts/python.exe` 代替 `python
 | 模糊参数 | `python3 tools/test_blur_params.py` |
 | Corona 所有权、恢复与生命周期 | `python3 tools/test_corona_blur.py` |
 | 打包与构建缓存 | `python3 tools/test_build.py` |
+| 灵动点控制器、原生图层与服务绑定 | `python3 tools/test_floating_ball.py`、`python3 tools/verify_floating_ball_services.py` |
 | 安装器反馈、分批复制、日志与 fetch 开关 | `python3 tools/test_installer.py`（需要 Lupa） |
 | 固件目标与符号绑定 | `python3 tools/test_firmware_symbols.py` |
 | 蜂窝布局 | `python3 tools/test_honeycomb.py` |

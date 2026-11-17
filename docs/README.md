@@ -12,6 +12,8 @@
 | [使用说明](USAGE.md) | 页面地图、功能入口和前置条件 |
 | [应用管理](APP-MANAGER.md) | 隐藏模式、排除项与固件限制 |
 | [蜂窝列表](HONEYCOMB.md) | 拖动、缩放、编辑与实验边界 |
+| [灵动点](FLOATING-BALL.md) | 全局悬浮球、快捷菜单、常亮与亮度调节 |
+| [陀螺仪触控点](GYRO-POINTER.md) | 单手转腕移动、停留点击、边缘滑动及可调参数 |
 | [截屏与录屏](CAPTURE.md) | 格式、存储目录与文件管理 |
 | [图标包](ICON-PACKS.md) / [应用图标](DYNAMIC-ICON.md) | 投递格式与 Chaos 自身图标选择 |
 | [上次充电](LAST-CHARGE.md) / [屏幕旋转](SCREEN-ROTATION.md) / [键盘](KEYBOARD.md) | 专项功能说明 |
@@ -25,6 +27,7 @@
 | [构建与发版](BUILD.md) | 工具链、缓存、产物、版本与 CI |
 | [测试指南](TESTING.md) | 按改动选择主机测试与真机验收 |
 | [架构](ARCHITECTURE.md) | 启动链、页面模型与 IPC |
+| [灵动点系统服务 ABI](FLOATING-BALL-SERVICES-ABI.md) | 电量与返回表盘接口的固件依据和验证边界 |
 | [当前性能说明](PERFORMANCE.md) | 已实施优化、体验取舍、验证范围和后续计划 |
 | [更新日志](CHANGELOG.md) | 版本历史及本 fork 未发布变更 |
 | [调试页](DEBUG-PAGE.md) / [日志级别](LOG-LEVEL.md) | 专项调试说明；通用闪存运行日志已删除 |

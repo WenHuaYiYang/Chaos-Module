@@ -33,6 +33,26 @@ pub mod proto_drift {}
 
 /// 3.101.043（小米手环 10 Pro / best1503）—— 默认目标
 mod t043 {
+    // Exact p67/.043 boot-copy/thunk and packed-input checks:
+    // tools/verify_gyro_pointer_abi.py. No addresses from the RW6 target.
+    pub const GYRO_INDEV_CREATE: u32 = 0x0CAC_0C91;
+    pub const GYRO_INDEV_DELETE: u32 = 0x1C05_06D5;
+    pub const GYRO_INDEV_NEXT: u32 = 0x0C58_7F21;
+    pub const GYRO_INDEV_SET_TYPE: u32 = 0x1C05_0799;
+    pub const GYRO_INDEV_SET_READ: u32 = 0x1C05_07B1;
+    pub const GYRO_INDEV_RESET: u32 = 0x0C58_7DC9;
+    pub const GYRO_DISPLAY_SYS_LAYER: u32 = 0x0C58_8DC9;
+    /// Exact .043 power_manager getter, native caller 0x0C52FF22.
+    pub const POWER_MANAGER_BATTERY_LEVEL: u32 = 0x0CA6_E6A9;
+    /// Stock home panel reset and app-level return; the native return-home
+    /// timer at 0x0C624B30 calls these in this order, both with argument zero.
+    pub const HOME_PREPARE_WATCHFACE: u32 = 0x0C50_FD7D;
+    pub const APP_RETURN_HOME_SLOT: u32 = 0x200E_B6F0;
+    /// Existing system vibration gate, documented in sys::vibrate.
+    pub const VIBRATION_MUTED: u32 = 0x2011_942E;
+    // Same .043 screen-service field/setter chain used by dimmer_timeout.rs.
+    pub const SCREEN_DIMMER_TIMEOUT: u32 = 0x2013_F43C;
+    pub const SCREEN_TIMEOUT_REFRESH: u32 = 0x0CA7_0361;
     // NuttX VFS; same entrypoints as the existing native file bridge.
     pub const CAPTURE_MKDIR: u32 = 0x0C1D_05E9;
     pub const CAPTURE_RENAME: u32 = 0x0C1D_12E9;

@@ -33,6 +33,7 @@ static SHOT_STORAGE: AtomicU8 = AtomicU8::new(0);
 // Screenshot: 0 idle, 1 waiting for OFF/AOD, 2 capturing, 3 saved.
 static SHOT: AtomicU8 = AtomicU8::new(0);
 static SHOT_STARTED: AtomicU32 = AtomicU32::new(0);
+static SHOT_IMMEDIATE: AtomicBool = AtomicBool::new(false);
 static ERROR: AtomicI32 = AtomicI32::new(0);
 static SHOT_ERROR: AtomicI32 = AtomicI32::new(0);
 static WORKER: AtomicBool = AtomicBool::new(false);
@@ -83,14 +84,25 @@ pub(crate) fn toggle_recording() {
 
 /// A second tap cancels the pending shot; recording and the one-shot can coexist.
 pub(crate) fn toggle_shot() {
-    if SHOT.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire).is_err() {
-        if shot_state() == 2 { return; }
-        SHOT_ERROR.store(0, Ordering::Release);
-        SHOT_STORAGE.store(capture_settings::get().screenshot as u8, Ordering::Relaxed);
-        SHOT_STARTED.store(fw::capture_now_ms(), Ordering::Relaxed); SHOT.store(1, Ordering::Release);
-        if let Err(e) = ensure_worker() { SHOT_ERROR.store(e, Ordering::Release); SHOT.store(0, Ordering::Release); }
-    }
+    if SHOT.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire).is_err() { let _ = queue_shot(false); }
     changed();
+}
+
+/// Global ball requests the currently visible screen after its overlay is hidden.
+/// It never replaces or cancels an already armed/capturing one-shot.
+pub(crate) fn request_shot_now() -> Result<(), i32> { queue_shot(true) }
+
+fn queue_shot(immediate: bool) -> Result<(), i32> {
+    let previous = shot_state();
+    if !matches!(previous, 0 | 3)
+        || SHOT.compare_exchange(previous, 4, Ordering::AcqRel, Ordering::Acquire).is_err() { return Err(-16); }
+    // Reserve state 4 while publishing mode/storage/timestamp to the worker.
+    SHOT_ERROR.store(0, Ordering::Release);
+    SHOT_STORAGE.store(capture_settings::get().screenshot as u8, Ordering::Relaxed);
+    SHOT_IMMEDIATE.store(immediate, Ordering::Relaxed);
+    SHOT_STARTED.store(fw::capture_now_ms(), Ordering::Relaxed); SHOT.store(1, Ordering::Release);
+    if let Err(e) = ensure_worker() { SHOT_ERROR.store(e, Ordering::Release); SHOT.store(0, Ordering::Release); return Err(e); }
+    changed(); Ok(())
 }
 
 struct Buffer(*mut u8);
@@ -339,11 +351,16 @@ impl Worker {
             // Bounded one-shot: never silently capture on some later day.
             let start = SHOT_STARTED.load(Ordering::Acquire);
             let now = fw::capture_now_ms();
-            if now.wrapping_sub(start) >= 60_000 {
+            let immediate = SHOT_IMMEDIATE.load(Ordering::Acquire);
+            if immediate && !fw::screen_is_on() {
+                if SHOT.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                    SHOT_ERROR.store(-125, Ordering::Release); changed();
+                }
+            } else if now.wrapping_sub(start) >= 60_000 {
                 if SHOT.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
                     SHOT_ERROR.store(-110, Ordering::Release); changed();
                 }
-            } else if !fw::screen_is_on() && SHOT.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            } else if (immediate || !fw::screen_is_on()) && SHOT.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok() {
                 let result = (|| {
                     if space_low() { return Err(-28); }
                     let frame = self.buffer()?;

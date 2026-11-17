@@ -236,6 +236,8 @@ impl Page for LicensesPage {
                     "AGPL-3.0-only\0".as_bytes().as_ptr())),
                 (1, RowSpec::tap("MIBAND10PRO-TUNMODULE\0".as_bytes(),
                     "MPL-2.0\0".as_bytes().as_ptr())),
+                (2, RowSpec::tap("SysPatch / LVGL 模糊\0".as_bytes(),
+                    "LVGL MIT\0".as_bytes().as_ptr())),
                 // (2, RowSpec::display("Corona 上游源代码\0".as_bytes(),
                 //     "https://github.com/AstralSightStudios/Canopus-Module-Corona\0".as_bytes().as_ptr())),
             ]).map(|_| ())
@@ -244,7 +246,7 @@ impl Page for LicensesPage {
 
     fn on_click(&self, idx: usize) {
         unsafe {
-            if idx < 2 {
+            if idx < 3 {
                 LICENSE_KIND = idx as u32;
                 LICENSE_PAGE = 0;
                 nav_goto(Pid::LicenseText as u32, 0);
@@ -258,6 +260,7 @@ static CORONA_LICENSE_TEXT: &[u8] = concat!(
     "\n\n", include_str!("../../corona_vendor/LICENSE")
 ).as_bytes();
 static MPL_LICENSE_TEXT: &[u8] = include_bytes!("../../../licenses/MIBAND10PRO-TUNMODULE-MPL-2.0.txt");
+static LVGL_BLUR_LICENSE_TEXT: &[u8] = include_bytes!("../../syspatch_blur/LVGL-LICENCE.txt");
 static mut LICENSE_KIND: u32 = 0;
 static mut LICENSE_PAGE: usize = 0;
 static mut LICENSE_VIEW: [u8; 4096] = [0; 4096];
@@ -265,7 +268,7 @@ static mut LICENSE_STATUS: [u8; 48] = [0; 48];
 const LICENSE_PAGE_LINES: usize = 7;
 
 unsafe fn license_text() -> &'static [u8] {
-    match LICENSE_KIND { 1 => MPL_LICENSE_TEXT, _ => CORONA_LICENSE_TEXT }
+    match LICENSE_KIND { 0 => CORONA_LICENSE_TEXT, 1 => MPL_LICENSE_TEXT, _ => LVGL_BLUR_LICENSE_TEXT }
 }
 
 unsafe fn license_line_count() -> usize {
@@ -324,7 +327,7 @@ impl Page for LicenseTextPage {
         unsafe {
             if LICENSE_KIND == 0 { put_str(buf, "Corona AGPL-3.0-only\0".as_bytes()); }
             else if LICENSE_KIND == 1 { put_str(buf, "MPL-2.0 license\0".as_bytes()); }
-            else { put_str(buf, "Corona AGPL-3.0-only\0".as_bytes()); }
+            else { put_str(buf, "LVGL MIT\0".as_bytes()); }
         }
     }
 

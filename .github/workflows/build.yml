@@ -29,8 +29,16 @@ jobs:
           python3 tools/test_firmware_symbols.py
           python3 tools/test_build.py
 
+      - name: Test gyroscope cursor and virtual input lifecycle
+        run: |
+          python3 tools/test_gyro_pointer.py
+          sh tools/test_keyboard.sh
+
       - name: Test honeycomb geometry and controller
         run: python3 tools/test_honeycomb.py
+
+      - name: Test global floating ball, gestures and native overlay lifecycle
+        run: python3 tools/test_floating_ball.py
 
       - name: Test application icon picker, saved selection and animation
         run: python3 tools/test_dynamic_icon.py

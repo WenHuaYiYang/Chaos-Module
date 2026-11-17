@@ -58,6 +58,11 @@ pub const MAX_ROWS_PER_PAGE: usize = crate::state::MAX_ROWS_PER_PAGE;
 pub mod align;
 pub(crate) mod honeycomb;
 pub(crate) mod dynamic_icon;
+pub(crate) mod floating_ball;
+mod battery;
+pub(crate) use battery::battery_percent;
+mod navigation;
+pub(crate) use navigation::floating_ball_home;
 
 /// 事件码（与固件自带界面的 `EVENT_*` 常量同值）
 pub mod ev {
@@ -173,6 +178,7 @@ mod sys;
 mod nsh;
 mod network;
 mod capture;
+mod gyro_pointer;
 
 /// 按目标选择的固件地址表。业务代码里的固件入口地址一律从这里取,
 /// 不再各自写死 `transmute(0x0C..)` 的字面量。
@@ -184,6 +190,7 @@ pub use gfx::*;
 pub use glass::*;
 pub use network::*;
 pub use capture::*;
+pub use gyro_pointer::*;
 pub use home::*;
 pub use page::*;
 pub use picker::*;

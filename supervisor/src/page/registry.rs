@@ -84,6 +84,10 @@ pub(crate) enum Pid {
     BlurBackgroundParams = 55,
     BlurButtonParams = 56,
     PluginPermissions = 57,
+    FloatingBall = 58,
+    FloatingBallSize = 59,
+    FloatingBallAction = 60,
+    GyroPointer = 61,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -186,4 +190,8 @@ pages! {
     BlurBackgroundParams = 55, PAGE_BLUR_BACKGROUND_PARAMS, super::blur_params::BACKGROUND;
     BlurButtonParams = 56, PAGE_BLUR_BUTTON_PARAMS, super::blur_params::BUTTON;
     PluginPermissions = 57, PAGE_PLUGIN_PERMISSIONS, connect::PLUGIN_PERMISSIONS;
+    FloatingBall = 58, PAGE_FLOATING_BALL, super::floating_ball::PAGE;
+    FloatingBallSize = 59, PAGE_FLOATING_BALL_SIZE, super::floating_ball::SIZE;
+    FloatingBallAction = 60, PAGE_FLOATING_BALL_ACTION, super::floating_ball::ACTION;
+    GyroPointer = 61, PAGE_GYRO_POINTER, super::gyro_pointer::PAGE;
 }

@@ -21,6 +21,7 @@ mod watchface;
 mod settings;
 mod beautify;
 pub(crate) mod blur_params;
+pub(crate) mod gyro_pointer;
 mod appmgr;
 mod about;
 mod system;
@@ -28,6 +29,7 @@ mod keyboard;
 mod debug;
 mod capture;
 mod app_icon;
+mod floating_ball;
 mod quickapp;
 // 单一页注册表(Pid / PAGE_DEFS / PAGE_TABLE)与刷新总线(dirty)。
 // 页身份三处对齐由 registry 的宏 + 编译期断言兜住; ipc.rs 的页名指针从 PAGE_DEFS 取。

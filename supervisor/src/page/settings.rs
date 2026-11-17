@@ -299,9 +299,11 @@ static PALM_DEF: ToggleDef = ToggleDef {
 static SETTINGS_ROWS: &[RowModel] = &[
     RowModel::section("显示与交互\0".as_bytes()),
     RowModel::nav("亮度\0".as_bytes(), Pid::Bright as u32),
+    RowModel::nav("灵动点\0".as_bytes(), Pid::FloatingBall as u32),
     RowModel { label: "自动熄屏秒数\0".as_bytes(), sub: RowSub::None,
                kind: RowKind::Fn(crate::dimmer_timeout::open), trailing: 0, refresh: None },
     RowModel::nav("震动\0".as_bytes(), Pid::Vibrate as u32),
+    RowModel::nav("触控点\0".as_bytes(), Pid::GyroPointer as u32),
     RowModel { label: "关闭遮盖熄屏\0".as_bytes(), sub: RowSub::None,
                kind: RowKind::Toggle(&PALM_DEF), trailing: fw_api::trailing::SWITCH, refresh: None },
     RowModel { label: "屏幕翻转\0".as_bytes(), sub: RowSub::None,
