@@ -36,6 +36,24 @@ pub unsafe extern "C" fn heap_malloc(n: u32) -> u32 {
 /// | +0x19 | 屏幕状态 (u8, 2=亮屏) |
 pub const BRIGHT_STATE: u32 = 0x2013_F148;
 
+/// Existing .043 dimmer-timeout service; no persistent user property is changed.
+pub(crate) unsafe fn screen_timeout_ms() -> u32 {
+    core::ptr::read_volatile(super::fwaddr::SCREEN_DIMMER_TIMEOUT as *const u32)
+}
+pub(crate) unsafe fn screen_timeout_refresh() {
+    let refresh: unsafe extern "C" fn() = transmute(super::fwaddr::SCREEN_TIMEOUT_REFRESH as usize);
+    refresh();
+}
+pub(crate) unsafe fn screen_timeout_set(milliseconds: u32) {
+    core::ptr::write_volatile(super::fwaddr::SCREEN_DIMMER_TIMEOUT as *mut u32, milliseconds);
+    screen_timeout_refresh();
+}
+
+pub(crate) unsafe fn local_time_now() -> Option<[i32; 11]> {
+    let (_, now) = charge_time_local(0)?;
+    charge_time_local(now).map(|(tm, _)| tm)
+}
+
 /// `brightness_set_value(v)` — 手动设亮度 0-255（内部经 clamp_manual 钳到 0-600 硬件标度）静态核对
 /// 地址必须 |1（Thumb bit0）：符号查找给出的是偶数代码地址，直接当函数指针会崩
 pub unsafe fn brightness_set_value(v: u32) {
@@ -556,4 +574,13 @@ pub unsafe fn charge_time_local(timestamp: i64) -> Option<([i32; 11], i64)> {
         transmute(0x0C1F49ADusize);
     if local(&timestamp, tm.as_mut_ptr()).is_null() { return None; }
     Some((tm, now[0] as i64))
+}
+
+/// System vibration gate already checked by the stock haptic service.
+/// Runtime-only override; system settings and reboot retain their own policy.
+pub(crate) unsafe fn vibration_muted() -> bool {
+    core::ptr::read_volatile(super::fwaddr::VIBRATION_MUTED as *const u8) != 0
+}
+pub(crate) unsafe fn vibration_set_muted(muted: bool) {
+    core::ptr::write_volatile(super::fwaddr::VIBRATION_MUTED as *mut u8, muted as u8);
 }

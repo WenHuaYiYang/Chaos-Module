@@ -72,6 +72,7 @@ mod log_level;
 mod s541_launcher;
 mod s541_pixels;
 mod dynamic_icon;
+mod floating_ball;
 mod dynamic_icon_frames;
 mod icon_pack_animation;
 mod capture_format;

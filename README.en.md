@@ -30,6 +30,7 @@ apps, watchfaces, fonts, icons, brightness, cache, blur and vibration.
 
 ## Features
 
+- **Floating function ball**: an opt-in global overlay with battery status, edge docking, a clock, keep-awake controls, brightness adjustment, screenshots and configurable shortcuts ([usage and verification](docs/FLOATING-BALL.md)).
 - **App manager**: hide/show, batch actions, exclusions, and normal / deep hiding modes ([details](docs/APP-MANAGER.md)).
 - **Customization**: fonts, static/animated home-screen icon packs, system blur, translucent watchface background. Animated packs keep legacy CIPK compatibility and play all visible animated icons ([delivery guide and format](docs/ICON-PACKS.md)).
 - **Honeycomb app list (experimental)**: two-axis dragging, inertia, independent left-edge spacing, right-edge zoom, boundary navigation and native editing/deletion. The switch persists across restarts; switching between honeycomb and RW6 rebinds the selected layout immediately and keeps them mutually exclusive. Full simulator rendering and frame-time validation remain pending ([implementation and tests](docs/HONEYCOMB.md)).
