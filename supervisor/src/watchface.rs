@@ -522,6 +522,7 @@ unsafe fn tick_requests() {
 }
 
 unsafe fn tick_background(lite: bool) {
+    crate::gyro_pointer::tick();
     // 3. 字体: 先消费样式级写回请求(含开机自动应用)。
     //    放定时器而不是页面渲染路径, 是因为**目标页不是我们的页** —— 系统页
     //    没有任何我们能挂的渲染钩子(生命周期槽位只属于我们注册的页, eventbus 也

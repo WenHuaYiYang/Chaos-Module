@@ -29,6 +29,11 @@ jobs:
           python3 tools/test_firmware_symbols.py
           python3 tools/test_build.py
 
+      - name: Test gyroscope cursor and virtual input lifecycle
+        run: |
+          python3 tools/test_gyro_pointer.py
+          sh tools/test_keyboard.sh
+
       - name: Test honeycomb geometry and controller
         run: python3 tools/test_honeycomb.py
 

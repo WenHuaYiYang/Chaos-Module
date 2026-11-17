@@ -67,6 +67,7 @@ mod cadence;
 mod quickapp_splash;
 mod quickapp_exit;
 mod touch_palm;
+mod gyro_pointer;
 mod dimmer_timeout;
 mod log_level;
 mod s541_launcher;

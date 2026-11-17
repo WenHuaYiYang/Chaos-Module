@@ -33,6 +33,15 @@ pub mod proto_drift {}
 
 /// 3.101.043（小米手环 10 Pro / best1503）—— 默认目标
 mod t043 {
+    // Exact p67/.043 boot-copy/thunk and packed-input checks:
+    // tools/verify_gyro_pointer_abi.py. No addresses from the RW6 target.
+    pub const GYRO_INDEV_CREATE: u32 = 0x0CAC_0C91;
+    pub const GYRO_INDEV_DELETE: u32 = 0x1C05_06D5;
+    pub const GYRO_INDEV_NEXT: u32 = 0x0C58_7F21;
+    pub const GYRO_INDEV_SET_TYPE: u32 = 0x1C05_0799;
+    pub const GYRO_INDEV_SET_READ: u32 = 0x1C05_07B1;
+    pub const GYRO_INDEV_RESET: u32 = 0x0C58_7DC9;
+    pub const GYRO_DISPLAY_SYS_LAYER: u32 = 0x0C58_8DC9;
     /// Exact .043 power_manager getter, native caller 0x0C52FF22.
     pub const POWER_MANAGER_BATTERY_LEVEL: u32 = 0x0CA6_E6A9;
     /// Stock home panel reset and app-level return; the native return-home
