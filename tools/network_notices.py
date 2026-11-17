@@ -25,4 +25,8 @@ def network_notices(repo: Path) -> str:
         raise ValueError("lwIP copyright notices are missing")
     for block, paths in notices.items():
         parts.extend(["\n===== lwIP source notice =====\n", "\n".join(paths), "\n", block, "\n"])
+    # The UI no longer exposes a separate blur licence page. Keep its notice
+    # with the binary distribution using the installer's existing notice slot.
+    parts.extend(["\n===== LVGL blur notice =====\n",
+                  (repo / "supervisor/syspatch_blur/LVGL-LICENCE.txt").read_text()])
     return "\n".join(parts)
