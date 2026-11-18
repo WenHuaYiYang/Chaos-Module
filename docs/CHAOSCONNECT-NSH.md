@@ -4,9 +4,9 @@
 
 ## 手环授权
 
-ChaosConnect → 权限设置 → Android端权限 / 插件权限，分别新增“NSH终端”。权限位 `0x20`，默认关闭；与读取、写入、删除、开发者模式及预留的设备控制位独立。允许后可执行原生系统命令，不受文件管理的 `/data` 范围限制。配置沿用 CCA1 / CCL1 七字节记录，合法 mask 从 `0x1f` 扩展到 `0x3f`；旧配置无需迁移，NSH 位保持关闭。
+ChaosConnect → 权限设置 → Android端权限保留“NSH终端”，权限位 `0x20`，默认关闭；插件NSH自0.3.2起取消独立权限，插件连接允许后即可使用。旧插件配置的NSH位兼容读取但不再参与插件终端判定；与读取、写入、删除、开发者模式及预留的设备控制位独立。允许后可执行原生系统命令，不受文件管理的 `/data` 范围限制。配置沿用 CCA1 / CCL1 七字节记录，合法 mask 从 `0x1f` 扩展到 `0x3f`；旧配置无需迁移，NSH 位保持关闭。
 
-连接确认通过之前不能开终端。撤销 NSH/连接权限、停用 ChaosConnect、重新 HELLO、DISCONNECT 或心跳超时均撤销终端 lease，并异步停止 PTY。Android 与插件由实际载波身份选择各自权限，HELLO 内容不能选择身份。插件客户端尚未增加终端界面，但同一私有协议与手环权限检查适用于插件。
+连接确认通过之前不能开终端。Android撤销NSH权限、两端撤销连接权限、停用 ChaosConnect、重新 HELLO、DISCONNECT 或心跳超时均撤销终端 lease，并异步停止 PTY。Android 与插件由实际载波身份选择各自权限，HELLO 内容不能选择身份。插件客户端已提供NSH终端界面，0.3.2起直接使用本次连接许可，不再检查插件NSH独立权限。
 
 ## 协议
 
@@ -27,14 +27,19 @@ ChaosConnect → 权限设置 → Android端权限 / 插件权限，分别新增
 
 CCN1 owner 只调用非阻塞队列 API，BT 接收回调不执行 shell/VFS，LVGL 不接触终端 FD。停止先禁止输入、清除未写入 TX 和短写尾部，再发送 Ctrl+C、退格清理及 `exit\n`。CCN1 版本只在 waitpid 确认回收后允许新子任务，不遗弃未回收任务来伪造停止；如果系统命令拒绝退出，新 OPEN 返回 BUSY，直到原任务实际退出。网页后端保持原停止策略。
 
-Android 在终端可见且前台时约每 150ms 读取，后台/其他页面每 1000ms 读取。断连立即停止本地轮询；手环按其 owner tick 执行撤权。原生 NSH 的执行能力来自被授予的独立权限，不需要开启文件协议的开发者模式。
+Android 在终端可见且前台时约每 150ms 读取，后台/其他页面每 1000ms 读取。断连立即停止本地轮询；手环按其 owner tick 执行撤权。Android NSH需要独立权限；插件NSH只需连接许可。两端都不需要开启文件协议的开发者模式。
 
 ## 验证
 
-- `test_chaos_connect.py`：31 项生产 C / 权限回归，包括双客户端 NSH 默认拒绝、lease、碎片输出、旧 token、撤权/断开停止与关闭门禁。
+- `test_chaos_connect.py`：31 项生产 C / 权限回归，包括Android NSH默认拒绝、插件操作mask不限制终端、lease、碎片输出、旧token、撤销连接/断开停止与关闭门禁。
 - `test_connect_terminal.py`：独立 CCN1 PTY 引擎 27 项生命周期回归；网页后端相同的 27 项继续通过。
 - 原 .043 `probe_nsh_spawn.py` 和 `probe_nsh_pty.py`：任务/FD 隔离、真实 ioctl/line editor/退出等接口探针，PTY 探针 11 项通过。
 - Android JVM 覆盖 NSH 权限/状态/输入输出、UTF-8/ANSI、重启/撤权，并以生产 C 文件引擎和 Kotlin 协议互通；PTY 在互通测试中为显式 echo seam。
 - 模拟器验证两套 UI、五项 Dock、原生/悬浮导航、设置持久化与连接确认；终端截图使用明确的 UI 测试输入，不代表实机输出。
 
 以上不证明实体蓝牙链路、真实 shell 调度或真机流畅度。安装配套模块和 Android APK 后，需要手环允许 Android NSH 权限进行最终联调。
+
+
+## 插件0.3.2调整
+
+手环插件权限页移除NSH终端开关；插件终端不检查插件mask的0x20位，仍受连接确认与ChaosConnect启用状态控制。Android端NSH权限保持不变。插件取消逐字Input/Focus/Blur回调，命令用AstroBox原生输入弹窗编辑，确认后一次带回插件再发送；编辑期间输出继续缓存在有界记录中。

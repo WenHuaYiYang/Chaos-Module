@@ -349,14 +349,13 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(self.access()[3],4);self.assertEqual(self.access()[6],0)
         self.c.cc_test_decide(token,1);self.c.cc_files_tick(60100);self.assertEqual(self.access()[6],0)
 
-    def test_terminal_permission_lease_stream_and_revocation_for_both_clients(self):
+    def test_terminal_android_permission_and_plugin_connection_only(self):
         for android in [0,1]:
             self.c.cc_test_android(android,0,31);self.c.cc_test_plugin(0,31);self.request(1)
             starts=self.c.cc_test_terminal_counter(0)
-            self.assertEqual(self.request(0x50)[0],3)
-            self.assertEqual(self.c.cc_test_terminal_counter(0),starts)
+            self.assertEqual(self.request(0x50)[0],3 if android else 0)
+            self.assertEqual(self.c.cc_test_terminal_counter(0),starts if android else starts+1)
             if android:self.c.cc_test_android(1,0,33)
-            else:self.c.cc_test_plugin(0,33)
             status,opened=self.request(0x50);self.assertEqual(status,0)
             token,state,error=struct.unpack('<IBi',opened);self.assertGreater(token,0);self.assertEqual(state,2)
             self.assertEqual(self.request(0x50)[1],opened) # Repeated open is idempotent.
@@ -371,12 +370,17 @@ class ConnectTests(unittest.TestCase):
             self.assertEqual(self.request(0x52,struct.pack('<IH',token,2049))[0],1)
             stops=self.c.cc_test_terminal_counter(1)
             if android:self.c.cc_test_android(1,0,1)
-            else:self.c.cc_test_plugin(0,1)
+            else:
+                # All plugin operation bits can be disabled without revoking NSH.
+                self.c.cc_test_plugin(0,0);self.c.cc_files_tick(100)
+                self.assertEqual(self.c.cc_test_terminal_counter(1),stops)
+                self.assertEqual(self.request(0x51,struct.pack('<I',token)+b'pwd\n')[0],0)
+                self.c.cc_test_plugin(1,0) # Connection denial still ends the lease.
             self.c.cc_files_tick(100)
             self.assertEqual(self.c.cc_test_terminal_counter(1),stops+1)
             self.assertEqual(self.request(0x51,struct.pack('<I',token)+b'reboot\n')[0],3)
             if android:self.c.cc_test_android(1,0,33)
-            else:self.c.cc_test_plugin(0,33)
+            else:self.c.cc_test_plugin(0,0);self.request(1)
             status,opened=self.request(0x50);self.assertEqual(status,0)
             newer=struct.unpack_from('<I',opened)[0];self.assertNotEqual(token,newer)
             self.assertEqual(self.request(0x53,struct.pack('<I',token))[0],11)

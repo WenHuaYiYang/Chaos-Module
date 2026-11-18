@@ -359,7 +359,7 @@ int cc_files_tick(uint32_t now){
    else if(decision||connection_policy==CCF_POLICY_ALLOW){access_granted=decision!=2;connect_auth=access_granted?2:3;chaos_connect_log(android_client?(access_granted?"手环允许Android本次连接":"手环拒绝Android本次连接"):(access_granted?"手环允许插件本次连接":"手环拒绝插件本次连接"));}
   }
   if(!access_granted){ccf_close_read();ccf_discard_write();g_dev_mode=0;auth_state=0;auth_token=0;}
-  if(!access_granted || !(mask&32u) || !chaos_bridge_enabled())ccf_terminal_stop();
+  if(!access_granted || (android_client&&!(mask&32u)) || !chaos_bridge_enabled())ccf_terminal_stop();
   if(!(mask&1u))ccf_close_read();
   if(!(mask&2u))ccf_discard_write();
   if(!(mask&8u)){if(g_write_fd>=0&&!ccf_under(g_write_target,"/data"))ccf_discard_write();g_dev_mode=0;if(auth_state==1)auth_state=3;}
@@ -958,7 +958,7 @@ void cc_files_dispatch(const struct cc_frame *frame)
       case CCF_OP_MKDIR:case CCF_OP_OPEN_WRITE:case CCF_OP_WRITE:case CCF_OP_COMMIT:need=2;break;
       case CCF_OP_REMOVE:case CCF_OP_RMDIR:case CCF_OP_RENAME:need=4;break;
       case CCF_OP_SET_DEV:if(plen&&p[0])need=8;break;
-      case 0x50:case 0x51:case 0x52:case 0x53:need=32;break;
+      case 0x50:case 0x51:case 0x52:case 0x53:need=android_client?32u:0u;break;
      }
      if(op==CCF_OP_COPY)need|=2;
      if(!chaos_bridge_enabled() || !access_granted || client_policy()==CCF_POLICY_DENY || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}

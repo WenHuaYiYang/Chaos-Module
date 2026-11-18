@@ -156,7 +156,6 @@ plugin_permission!(PLUGIN_READ_DEF,plugin_read_allowed,toggle_plugin_read,permis
 plugin_permission!(PLUGIN_WRITE_DEF,plugin_write_allowed,toggle_plugin_write,permission::WRITE);
 plugin_permission!(PLUGIN_MANAGE_DEF,plugin_manage_allowed,toggle_plugin_manage,permission::MANAGE);
 plugin_permission!(PLUGIN_DEV_DEF,plugin_dev_allowed,toggle_plugin_dev,permission::DEVELOPER);
-plugin_permission!(PLUGIN_NSH_DEF,plugin_nsh_allowed,toggle_plugin_nsh,permission::NSH);
 plugin_permission!(PLUGIN_CONTROL_DEF,plugin_control_allowed,toggle_plugin_control,permission::CONTROL);
 static PLUGIN_ROWS:&[RowModel]=&[
     RowModel{label:"允许插件连接\0".as_bytes(),sub:RowSub::Dyn(plugin_connection_policy_text),kind:kit::RowKind::Fn(open_plugin_policy),trailing:0,refresh:None},
@@ -164,10 +163,9 @@ static PLUGIN_ROWS:&[RowModel]=&[
     RowModel::toggle("写入文件\0".as_bytes(),&PLUGIN_WRITE_DEF),
     RowModel::toggle("删除和重命名\0".as_bytes(),&PLUGIN_MANAGE_DEF),
     RowModel::toggle("开发者模式\0".as_bytes(),&PLUGIN_DEV_DEF),
-    RowModel::toggle("NSH终端\0".as_bytes(),&PLUGIN_NSH_DEF),
     RowModel::toggle("设备控制（预留）\0".as_bytes(),&PLUGIN_CONTROL_DEF),
     RowModel{label:"开发者模式二次确认\0".as_bytes(),sub:RowSub::Dyn(policy_text),kind:kit::RowKind::Fn(open_developer_policy),trailing:0,refresh:None},
-    RowModel::note("默认每次连接需确认，仅允许读取。写入与删除权限独立；开发者模式还需通过两端共用的二次确认策略。NSH终端默认关闭，允许后可直接执行系统命令，不受文件目录限制。关闭权限会中止对应操作，客户端不能修改这些设置。旧插件在手环确认连接后可刷新目录；上传前需允许写入。设备控制位暂未实现操作。\0".as_bytes()),
+    RowModel::note("默认每次连接需确认，文件操作仅允许读取。写入与删除权限独立；开发者模式还需通过两端共用的二次确认策略。插件NSH终端无需独立权限，连接允许后即可使用。关闭连接许可或停用ChaosConnect会中止终端。客户端不能修改这些设置。旧插件在手环确认连接后可刷新目录；上传前需允许写入。设备控制位暂未实现操作。\0".as_bytes()),
 ];
 impl MenuSpec for PluginPermissionsPage{fn rows(&self)->&'static [RowModel]{PLUGIN_ROWS}}
 impl Page for PluginPermissionsPage{
