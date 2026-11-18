@@ -359,7 +359,7 @@ int cc_files_tick(uint32_t now){
    else if(decision||connection_policy==CCF_POLICY_ALLOW){access_granted=decision!=2;connect_auth=access_granted?2:3;chaos_connect_log(android_client?(access_granted?"手环允许Android本次连接":"手环拒绝Android本次连接"):(access_granted?"手环允许插件本次连接":"手环拒绝插件本次连接"));}
   }
   if(!access_granted){ccf_close_read();ccf_discard_write();g_dev_mode=0;auth_state=0;auth_token=0;}
-  if(!access_granted || (android_client&&!(mask&32u)) || !chaos_bridge_enabled())ccf_terminal_stop();
+  if(!android_client || !access_granted || !(mask&32u) || !chaos_bridge_enabled())ccf_terminal_stop();
   if(!(mask&1u))ccf_close_read();
   if(!(mask&2u))ccf_discard_write();
   if(!(mask&8u)){if(g_write_fd>=0&&!ccf_under(g_write_target,"/data"))ccf_discard_write();g_dev_mode=0;if(auth_state==1)auth_state=3;}
@@ -436,7 +436,7 @@ static void ccf_handle_hello(uint16_t req)
     uint32_t n = 0;
     out[n++] = CCF_PROTO_VERSION;
     ccf_put_u16(&out[n], g_chunk); n += 2u;
-    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | 16u | 32u); /* status/authorization support */
+    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | (android_client?16u:0u) | 32u); /* status/authorization support */
     out[n++] = g_dev_mode;
     ccf_put_u16(&out[n], (uint16_t)CCF_MAX_PATH); n += 2u;
     ccf_put_u32(&out[n], CC_WINDOW); n += 4u;
@@ -963,6 +963,7 @@ void cc_files_dispatch(const struct cc_frame *frame)
      if(op==CCF_OP_COPY)need|=2;
      if(!chaos_bridge_enabled() || !access_granted || client_policy()==CCF_POLICY_DENY || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
     }
+    if(op>=0x50&&op<=0x53&&!android_client){ccf_send(op,req,CCF_ST_UNSUPPORTED,0,0);return;}
     if(op>=0x60&&op<=0x66){ccp_dispatch(op,req,p,plen);return;}
     switch (op) {
     case 0x50:case 0x51:case 0x52:case 0x53:ccf_terminal_dispatch(op,req,p,plen);break;
