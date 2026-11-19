@@ -6,6 +6,10 @@
 #![allow(static_mut_refs)]
 
 mod state;
+mod version_text {
+    include!(concat!(env!("OUT_DIR"), "/version.rs"));
+}
+pub(crate) use version_text::VERSION_TEXT;
 mod firmware_target;
 pub(crate) use state::*;
 

@@ -7,8 +7,13 @@ static mut APP:u32=0;
 static mut START:u32=0;
 static mut DRAWN:bool=false;
 static mut LAUNCHED:bool=false;
+/// 这次启动是否真的到过前台。到了又不在, 就是用户划走了 —— 必须立刻撤罩子。
+static mut SEEN_FRONT:bool=false;
 static mut READY_TICKS:u8=0;
 static mut FADE:Option<u32>=None;
+/// 已经提交启动、但一直没到前台的宽限。快应用冷启动可能慢, 但罩子是全屏且
+/// CLICKABLE 的, 盖在桌面上就是"点不了", 所以不能只靠 10 秒硬超时兜底。
+const GRACE_MS:u32=3000;
 unsafe fn word(p:u32,o:u32)->u32{rd32((p+o)as *const u32)}
 pub(crate) unsafe fn owns(id:u32)->bool{COVER!=0&&APP==id}
 pub(crate) unsafe fn active()->bool{COVER!=0}
@@ -22,7 +27,7 @@ pub(crate) unsafe fn front(root:u32,id:u32)->bool{
     safe_ptr(page_root)&&(root==page_root||fw::obj_is_child_of(page_root,root))
 }
 pub(crate) unsafe fn cancel(){
-    let old=COVER;COVER=0;APP=0;DRAWN=false;FADE=None;READY_TICKS=0;
+    let old=COVER;COVER=0;APP=0;DRAWN=false;FADE=None;READY_TICKS=0;SEEN_FRONT=false;
     if old!=0&&safe_ptr(TOP)&&fw::obj_is_child_of(TOP,old){fw::obj_delete(old);}
     TOP=0;
 }
@@ -57,7 +62,7 @@ pub(crate) unsafe fn start(id:u32,context:*const u32)->bool{
     fw::background_image_set_source(image,icon);
     fw::obj_clear_flag(image,fw::LV_OBJ_FLAG_CLICKABLE);
     fw::obj_align(image,fw::align::CENTER,0,0);
-    APP=id;START=fw::capture_now_ms();LAUNCHED=false;DRAWN=false;
+    APP=id;START=fw::capture_now_ms();LAUNCHED=false;DRAWN=false;SEEN_FRONT=false;
     let mut ctx=[0u32;14];
     core::ptr::copy_nonoverlapping(context,ctx.as_mut_ptr(),14);
     ctx[11]=200;ctx[12]=0; // 固件打开过渡200ms，无延迟。
@@ -86,9 +91,17 @@ pub(crate) unsafe fn tick(id:u32,root:u32){
     if elapsed>=10000||!fw::screen_is_on(){cancel();return;}
     if id!=APP{return;}
     if !front(root,APP) {
-        if fw::top_app_id()!=fw::HOME_APP_ID{cancel();}
+        // 2026-11-19 修复"卡在启动动画页点不了":
+        // 原来只在"前台不是桌面"时撤罩子。但从快应用划回桌面是最常见的退出方式,
+        // 此时 top==HOME 不撤, 这块全屏 + CLICKABLE 的 COVER 就留在桌面上,
+        // 所有点击都被它吃掉, 直到 10 秒硬超时才消失。
+        //   · 已经到过前台又不在 => 用户退出了, 立刻撤;
+        //   · 从没到过前台, 人还在桌面 => 给冷启动 GRACE_MS 宽限, 过点就撤。
+        if SEEN_FRONT || fw::top_app_id()!=fw::HOME_APP_ID { cancel(); return; }
+        if elapsed>=GRACE_MS { cancel(); }
         return;
     }
+    SEEN_FRONT=true;
     if !safe_ptr(root)||word(root,0x2c)&1!=0||fw::obj_child_count(root)<=0{return;}
     if READY_TICKS<2 {READY_TICKS+=1;fw::obj_invalidate(root);return;}
     let started=*FADE.get_or_insert(fw::capture_now_ms());

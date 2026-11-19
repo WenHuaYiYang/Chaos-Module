@@ -753,9 +753,14 @@ pub(crate) unsafe fn tick() {
                 OVERLAY = None;
             }
         }
-        if !SHOT_QUEUED {
-            SHOT_STARTED = None;
-        }
+        // 2026-11-19: 这里原来只在"没排队"时清 SHOT_STARTED。一旦请求已经交给
+        // capture(`SHOT_QUEUED = true`)之后紧接着息屏或关掉灵动点, 这个分支就再也
+        // 走不到 screenshot(), SHOT_STARTED 永远留着 → busy() 恒真 → 维护节拍被钉在
+        // 50ms(息屏也一样), 圆点全部输入失效(handle 开头直接 return), 直到下次亮屏
+        // 才"复活"并弹一条与当下操作无关的提示。截图任务本身由 capture 的 worker
+        // 自行收尾, 灵动点不需要等它, 所以这里两个标志都清掉。
+        SHOT_STARTED = None;
+        SHOT_QUEUED = false;
         return;
     }
     let now = fw::capture_now_ms();

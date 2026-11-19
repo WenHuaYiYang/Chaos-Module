@@ -16,6 +16,7 @@ pub(crate) static ACTION: ActionPage = ActionPage;
 static mut EDIT_SLOT: usize = 0;
 static mut SIZE_TEXT: [u8; 24] = [0; 24];
 static mut BATTERY_TEXT: [u8; 24] = [0; 24];
+static mut OPACITY_TEXT: [u8; 24] = [0; 24];
 
 unsafe fn enabled() -> bool {
     ball::config().enabled
@@ -25,13 +26,30 @@ unsafe fn toggle() {
     c.enabled = !c.enabled;
     ball::update(c);
 }
-unsafe fn translucent() -> bool {
-    ball::config().translucent
-}
-unsafe fn toggle_translucent() {
+unsafe fn cycle_opacity() {
     let mut c = ball::config();
-    c.translucent = !c.translucent;
+    c.opacity = (c.opacity + 1) % 5;
     ball::update(c);
+    // 原地刷新本行(有副标题的行 update 必须重传文本, 否则副标题被固件洗掉)。
+    let pid = st_rd!(FG_PAGE) as usize;
+    if pid <= MAX_PID {
+        let r = read_volatile(page_rows_ptr(pid).add(2));
+        if r != 0 {
+            fw_api::row_update(r, fw_api::NONE_PTR, "透明度\0".as_bytes().as_ptr(),
+                opacity_text(), 0, 0);
+        }
+    }
+}
+/// 透明度行的副标题: "不透明度 83%"(档位百分比, 100/83/67/50/33)。
+unsafe fn opacity_text() -> *const u8 {
+    let level = (ball::config().opacity as usize) % 5;
+    let percent = [100u32, 83, 66, 50, 33][level];
+    let p = core::ptr::addr_of_mut!(OPACITY_TEXT).cast();
+    let mut w = W::new(p, 24);
+    w.s("不透明度 ".as_bytes());
+    w.n(percent);
+    w.end();
+    p
 }
 unsafe fn size_text() -> *const u8 {
     let p = core::ptr::addr_of_mut!(SIZE_TEXT).cast();
@@ -96,15 +114,10 @@ static ENABLED: ToggleDef = ToggleDef {
     toggle,
     status: None,
 };
-static TRANSLUCENT: ToggleDef = ToggleDef {
-    get: translucent,
-    toggle: toggle_translucent,
-    status: None,
-};
 static ROWS: &[RowModel] = &[
     RowModel::toggle("启用灵动点\0".as_bytes(), &ENABLED),
     RowModel { label: "圆点大小\0".as_bytes(), sub: RowSub::Dyn(size_text), kind: RowKind::Nav(Pid::FloatingBallSize as u32), trailing: 0, refresh: None },
-    RowModel::toggle("半透明显示\0".as_bytes(), &TRANSLUCENT),
+    RowModel { label: "透明度\0".as_bytes(), sub: RowSub::Dyn(opacity_text), kind: RowKind::Fn(cycle_opacity), trailing: 0, refresh: None },
     RowModel::display_sub("电量进度\0".as_bytes(), RowSub::Dyn(battery_text)),
     RowModel::section("扇形菜单功能\0".as_bytes()),
     RowModel { label: "功能一\0".as_bytes(), sub: RowSub::Dyn(slot_one), kind: RowKind::Fn(edit_one), trailing: 0, refresh: None },

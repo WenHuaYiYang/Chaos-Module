@@ -496,7 +496,11 @@ pub(crate) unsafe fn status() -> &'static [u8] {
             } else if st_rd!(CORONA_BG_MASK) == 0 {
                 "模糊：未选择区域\0".as_bytes()
             } else {
-                "模糊v2模式\0".as_bytes()
+                match crate::corona_blur::algo() {
+                    0 => "模糊：省电（上游原生）\0".as_bytes(),
+                    1 => "模糊：V2（清晰，较耗电）\0".as_bytes(),
+                    _ => "模糊：V3（清晰 + 省电）\0".as_bytes(),
+                }
             }
         } else {
             "等待空闲后切换模糊\0".as_bytes()
@@ -573,8 +577,12 @@ unsafe fn corona_tick() -> bool {
         if st_rd!(CORONA_HOLD) != 0 { return false; }
     }
     let engine_active = crate::corona_blur::active() && !CORONA_VITALITY_RECOVER;
-    let v2_active = crate::corona_blur::v2_enabled();
+    // 只有 V2/V3 才产出"全分辨率已发布图"，通知图标去黑底与 V2 缓存共用它。
+    let v2_active = crate::corona_blur::algo() != 0;
     if engine_active {
+        // 采集判据用的"场景身份": 表盘 id 只在换表盘/换场景时变。
+        // 必须在 poll 之前写, 否则本轮用的是上一拍的身份。
+        crate::corona_blur::set_scene(fw_api::background_watchface_identity());
         let region_mask = crate::blur_zone::mask();
         if st_rd!(CORONA_BG_ACTIVE) == 0 {
             if !fw_api::screen_is_on() { return true; }
@@ -695,9 +703,26 @@ pub(crate) unsafe fn pending() -> bool {
     }
     // Sleeping displays retain Corona's cleanup state for the next wake;
     // they must not force the existing 1s idle timer back to a 50ms spin.
-    fw_api::screen_is_on() && (crate::corona_blur::active() || st_rd!(CORONA_BG_ACTIVE) != 0
-        || crate::notification_icon::pending() || st_rd!(REQUEST) != 0 || SCENE.pending()
-        || st_rd!(REFRESH) != 0 || crate::background_surfaces::pending())
+    if !fw_api::screen_is_on() { return false; }
+    // 2026-11-19 功耗修复: "模糊引擎开着"本身不是忙。
+    // 稳定态下模糊层由固件的 draw 钩子按需重绘, 采集也在 C 侧按"画面有没有
+    // 重绘"自行节流(见 corona_blur.c 的 chaos_v2_background_refresh), 维护
+    // 节拍没有任何理由停在 20Hz。之前这里把 corona_blur::active() 当成常驻
+    // 忙信号: 只要开了模糊, 整机就永久停在 TICK_FAST_MS(50ms), 每秒 20 次
+    // 唤醒把 CPU 从低功耗里拽出来 —— 这是"用起来耗电极快"的主因之一。
+    // 现在只报告真正要推进的工作: 正在装/拆、区域掩码变了、冷却重试、
+    // 生命力恢复, 或 native 清理还没跑完。稳定态自然回落到 200ms。
+    if crate::corona_blur::active() {
+        let applying = st_rd!(CORONA_BG_ACTIVE) != 1
+            || st_rd!(CORONA_BG_MASK) != crate::blur_zone::mask()
+            || st_rd!(CORONA_COOLDOWN) != 0
+            || CORONA_VITALITY_RECOVER;
+        if applying || crate::corona_blur::backgrounds_pending() { return true; }
+    } else if st_rd!(CORONA_BG_ACTIVE) != 0 || crate::corona_blur::backgrounds_pending() {
+        return true;
+    }
+    crate::notification_icon::pending() || st_rd!(REQUEST) != 0 || SCENE.pending()
+        || st_rd!(REFRESH) != 0 || crate::background_surfaces::pending()
 }
 
 pub(crate) unsafe fn tick() {

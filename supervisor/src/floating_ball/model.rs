@@ -14,7 +14,7 @@ pub const KEEP_MINUTES: [u32; 3] = [5, 10, 15];
 pub struct BandStyle {
     pub corner: Corner,
     pub size: u8,
-    pub translucent: bool,
+    pub opacity: u8,
     pub brightness: Option<u16>,
     pub highlight: Option<u8>,
 }
@@ -215,16 +215,30 @@ impl Dock {
 pub struct Config {
     pub enabled: bool,
     pub size: u8,
-    pub translucent: bool,
+    /// 透明度档位(0..=4), 值为 OPACITY_LEVELS 下标: 100/83/67/50/33% 不透明。
+    /// 持久化沿用 DOT2 byte[6]: 旧文件 0=不透明 1=半透明, 与档位 0/1 语义一致。
+    pub opacity: u8,
     pub dock: Dock,
     pub slots: [Action; 3],
+}
+
+/// 球体底色 alpha 档位表; 弧带文字层另有 BAND_ALPHAS。
+pub const OPACITY_LEVELS: [u8; 5] = [255, 212, 170, 128, 85];
+/// 弧带未填充区域 alpha 档位表(原 translucent false/true 对应 255/158)。
+pub const BAND_ALPHAS: [u8; 5] = [255, 158, 130, 100, 70];
+
+pub fn opa_level_alpha(level: u8) -> u8 {
+    OPACITY_LEVELS.get(level as usize).copied().unwrap_or(212)
+}
+pub fn band_level_alpha(level: u8) -> u8 {
+    BAND_ALPHAS.get(level as usize).copied().unwrap_or(158)
 }
 impl Config {
     // The new global layer is opt-in; enabling it starts in the upper right.
     pub const DEFAULT: Self = Self {
         enabled: false,
         size: 48,
-        translucent: true,
+        opacity: 1,
         dock: Dock::DEFAULT,
         slots: [Action::Time, Action::KeepAwake, Action::Brightness],
     };
@@ -301,7 +315,7 @@ impl Config {
             b'2',
             self.enabled as u8,
             self.size,
-            self.translucent as u8,
+            self.opacity,
             self.dock.edge as u8,
             self.slots[0] as u8,
             self.slots[1] as u8,
@@ -319,7 +333,7 @@ impl Config {
         let legacy = bytes.len() == 12 && &bytes[..4] == b"DOT1";
         if !(legacy || bytes.len() == CONFIG_LEN && &bytes[..4] == b"DOT2")
             || bytes[4] > 1
-            || bytes[6] > 1
+            || bytes[6] > 4
             || bytes[..bytes.len() - 1].iter().fold(0xa5, |sum, b| sum ^ b)
                 != bytes[bytes.len() - 1]
         {
@@ -339,7 +353,7 @@ impl Config {
         let config = Self {
             enabled: bytes[4] != 0,
             size: bytes[5],
-            translucent: bytes[6] != 0,
+            opacity: bytes[6],
             dock,
             slots: [
                 *Action::ALL.get(bytes[8] as usize)?,

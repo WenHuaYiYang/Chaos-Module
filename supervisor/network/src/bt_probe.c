@@ -195,18 +195,22 @@ static int prepare(void)
         state.device_configured=1;unlock(q);
         configured=1;
     }
-    /* 本地蓝牙名: cmd 0x22 set / 0x23 get(固件 bttool "name"/"get name")。
-     * 每次 prepare 都重下发 —— 系统"设备名称"变更或重启会把 adapter 名顶回
-     * 默认值(旧版本连手机显示 Syspatch 就是这么来的), 只设一次会被覆盖。 */
+    /* 本地蓝牙名: 只做 cmd 0x23 回读, **不再下发 0x22 改写**(固件 bttool 的
+     * "name"/"get name")。
+     *
+     * 2026-11-19: 之前这里每次 prepare 都把 adapter 名强制写成 "Chaos-Module",
+     * 手机蓝牙列表里的手环名被顶掉, 用户改回系统设置里的名字也会被下一次
+     * prepare 覆盖。改名是全局副作用, 与 PAN 配对没有关系 —— 配对用的是 CoD/
+     * IO capability/0x3d 那三条, 名字只影响显示, 所以整条 set 删掉。
+     *
+     * result_name 恒为 0 = "本次未下发", 诊断页据此显示"名保持系统"; 真实名字仍由
+     * 0x23 读回, 供"本地蓝牙名"那一行显示。重启后固件会按系统"设备名称"重新
+     * 应用一次, 所以以前被改过的机器升级后重启一次就恢复。 */
     {
-        uint8_t name[64]={0};
-        static const char label[]="Chaos-Module";
-        for(unsigned i=0;i<sizeof(label)-1 && i<63;i++)name[i]=(uint8_t)label[i];
-        int rc_set=request(0x22,name,sizeof(name));
         uint8_t verify[64]={0};
         int rc_get=exchange(0x23,0,0,verify,sizeof(verify));
         uint32_t q=lock();
-        state.result_name=rc_set;state.result_name_read=rc_get;
+        state.result_name=0;state.result_name_read=rc_get;
         for(unsigned i=0;i+1<sizeof(state.local_name);i++)state.local_name[i]=(char)verify[i];
         state.local_name[sizeof(state.local_name)-1]=0;unlock(q);
     }

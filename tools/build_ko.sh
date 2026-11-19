@@ -115,12 +115,21 @@ for f in chaos_connect chaos_files chaos_io bridge; do
   printf '"%s"\n' "$(win "$o")" >> "$bridge_rsp"
 done
 
+# Network PAN: 四条 --wrap 缺一不可。
+#   bnep_register_frame_callback / bnep_init  把 BNEP 帧接进模块私有 netif
+#   bt_probe_connect_device                   扫描列表点选: 记下对端 MAC
+#   bt_probe_connect_address                  "记住的对端直连": 同样要记 MAC
+# 最后这条 2026-11-19 补上: pan_radio.c 里一直有 __wrap_bt_probe_connect_address,
+# 但这里没给 --wrap, 链接器不会改写调用点, 包装函数被 --gc-sections 整段丢掉;
+# 表现是走"记住的对端"时 pan_radio_addresses() 恒为 0, link 条件永不成立,
+# 状态一直停在"正在获取IP"。
 "$lld" -flavor gnu -r --gc-sections -u module_main -u chaos_ctor \
        -u chaos_firmware_target \
        -u chaos_bridge_start -u chaos_bridge_stop \
        -u chaos_corona_backgrounds_commit -u chaos_corona_backgrounds_poll \
        -u chaos_corona_backgrounds_pending -u chaos_corona_backgrounds_idle \
        --wrap=bnep_register_frame_callback --wrap=bnep_init --wrap=bt_probe_connect_device \
+       --wrap=bt_probe_connect_address \
        -T "$(win "$here/merge_sections.ld")" -o "$(win "$out")" "$(win "$lib")" "$(win "$corona_obj")" \
        "@$(win "$bridge_rsp")" "@$(win "$src/network/build/$CHAOS_FIRMWARE/objects.rsp")"
 

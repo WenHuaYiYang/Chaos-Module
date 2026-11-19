@@ -76,6 +76,8 @@ const EXCL_SLOT: usize = 44;
 const EXCL_MAX: usize = APP_MAX;
 const EXCL_SUM_OFF: usize = EXCL_HDR + EXCL_MAX * EXCL_SLOT;
 const EXCL_TOTAL: usize = EXCL_SUM_OFF + 4;
+/// 排除名单读失败后的重试间隔(ms)。失败不是终态, 但也不能每拍去 open。
+const EXCL_RETRY_MS: u32 = 5000;
 
 // ===== 生效模式开关 =====
 // 0 = 深度隐藏(搬 apps.json / apps.json_hide, 开机不注册; 显示需重启)
@@ -136,6 +138,11 @@ static mut APP_ROWS: [u32; APP_ROWS_N] = [0; APP_ROWS_N];
 static mut EXCL_PKG: [[u8; EXCL_SLOT]; EXCL_MAX] = [[0; EXCL_SLOT]; EXCL_MAX];
 static mut EXCL_N: usize = 0;
 static mut EXCL_LOADED: u32 = 0;
+/// 读盘/校验失败过一次。置位后 `excl_save` 拒绝写盘 —— 否则内存里的空名单会
+/// 把磁盘上那份(可能只是暂时读不到)的排除项整份覆盖掉。
+static mut EXCL_BAD: u32 = 0;
+/// 上次尝试读盘的时间(ms), 失败后按 `EXCL_RETRY_MS` 退避, 不每拍 open。
+static mut EXCL_TRY_AT: u32 = 0;
 static mut EXCL_IO: [u8; EXCL_TOTAL] = [0; EXCL_TOTAL];
 // 当前列表每项是否被排除(按完整列表下标), 批量循环直接查它。
 static mut E_EXCL: [u8; APP_MAX] = [0; APP_MAX];

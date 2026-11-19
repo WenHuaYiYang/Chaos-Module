@@ -78,6 +78,7 @@ static BACKGROUND_ROWS: &[RowModel]=&[
     RowModel::section("刷新与重置\0".as_bytes()),
     param_row!(20,bg_interval,bg_interval_value),
     RowModel{label:"恢复背景默认参数\0".as_bytes(),sub:RowSub::Dyn(reset_status),kind:RowKind::Fn(reset),trailing:0,refresh:None},
+    RowModel::note("当前为省电滤波（上游原生，radius 2 / 84x120）。以下强度、色彩与按钮参数属于 V2 滤波，V2 未启用时不生效。\0".as_bytes()),
     RowModel::note("强度0关闭模糊。亮度、饱和度和对比度100%为原值；饱和度0为灰度，对比度0为均匀灰色。染色比例0不染色，100%为所设RGB纯色。\0".as_bytes()),
     RowModel::note("不透明度0隐藏模糊层、透出下层画面。背景与按钮独立调色；两边共享表盘采集，可见区域中较短的采集间隔会让共享源更快更新。\0".as_bytes()),
 ];

@@ -90,7 +90,7 @@ pub(crate) unsafe fn refresh() -> *const u8 {
     w.s(b"-- blur --").c(b'\n');
     w.s(b"mode ").n(crate::background_home::mode())
         .s(b" engine ").n(if crate::corona_blur::active() { 1 } else { 0 })
-        .s(b" v2 ").n(if crate::corona_blur::v2_enabled() { 1 } else { 0 }).c(b'\n');
+        .s(b" algo ").n(crate::corona_blur::algo()).c(b'\n');
     let (active, mask, hold, fail, lost) = crate::background_home::corona_debug();
     w.s(b"cov ").n(active).s(b" mask ").n(mask)
         .s(b" reg ").n(crate::blur_zone::mask()).c(b'\n');

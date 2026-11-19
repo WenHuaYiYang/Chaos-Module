@@ -99,12 +99,6 @@ pub(crate) unsafe fn animation_active(active: bool, period: u32) -> bool {
     update_timer()
 }
 
-/// 动态图标动画是否在播放(OWN/PACK 任一周期非 0 = 帧定时器在跑)。
-/// 帧预载挂在主维护节拍上, 播放期间必须保持快档, 否则预载跟不上播放节奏。
-pub(crate) fn pack_animation_busy() -> bool {
-    unsafe { OWN_PERIOD != 0 || PACK_PERIOD != 0 }
-}
-
 pub(crate) unsafe fn pack_animation_active(active: bool, period: u32) -> bool {
     PACK_PERIOD = if active { period.clamp(10,50) } else { 0 };
     update_timer()
@@ -134,6 +128,34 @@ unsafe fn original_path(source: u32) -> bool {
 pub(crate) unsafe fn launcher_transition_active() -> bool {
     rd8(a::LAUNCHER_TRANSITION_SLOT as *const u8) != 0
         || rd32(a::LAUNCHER_SNAPSHOT_SLOT as *const u32) != 0
+}
+
+// ===== 桌面滑动检测(只读, 不碰原生状态) =====
+// 与 desktop_scale 同一份地址勘误: 容器 = *0x201102EC, 滚动量 = 容器 +0x8AC(i32)。
+// 那边是"写表"用的, 这里只读同一个数判断"是不是正在滑"。
+const GRID_GLOBAL: u32 = 0x2011_02EC;
+const GRID_SCROLL_OFF: u32 = 0x8AC;
+/// 与模糊交互门(P67_BLUR_INTERACTION_BUSY)同一口径: 最后一次位移后 160ms 内算滑动。
+const SCROLL_QUIET_MS: u32 = 160;
+static mut SCROLL_SEEN: i32 = i32::MIN;
+static mut SCROLL_AT: u32 = 0;
+
+/// 桌面正在滑动, 或离最后一次位移不到 160ms。
+///
+/// 为什么要有这道门: 动态图标每帧要 lseek+read 压缩块、解码 9216 字节、memcpy
+/// 调色板、再把描述符交给 GPU(还可能 free 上一帧)。这些全在 LVGL 的 UI 线程上,
+/// 和滑动手势抢同一帧时间 —— 桌面一滑就掉帧。滑动期间保留定时器与周期(不重排
+/// 播放相位), 只跳过解码与上传; 停稳 160ms 后自动接上。
+pub(crate) unsafe fn launcher_scrolling() -> bool {
+    let cont = rd32(GRID_GLOBAL as *const u32);
+    if cont == 0 || !safe_ptr(cont) { return false; }
+    let pos = rd32((cont + GRID_SCROLL_OFF) as *const u32) as i32;
+    if pos != SCROLL_SEEN {
+        SCROLL_SEEN = pos;
+        SCROLL_AT = capture_now_ms();
+        return true;
+    }
+    capture_now_ms().wrapping_sub(SCROLL_AT) < SCROLL_QUIET_MS
 }
 
 pub(crate) unsafe fn icon_pressed(icon: Icon) -> bool {

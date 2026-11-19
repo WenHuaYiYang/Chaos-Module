@@ -150,11 +150,14 @@ pub(crate) unsafe fn tolerance_px() -> u32 { current().tolerance_px }
 pub(crate) unsafe fn page_pause_s() -> u32 { current().page_pause_s }
 pub(crate) fn save_failed() -> bool { SAVE_FAILED.load(Ordering::Acquire) }
 pub(crate) unsafe fn set_parameter(index: usize, text: &[u8]) -> bool {
-    let Some(value) = config::parse_number(text) else { SAVE_FAILED.store(false, Ordering::Release); return false; };
+    // 输入非法/超范围**不清** SAVE_FAILED: 这两条路径都没写盘, 上一次真正的写盘
+    // 失败仍然成立。原实现把它们清掉, 用户打错一个字符就会把"保存失败"提示换成
+    // 范围说明, 而磁盘上的旧值其实还没保存。只有 save() 成功才清。
+    let Some(value) = config::parse_number(text) else { return false; };
     let mut next = current();
     match index { 0 => next.sensitivity = value, 1 => next.confirm_ms = value,
                  2 => next.tolerance_px = value, 3 => next.page_pause_s = value, _ => return false }
-    if !next.valid() { SAVE_FAILED.store(false, Ordering::Release); return false; }
+    if !next.valid() { return false; }
     if !save(next) { SAVE_FAILED.store(true, Ordering::Release); return false; }
     SENSITIVITY.store(next.sensitivity, Ordering::Release);
     CONFIRM_MS.store(next.confirm_ms, Ordering::Release);

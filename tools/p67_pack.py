@@ -22,7 +22,11 @@ import struct
 from pathlib import Path
 
 MAGIC = 0x1234A55A
-VERSION = 0x00010206
+VERSION = 0x00010207
+# 每次改完代码、准备重新编译出包时，把这一个后缀往后改一遍: Alpha -> Beta -> ...
+# （只改这一处；文件名、容器名、安装器标题、关于页的版本串都从这里派生）
+VERSION_SUFFIX = "Alpha"
+VERSION_TEXT = "%d.%d.%d-%s" % ((VERSION >> 16) & 0xFF, (VERSION >> 8) & 0xFF, VERSION & 0xFF, VERSION_SUFFIX)
 HDR = 0xA8
 PAIR_OFF = 0xA8
 PAIRS = 11

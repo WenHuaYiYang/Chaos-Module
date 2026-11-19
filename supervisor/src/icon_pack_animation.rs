@@ -158,6 +158,10 @@ unsafe fn drive() {
     if !ready || pack!=PACK || epoch!=EPOCH || !port::launcher_active() {
         stop_all(); port::pack_animation_active(false,20); BUSY=false; return;
     }
+    // 桌面滑动期间不解码、不上传: 定时器由上一拍的 pack_animation_active(running,period)
+    // 保活, 这里直接返回而**不**调 active(false) —— 停掉它, 下一拍就没人把播放拉回来。
+    // 停稳 160ms 后本函数照常跑, 帧号按墙钟重算, 不会补播积压帧。
+    if port::launcher_scrolling() { BUSY=false; return; }
     let now=fw::capture_now_ms(); let mut period=50; let mut running=false;
     for entry in 0..MAX_ACTIVE {
         let slot=ACTIVE[entry]; if slot==EMPTY { continue; }
@@ -245,7 +249,6 @@ pub(crate) unsafe fn tick() {
     }
     drive();
 }
-pub(crate) unsafe fn animation_tick() { drive(); }
 #[cfg(test)]
 pub(crate) unsafe fn reset_for_test() {
     PLAYERS=[0;STEMS];ACTIVE=[EMPTY;MAX_ACTIVE];PACK=0;EPOCH=0;INDEX_CHECKED=false;MASK=0;CURSOR=0;BUSY=false;

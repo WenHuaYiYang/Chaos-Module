@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#兼容性)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#兼容性)
-[![Release](https://img.shields.io/badge/version-v1.2.6-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.7-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -89,7 +89,7 @@ python3 tools/build.py --firmware 10p-3.101.043 --no-icons --skip-fetch  # 已�
 
 文档索引：[docs/README.md](docs/README.md)。当前修复与取舍见 [性能说明](docs/PERFORMANCE.md)，提交与推送见 [开发工作流](docs/DEVELOPMENT.md)，回归命令见 [测试指南](docs/TESTING.md)。
 
-本 fork 基于上游开发；模块、容器头与徽章已统一为 **v1.2.6**。发布内容和验证范围见 [更新日志](docs/CHANGELOG.md)，版本规则见 [构建指南](docs/BUILD.md#版本号规则)。
+本 fork 基于上游开发；模块、容器头与徽章已统一为 **v1.2.7**。发布内容和验证范围见 [更新日志](docs/CHANGELOG.md)，版本规则见 [构建指南](docs/BUILD.md#版本号规则)。
 
 ## 贡献
 
