@@ -11,7 +11,7 @@ A kernel module plus a Lua installer that registers native pages through the fir
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Firmware](https://img.shields.io/badge/firmware-3.101.043-green.svg)](#compatibility)
 [![Device](https://img.shields.io/badge/device-p67-orange.svg)](#compatibility)
-[![Release](https://img.shields.io/badge/version-v1.2.6-blue.svg)](docs/CHANGELOG.md)
+[![Release](https://img.shields.io/badge/version-v1.2.7-blue.svg)](docs/CHANGELOG.md)
 
 </div>
 
@@ -89,7 +89,7 @@ Dependencies, pipeline, versioning and release checklist: **[docs/BUILD.md](docs
 
 Documentation index: [docs/README.md](docs/README.md). See [current performance](docs/PERFORMANCE.md), [development workflow](docs/DEVELOPMENT.md) and [testing](docs/TESTING.md) (Chinese).
 
-This fork builds on the upstream project. The module, container and badge versions are aligned at **v1.2.6**. See the [changelog](docs/CHANGELOG.md) for changes and validation limits, and [versioning](docs/BUILD.md#版本号规则) for release rules.
+This fork builds on the upstream project. The module, container and badge versions are aligned at **v1.2.7**. See the [changelog](docs/CHANGELOG.md) for changes and validation limits, and [versioning](docs/BUILD.md#版本号规则) for release rules.
 
 ## Contributing
 

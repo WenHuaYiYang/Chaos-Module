@@ -14,14 +14,14 @@ const BACKGROUND: [u32; 3] = [20, 23, 28];
 const ACTIVE: [u32; 3] = [228, 231, 237];
 const REMAINING: [u32; 3] = [82, 88, 98];
 
-pub fn render(output: &mut [u8; BYTES], translucent: bool) {
-    render_battery(output, translucent, Some(100));
+pub fn render(output: &mut [u8; BYTES], opacity: u8) {
+    render_battery(output, opacity, Some(100));
 }
 /// Flat battery progress on one permanently closed broad circular track. Two solid material
 /// colours distinguish the charged and remaining portions. The disk and glyph
 /// have no highlights, bevel, glow or shadow. The hollow end marker moves
 /// with the shrinking progress endpoint. Only shape edges are antialiased.
-pub fn render_battery(output: &mut [u8; BYTES], translucent: bool, percent: Option<u8>) {
+pub fn render_battery(output: &mut [u8; BYTES], opacity: u8, percent: Option<u8>) {
     let value = percent.unwrap_or(0).min(100) as i32;
     let sweep = value * 360 * 256 / 100;
     let quarter = sweep / (90 * 256);
@@ -30,7 +30,7 @@ pub fn render_battery(output: &mut [u8; BYTES], translucent: bool, percent: Opti
     let cos = super::curved::sine(90 * 256 - angle);
     let along = 24 * 8;
     let cap_radius = 25 * 2;
-    let opacity = if translucent { 212 } else { 255 };
+    let base = super::model::opa_level_alpha(opacity) as i32;
     let (ex, ey) = match quarter % 4 {
         0 => (-along * sin / 16384, along * cos / 16384),
         1 => (-along * cos / 16384, -along * sin / 16384),
@@ -76,10 +76,10 @@ pub fn render_battery(output: &mut [u8; BYTES], translucent: bool, percent: Opti
                 let ink = (ACTIVE[rgb] * filled + REMAINING[rgb] * (16 - filled)) / 16;
                 let ink = (ink * (16 - hole) + BACKGROUND[rgb] * hole) / 16;
                 let channel = ink * coverage / 255 + SPHERE[at + c] as u32 * (255 - coverage) / 255;
-                output[at + c] = (channel * opacity / 255) as u8;
+                output[at + c] = (channel as i32 * base / 255) as u8;
             }
             let alpha = coverage + SPHERE[at + 3] as u32 * (255 - coverage) / 255;
-            output[at + 3] = (alpha * opacity / 255) as u8;
+            output[at + 3] = (alpha as i32 * base / 255) as u8;
         }
     }
 }
@@ -187,10 +187,8 @@ impl BandPainter {
                     .is_some_and(|p| v * 1000 <= p as u32 * (u + v));
                 let mut alpha = if filled {
                     245
-                } else if style.translucent {
-                    158
                 } else {
-                    255
+                    super::model::band_level_alpha(style.opacity) as u32
                 };
                 let mut channel = if filled { 239 * alpha / 255 } else { 0 };
                 let separator = if style.brightness.is_none() {

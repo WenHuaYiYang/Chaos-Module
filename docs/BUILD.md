@@ -44,7 +44,7 @@ python3 tools/build.py --firmware 10p-3.101.043
 
 ```text
 dist/10p-3.101.043/chaos_sup.ko        内核模块
-dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin  安装包
+dist/10p-3.101.043/v<版本>-chaos-installer-10p-3.101.043.bin  安装包(版本号前缀来自容器头)
 dist/10p-3.101.043/assets/             容器内模块、图标、字体占位
 dist/10p-3.101.043/stage/              打包临时目录（不入库）
 ```

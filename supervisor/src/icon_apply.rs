@@ -585,9 +585,14 @@ unsafe fn plan_apply() {
             st_wr!(IC_PLAN_ID[n], id);
             st_wr!(IC_PLAN_RESTORE[n], !present);
             n += 1;
-        } else if node == 0 {
-            st_wr!(IC_SAVED[k], 0);
         }
+        // 2026-11-19: 节点这一刻不在链上(node==0)**不能**清 IC_SAVED。
+        // 这就是"原路径"的唯一记录, 而节点缺失往往只是暂时的: 深度隐藏把应用移出
+        // apps.json 后固件不建节点、注册表重建期间也会短暂缺失。原先在这里清零,
+        // 等节点回来时 point_to_ours_node 会走 "saved==0 && 指着我们的目录 → return false"
+        // 分支, 从此既重记不了原路径也写不回去 —— 界面选"系统原图标"永远不生效,
+        // 只能重启(记录在 RAM)。step_restore 对同一情形是**保留**记录的, 两处口径统一。
+        // 记录本身只是一个指针值, 不清不会泄漏; 真卸载时下次 plan_restore 自然不会排队。
         k += 1;
     }
     st_wr!(IC_N, n as u32);

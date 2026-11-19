@@ -4,10 +4,12 @@ use super::*;
 
 // ===== 排除名单(不参与一键显示/隐藏) =====
 //
-// 文件 /data/chaos/appmgr_excl.bin, 定长:
-//   magic[4] = "EX01"
-//   条目 0..39, 每条 44 B: 包名(43 B, 第 44 字节恒 0)
-// 列表按文件顺序排列, 写满即止。读失败/魔数不对 = 空名单(绝不因此禁止应用管理)。
+// 文件 /data/chaos/appmgr_excl.bin, 定长(EX02):
+//   magic[4] = "EX02", 4 字节头
+//   条目 0..63, 每条 44 B: 包名(43 B, 第 44 字节恒 0)
+//   末尾 4 字节: 前面所有字节的 u32 累加校验和
+// 旧版 "EX01"/40 槽仍可读, 校验通过后按新容量迁移重写。
+// 读失败/校验不符 = **只读降级**(不进空名单, 也禁止写盘), 绝不用空名单覆盖磁盘。
 // 排除是 Chaos 自己的名单, 不进 apps.json —— 固件不认识它, 也不该认识。
 
 /// 标记合并列表里的重复包名: 同一包名只保留第一次出现(可见优先, 因为先解析)。
@@ -93,10 +95,25 @@ pub(crate) unsafe fn excl_checksum(b: *const u8, sum_off: usize) -> u32 {
 
 pub(crate) unsafe fn excl_ensure() {
     if EXCL_LOADED != 0 { return; }
-    EXCL_LOADED = 1;
+    // 2026-11-19: 原来一进来就 `EXCL_LOADED = 1` 再读盘, 后面每条失败路径都
+    // 直接 return —— 一次 open 失败(早期 /data 未就绪、fd 耗尽)或一次校验和不符,
+    // 就把"空名单"缓存整个会话; 用户随后排除一个应用时, excl_save 会用这 1 条
+    // 整份覆盖磁盘上的原名单。现在只有**读成功**才封口, 失败进只读降级并退避重试。
+    let now = fw_api::capture_now_ms();
+    if EXCL_BAD != 0 && EXCL_TRY_AT != 0 && now.wrapping_sub(EXCL_TRY_AT) < EXCL_RETRY_MS { return; }
+    EXCL_TRY_AT = now;
     EXCL_N = 0;
-    let fd = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd < 0 { return; }
+    let mut fd = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
+    if fd < 0 {
+        // 区分"还没有这个文件"和"暂时打不开": 用创建模式探一次目录。
+        // 能创建 => 首次使用, 空名单是合法状态, 后续保存必须允许;
+        // 连创建都失败 => 存储/挂载异常, 只读降级, 绝不用空名单覆盖磁盘。
+        let probe = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
+        if probe < 0 { EXCL_BAD = 1; return; }
+        fw_api::close(probe);
+        fd = fw_api::open(EXCL_PATH.as_ptr(), fw_api::oflag::RDONLY, 0);
+        if fd < 0 { EXCL_BAD = 1; return; }
+    }
     let b = core::ptr::addr_of_mut!(EXCL_IO) as *mut u8;
     let mut n = 0usize;
     while n < EXCL_TOTAL {
@@ -105,7 +122,11 @@ pub(crate) unsafe fn excl_ensure() {
         n += got as usize;
     }
     fw_api::close(fd);
-    if n < EXCL_HDR + EXCL_SLOT { return; }
+    if n == 0 {
+        // 空文件(刚创建的或本来就是)= 空名单。
+        EXCL_BAD = 0; EXCL_LOADED = 1; return;
+    }
+    if n < EXCL_HDR + EXCL_SLOT { EXCL_BAD = 1; return; }
     let mut is_old = false;
     let mut k = 0usize;
     // 新格式必须整份长度 + 校验和都对; 旧格式(EX01)按结构校验后迁移。
@@ -116,11 +137,15 @@ pub(crate) unsafe fn excl_ensure() {
     }
     let mut legacy_len = false;
     if new_ok {
-        if n < EXCL_HDR + EXCL_SLOT + 4 { return; }
+        if n < EXCL_HDR + EXCL_SLOT + 4 { EXCL_BAD = 1; return; }
         // 旧版 40 槽文件: 校验和就在实际长度末尾，按实际长度校验后迁移到新容量。
         let sum_off = if n >= EXCL_TOTAL { EXCL_SUM_OFF } else { n - 4 };
-        let want = read_volatile(b.add(sum_off) as *const u32);
-        if want != excl_checksum(b, sum_off) { return; }   // 损坏 -> 空名单
+        // 未对齐 u32 读在 Cortex-M 上是未定义行为: 逐字节拼。
+        let want = (read_volatile(b.add(sum_off)) as u32)
+            | ((read_volatile(b.add(sum_off + 1)) as u32) << 8)
+            | ((read_volatile(b.add(sum_off + 2)) as u32) << 16)
+            | ((read_volatile(b.add(sum_off + 3)) as u32) << 24);
+        if want != excl_checksum(b, sum_off) { EXCL_BAD = 1; return; }   // 损坏 -> 只读降级
         legacy_len = sum_off != EXCL_SUM_OFF;
     } else {
         let mut old_ok = true;
@@ -129,7 +154,7 @@ pub(crate) unsafe fn excl_ensure() {
             if read_volatile(b.add(k)) != EXCL_MAGIC_OLD[k] { old_ok = false; }
             k += 1;
         }
-        if !old_ok { return; }
+        if !old_ok { EXCL_BAD = 1; return; }
         is_old = true;
     }
     let limit = if is_old { n } else if legacy_len { n - 4 } else { EXCL_SUM_OFF };
@@ -143,6 +168,7 @@ pub(crate) unsafe fn excl_ensure() {
         while j < EXCL_SLOT && read_volatile(b.add(o + j)) != 0 { j += 1; }
         if j >= EXCL_SLOT {
             EXCL_N = 0;
+            EXCL_BAD = 1;
             return;
         }
         let d = (core::ptr::addr_of_mut!(EXCL_PKG) as *mut u8).add(i * EXCL_SLOT);
@@ -157,9 +183,13 @@ pub(crate) unsafe fn excl_ensure() {
     }
     excl_dedupe();
     if is_old || legacy_len { let _ = excl_save(); }
+    EXCL_BAD = 0;
+    EXCL_LOADED = 1;
 }
 
 pub(crate) unsafe fn excl_save() -> bool {
+    // 读失败过: 内存里的名单不可信, 写盘等于用空/残缺名单覆盖磁盘原值。
+    if EXCL_BAD != 0 { return false; }
     let b = core::ptr::addr_of_mut!(EXCL_IO) as *mut u8;
     let mut i = 0usize;
     while i < EXCL_TOTAL { write_volatile(b.add(i), 0); i += 1; }
@@ -214,8 +244,9 @@ pub(crate) unsafe fn excl_toggle(pkg: *const u8) -> bool {
         EXCL_N += 1;
     }
     if !excl_save() {
-        // 写盘失败: 回到磁盘真值, 不让内存/文件分叉
+        // 写盘失败: 回到磁盘真值, 不让内存/文件分叉(这一次要立即重读, 跳过退避)
         EXCL_LOADED = 0;
+        EXCL_TRY_AT = 0;
         excl_ensure();
         eset("保存失败\0");
         return false;

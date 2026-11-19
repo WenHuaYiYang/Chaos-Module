@@ -5,7 +5,7 @@
 
   dist/10p-3.101.043/chaos_sup.ko   Chaos 内核模块
   dist/10p-3.101.043/fetch-module.ko 恢复 fetch 支持的 TUN 内核模块
-  dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin  带目标标识的容器
+  dist/10p-3.101.043/v1.2.7-chaos-installer-10p-3.101.043.bin  带版本与目标的容器
   dist/<目标>/assets/chaos_sup.bin 容器内使用的 Chaos ko 副本
   dist/<目标>/assets/fetch-module.bin  容器内使用的 fetch ko 副本
   dist/<目标>/assets/chaos_icon.bin 96px 应用图标
@@ -96,6 +96,9 @@ def build_ko(repo: Path, out: Path, build_time: str, ident: str = DEFAULT_TARGET
     out.parent.mkdir(parents=True, exist_ok=True)
     env = firmware_env(ident)
     env["CHAOS_BUILD_TIME"] = build_time
+    # 版本串(含 -d 这类后缀)交给 build.rs 生成 version.rs，关于页/连接日志直接用它。
+    import p67_pack  # noqa: PLC0415
+    env["CHAOS_VERSION_TEXT"] = getattr(p67_pack, "VERSION_TEXT", "0.0.0")
     run(["sh", str(repo / "tools" / "build_ko.sh"), "supervisor", str(out)], repo, env)
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError(f"没有生成有效 ko: {out}")
@@ -255,6 +258,14 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
     sys.path.insert(0, str(repo / "tools"))
     import minify_lua  # noqa: PLC0415
     text = (repo / "installer" / "chaos_installer.lua").read_text(encoding="utf-8")
+    # 标题里的版本号与容器头同一个真源(p67_pack.VERSION): 1.2.7 -> "127"。
+    # 注入要在瘦身之前做, 这样下面 token 序列的断言仍然覆盖最终文本。
+    import p67_pack  # noqa: PLC0415
+    _ver = f"{(p67_pack.VERSION >> 16) & 0xFF}.{(p67_pack.VERSION >> 8) & 0xFF}.{p67_pack.VERSION & 0xFF}"
+    if "__CHAOS_VERSION__" not in text:
+        raise RuntimeError("安装器脚本缺少 __CHAOS_VERSION__ 占位符, 标题会缺版本号")
+    text = text.replace("__CHAOS_VERSION__",
+                        _ver.replace(".", "") + getattr(p67_pack, "VERSION_SUFFIX", ""))
     slim = minify_lua.strip_source(text)
     if minify_lua.tokens(text) != minify_lua.tokens(slim):
         raise RuntimeError("安装器瘦身改变了 token 序列, 中止打包")
@@ -410,8 +421,18 @@ def main() -> int:
         build_preview(repo, preview, icon_python or find_icon_python(repo))
         blob = preview.read_bytes()
         print(f"预览块: gen_preview 自产 {len(blob)} bytes -> {preview}")
-    out = args.out or dist / f"chaos-installer-{target['id']}.bin"
-    display_name = f"{args.name} {target['model']} {target['version']}"
+    # 产物名带版本号前缀, 一眼能区分手上是哪个包(v1.2.7-chaos-installer-<目标>.bin)。
+    # 版本号的真源仍是 p67_pack.VERSION —— 与容器头写的是同一个数。
+    sys.path.insert(0, str(repo / "tools"))
+    import p67_pack  # noqa: PLC0415
+    version = "v" + p67_pack.VERSION_TEXT
+    out = args.out or dist / f"{version}-chaos-installer-{target['id']}.bin"
+    # 默认名也带版本号, 与标题/容器头一致; 显式传 --name 时尊重用户。
+    default_named = args.name == DEFAULT_NAME
+    # 1.2.7-d -> 127d：标题保持一行短串
+    _compact = version.lstrip("v").replace(".", "").replace("-", "")
+    shown_name = f"Chaos{_compact}安装器" if default_named else args.name
+    display_name = f"{shown_name} {target['model']} {target['version']}"
     info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")
     for name, size in info["blocks"]:

@@ -145,43 +145,47 @@ pub(crate) struct BlurPage;
 pub(crate) const BLUR_LEGACY_PID: u32 = 7;
 
 // 页4 开关/刷新定义
-unsafe fn blur_bg_off() {
-    // 选回官方背景须关闭两开关；引擎和 v2 图标都由背景生命周期安全退役。
-    crate::corona_blur::set(false);
-    crate::corona_blur::set_v2_enabled(false);
+//
+// 三行互斥: 系统背景(关闭) / V2 / V3。
+// 勾选态由 blur_row_checked 现算, 点击后统一 blur_choices_refresh 原地刷三行。
+unsafe fn blur_off() {
+    crate::corona_blur::set_enabled(false);
     crate::background_home::request(0);
+    blur_choices_refresh();
 }
-unsafe fn blur_bg_refresh(slot: usize) {
+unsafe fn blur_pick_v2() { crate::corona_blur::set_algo(crate::corona_blur::ALGO_V2); blur_choices_refresh(); }
+unsafe fn blur_pick_v3() { crate::corona_blur::set_algo(crate::corona_blur::ALGO_V3); blur_choices_refresh(); }
+
+/// 0=系统背景, 1=V2, 2=V3(勾选 = 开启且算法号匹配)
+unsafe fn blur_row_checked(slot: usize) -> bool {
+    if !crate::corona_blur::active() { return slot == 0; }
+    slot != 0 && crate::corona_blur::algo() == slot as u32
+}
+unsafe fn blur_row_refresh(slot: usize) {
     let pid = st_rd!(FG_PAGE) as usize;
     if pid > MAX_PID { return; }
     let r = read_volatile(page_rows_ptr(pid).add(slot));
     if r != 0 {
         fw_api::row_update(r, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0,
-            (crate::background_home::mode() == 0 && !crate::corona_blur::active()) as u8);
+            blur_row_checked(slot) as u8);
     }
 }
-unsafe fn blur_v2_get() -> bool { crate::corona_blur::v2_enabled() }
 unsafe fn blur_choices_refresh() {
-    let pid = st_rd!(FG_PAGE) as usize;
-    if pid != Pid::Blur as usize { return; }
-    for (slot, on) in [(1, crate::corona_blur::v2_enabled())] {
-        let row = read_volatile(page_rows_ptr(pid).add(slot));
-        if row != 0 { fw_api::row_update(row, fw_api::NONE_PTR, fw_api::NONE_PTR, fw_api::NONE_PTR, 0, on as u8); }
-    }
-    blur_bg_refresh(0);
+    if st_rd!(FG_PAGE) as usize != Pid::Blur as usize { return; }
+    for slot in 0..3usize { blur_row_refresh(slot); }
 }
-unsafe fn blur_v2_toggle() { crate::corona_blur::toggle_v2(); blur_choices_refresh(); }
 unsafe fn blur_status_ptr() -> *const u8 { crate::background_home::status().as_ptr() }
-static BLUR_V2_DEF: ToggleDef = ToggleDef { get: blur_v2_get, toggle: blur_v2_toggle, status: None };
 
 /// 页4 行模型(菜单骨架; 返回靠标题栏返回键):
-///   0 系统背景 / 1 V2 / 2 状态 / 3 旧版 / 4 区域。
+///   0 系统背景 / 1 V2 / 2 V3 / 3 状态 / 4 旧版 / 5 区域。
+/// V2 = 原版 SysPatch IIR（按间隔重采）；V3 = V2 画质 + 场景门控采集 + 卡住兜底。
 static BLUR_ROWS: &[RowModel] = &[
-    RowModel::action("系统背景\0".as_bytes(), blur_bg_off, fw_api::trailing::CHECKBOX, Some(blur_bg_refresh)),
-    RowModel::toggle("模糊v2\0".as_bytes(), &BLUR_V2_DEF),
+    RowModel::action("系统背景\0".as_bytes(), blur_off, fw_api::trailing::CHECKBOX, Some(blur_row_refresh)),
+    RowModel::action("模糊 V2\0".as_bytes(), blur_pick_v2, fw_api::trailing::CHECKBOX, Some(blur_row_refresh)),
+    RowModel::action("模糊 V3\0".as_bytes(), blur_pick_v3, fw_api::trailing::CHECKBOX, Some(blur_row_refresh)),
     RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(blur_status_ptr),
                kind: RowKind::Display, trailing: 0, refresh: None },
-    RowModel { label: "旧版选项\0".as_bytes(), sub: RowSub::Static("关闭上面的模糊开关后生效\0".as_bytes()),
+    RowModel { label: "旧版选项\0".as_bytes(), sub: RowSub::Static("关闭上面的模糊后生效\0".as_bytes()),
                kind: RowKind::Nav(BLUR_LEGACY_PID), trailing: 0, refresh: None },
     RowModel { label: "模糊区域\0".as_bytes(), sub: RowSub::Static("适用于所有模糊选项（含通知图标去黑底）\0".as_bytes()),
                kind: RowKind::Nav(Pid::BlurZone as u32), trailing: 0, refresh: None },

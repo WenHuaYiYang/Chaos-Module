@@ -16,6 +16,14 @@ static mut ENABLED: u32 = 0;
 // BRIDGE_STATE 的“停止待执行”值：快速 关→开→关 时，最后一步不能把 0
 // 写回去，否则 tick 会以为“本来就没运行”而跳过 stop。
 const STATE_STOP: u32 = 0xFFFF_FFFE;
+/// 启动失败后的重试间隔。失败不是终态: 原来的 0xffffffff 会让桥永久不启动,
+/// 而 UI 仍按 ENABLED 显示"已启用", 插件每个操作都被回 ACCESS。
+const RETRY_MS: u32 = 5000;
+/// 最多重试几次。失败可能是持续性的(固件不匹配/资源耗尽), 无限重试等于定时
+/// 反复调 start, 所以这里封顶; 到顶后回到"终态不再试", 但日志说清原因。
+const RETRY_MAX: u32 = 3;
+static mut RETRY_AT: u32 = 0;
+static mut FAILS: u32 = 0;
 
 extern "C" {
     fn chaos_bridge_set_enabled(enabled:u32);
@@ -89,20 +97,36 @@ pub(crate) unsafe fn tick() {
     let state = st_rd!(BRIDGE_STATE);
     if ENABLED != 0 {
         crate::connect_radio::ensure_worker();
-        if state == 0 {
+        // 按 RETRY_MS 退避重启; 成功才置 1, 失败保持 0(未运行)等待下一次。
+        let now = fw_api::capture_now_ms();
+        let retry = st_rd!(RETRY_AT);
+        if state == 0 && (retry == 0 || (now.wrapping_sub(retry) as i32) >= 0) {
             let rc = chaos_bridge_start();
-            st_wr!(BRIDGE_STATE, if rc == 0 { 1 } else { 0xffff_ffff });
-            connect_log::line(if rc == 0 {
-                "ChaosConnect 已启用，等待插件连接"
+            if rc == 0 {
+                st_wr!(BRIDGE_STATE, 1);
+                st_wr!(RETRY_AT, 0);
+                st_wr!(FAILS, 0);
+                connect_log::line("ChaosConnect 已启用，等待插件连接");
             } else {
-                "ChaosConnect 启动失败"
-            });
+                let fails = st_rd!(FAILS) + 1;
+                st_wr!(FAILS, fails);
+                if fails >= RETRY_MAX {
+                    // 持续性失败: 不再重试, 也让状态与事实一致(不会显示"已启用")。
+                    st_wr!(BRIDGE_STATE, 0xffff_ffff);
+                    connect_log::line("ChaosConnect 启动失败，已停止重试");
+                } else {
+                    st_wr!(RETRY_AT, now.wrapping_add(RETRY_MS * fails));
+                    connect_log::line("ChaosConnect 启动失败，稍后重试");
+                }
+            }
         }
     } else if state != 0 {
         // 非 0 都收尾：1=运行，0xffffffff=启动失败，0xfffffffe=停止待执行。
         // stop 本身幂等，失败/待停止状态都顺手清回 0。
         chaos_bridge_stop();
         st_wr!(BRIDGE_STATE, 0);
+        st_wr!(RETRY_AT, 0);
+        st_wr!(FAILS, 0);
         connect_log::line("ChaosConnect 已停用");
     }
 }

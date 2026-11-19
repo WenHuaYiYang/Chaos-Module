@@ -15,6 +15,7 @@ struct Ui {
     files: BTreeMap<Vec<u8>, Vec<u8>>, handles: BTreeMap<i32, Handle>, next_fd: i32,
     chunk: usize, fail_write: bool, fail_rename: bool, fail_image: bool, fail_restore: bool,
     opens: usize, commits: usize, reads: usize, screen: bool, active: bool, transition: bool, pressed: bool,
+    scrolling: bool,
     icon: Option<Icon>, frame: Option<usize>, now: u32,
     writes: Vec<(u32, u8, usize)>, timer: bool, period: u32, retired: usize,
 }
@@ -29,6 +30,7 @@ fn setup(config: Option<&[u8]>) {
         files, handles: BTreeMap::new(), next_fd: 3, chunk: usize::MAX,
         fail_write: false, fail_rename: false, fail_image: false, fail_restore: false,
         opens: 0, commits: 0, reads: 0, screen: true, active: true, transition: false, pressed: false,
+        scrolling: false,
         icon: Some(original(123)), frame: None, now: 0,
         writes: Vec::new(), timer: false, period: 1000, retired: 0,
     });
@@ -38,7 +40,7 @@ fn animation_tick(now: u32) { with(|u| u.now = now); unsafe { dynamic_icon::anim
 fn choose(style: u8) { assert!(unsafe { dynamic_icon::select(style) }); }
 mod state { pub static mut APP_ID: u32 = 200; }
 mod log { pub fn line(_: &str) {} }
-mod icon_pack_animation { pub unsafe fn animation_tick() {} }
+mod icon_pack_animation { pub unsafe fn tick() {} }
 mod fw_api {
     use super::*;
     pub mod oflag { pub const RDONLY: u32 = 1; pub const WRONLY: u32 = 2; pub const CREAT: u32 = 4; }
@@ -83,6 +85,7 @@ mod fw_api {
         use crate::dynamic_icon_frames::{Animation, PIXELS};
         pub unsafe fn launcher_active() -> bool { with(|u| u.active) }
         pub unsafe fn launcher_transition_active() -> bool { with(|u| u.transition) }
+        pub unsafe fn launcher_scrolling() -> bool { with(|u| u.scrolling) }
         pub unsafe fn icon_pressed(_: Icon) -> bool { with(|u| u.pressed) }
         pub unsafe fn current(app_id: u32) -> Option<Icon> { assert_eq!(app_id, 200); with(|u| { u.reads += 1; u.icon }) }
         pub unsafe fn owns(source: u32) -> bool { PLAYBACK.contains(&source) || [0xBB00,0xBB80].contains(&source) }
@@ -188,6 +191,20 @@ fn dynamic_keeps_the_uploaded_gif_timing_and_twenty_ms_timer() {
         with(|u| { assert_eq!(u.frame,Some(asset.frame_at(elapsed))); assert!(u.timer); assert_eq!(u.period,20); });
     }
     assert_eq!(with(|u| u.writes.len()),194);
+}
+#[test]
+fn desktop_scroll_freezes_frames_without_stopping_the_timer() {
+    setup(Some(b"AIC2\x01")); tick(0); animation_tick(20);
+    let before = with(|u| { u.scrolling = true; (u.icon.unwrap().source, u.writes.len(), u.period) });
+    for now in [40, 100, 200, 400] { animation_tick(now); }
+    with(|u| {
+        // 滑动期间不写新帧, 但帧定时器与周期必须保留(否则停稳后没人把它拉回来)。
+        assert_eq!((u.icon.unwrap().source, u.writes.len()), (before.0, before.1));
+        assert!(u.timer); assert_eq!(u.period, before.2);
+        u.scrolling = false;
+    });
+    animation_tick(600);
+    with(|u| assert!(u.writes.len() > before.1));
 }
 #[test]
 fn switching_to_original_confirms_native_file_assignment_before_eviction() {

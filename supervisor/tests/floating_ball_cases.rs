@@ -109,7 +109,7 @@ fn configuration_is_strict_versioned_and_preserves_unique_assignments() {
     let mut longer = c.encode().to_vec();
     longer.push(0);
     assert!(Config::decode(&longer).is_none());
-    for (field, bad) in [(4, 2), (5, 0), (5, 73), (6, 3), (7, 4), (8, 9), (9, 0)] {
+    for (field, bad) in [(4, 2), (5, 0), (5, 73), (6, 5), (7, 4), (8, 9), (9, 0)] {
         let mut bytes = c.encode();
         bytes[field] = bad;
         bytes[15] = bytes[..15].iter().fold(0xa5, |sum, b| sum ^ b);
@@ -204,19 +204,19 @@ fn easing_is_continuous_monotonic_bounded_and_survives_clock_wrap() {
 #[test]
 fn flat_ball_has_clear_solid_materials_real_alpha_and_no_glow_or_shadow() {
     let mut rgba = [0; pixels::BYTES];
-    pixels::render(&mut rgba, true);
+    pixels::render(&mut rgba, 1);
     assert_eq!(&rgba[..4], &[0; 4]);
     assert!(rgba.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 200));
     for p in rgba.chunks_exact(4) {
         assert!(p[..3].iter().all(|&v| v <= p[3]));
     }
-    pixels::render(&mut rgba, false);
+    pixels::render(&mut rgba, 0);
     assert_eq!(
         rgba[(pixels::SIDE * (pixels::SIDE / 2) + pixels::SIDE / 2) * 4 + 3],
         255
     );
-    for translucent in [false, true] {
-        pixels::render(&mut rgba, translucent);
+    for opacity in [0u8, 1] {
+        pixels::render(&mut rgba, opacity);
         let pixel = |x, y| &rgba[(y * pixels::SIDE + x) * 4..(y * pixels::SIDE + x) * 4 + 4];
         let material = pixel(8, 32);
         for (x, y) in [(10, 20), (20, 10), (32, 8), (44, 12), (54, 24), (14, 47)] {
@@ -594,7 +594,7 @@ fn short_io_round_trip_and_failed_saves_keep_the_last_complete_config() {
     });
     unsafe {
         let mut c = config();
-        c.translucent = false;
+        c.opacity = 0;
         update(c);
     }
     step(0);
@@ -762,7 +762,7 @@ fn band_raster_is_a_continuous_mirrored_annulus_with_real_white_slider_fill() {
     let base = BandStyle {
         corner: Corner::TopLeft,
         size: 48,
-        translucent: true,
+        opacity: 1,
         brightness: None,
         highlight: None,
     };
@@ -828,7 +828,7 @@ fn rounded_black_band_has_no_outline_and_separators_stop_before_both_edges() {
     let style = BandStyle {
         corner: Corner::TopLeft,
         size: 48,
-        translucent: true,
+        opacity: 1,
         brightness: None,
         highlight: None,
     };
@@ -1103,12 +1103,12 @@ fn battery_progress_uses_the_broad_flat_inner_stroke_and_keeps_the_edge_fixed() 
     let mut full = [0; pixels::BYTES];
     let mut reference = [0; pixels::BYTES];
     let pixel = |x, y| (y * pixels::SIDE + x) * 4;
-    for translucent in [true, false] {
-        pixels::render(&mut reference, translucent);
-        pixels::render_battery(&mut zero, translucent, None);
-        pixels::render_battery(&mut quarter, translucent, Some(25));
-        pixels::render_battery(&mut half, translucent, Some(50));
-        pixels::render_battery(&mut full, translucent, Some(100));
+    for opacity in [1u8, 0] {
+        pixels::render(&mut reference, opacity);
+        pixels::render_battery(&mut zero, opacity, None);
+        pixels::render_battery(&mut quarter, opacity, Some(25));
+        pixels::render_battery(&mut half, opacity, Some(50));
+        pixels::render_battery(&mut full, opacity, Some(100));
         assert_eq!(
             full, reference,
             "full battery must match the flat full-stroke artwork"
@@ -1440,7 +1440,7 @@ fn pending_home_return_times_out_and_cancels_when_user_opens_a_new_page_or_turns
 #[test]
 fn battery_circle_is_complete_and_the_hollow_dot_tracks_the_shrinking_end() {
     let mut full = [0; pixels::BYTES];
-    pixels::render_battery(&mut full, false, Some(100));
+    pixels::render_battery(&mut full, 0, Some(100));
     let pixel = |x, y| (y * pixels::SIDE + x) * 4;
     let material = full[pixel(8, 32)..pixel(8, 32) + 4].to_vec();
     for (x, y) in [(47, 50), (40, 54)] {
@@ -1453,7 +1453,7 @@ fn battery_circle_is_complete_and_the_hollow_dot_tracks_the_shrinking_end() {
     let positions = [(8, 32), (32, 8), (56, 32), (32, 56)];
     for (i, percent) in [25, 50, 75, 100].iter().enumerate() {
         let mut out = [0; pixels::BYTES];
-        pixels::render_battery(&mut out, false, Some(*percent));
+        pixels::render_battery(&mut out, 0, Some(*percent));
         let background = &out[pixel(32, 43)..pixel(32, 43) + 4];
         for (j, (x, y)) in positions.iter().enumerate() {
             let marker = &out[pixel(*x, *y)..pixel(*x, *y) + 4];
@@ -1473,7 +1473,7 @@ fn battery_circle_is_complete_and_the_hollow_dot_tracks_the_shrinking_end() {
 fn full_battery_track_remains_joined_at_both_edges_for_every_progress_state() {
     for percent in [0, 25, 50, 75, 100] {
         let mut out = [0; pixels::BYTES];
-        pixels::render_battery(&mut out, false, Some(percent));
+        pixels::render_battery(&mut out, 0, Some(percent));
         let background = out[(43 * pixels::SIDE + 32) * 4];
         // The small marker hole must never sever either side of the ring.
         for radius in [19.0_f64, 29.0] {

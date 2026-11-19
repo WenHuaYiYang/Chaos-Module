@@ -144,7 +144,7 @@ static void chaos_blur_motion_event(unsigned code) {
 #define P67_BLUR_INTERACTION_EVENT(code) chaos_blur_motion_event(code)
 #define CC_INTERACTION_BUSY() chaos_blur_interacting()
 #define CC_INTERACTION_NOTE() chaos_blur_motion_event(12u)
-#define P67_BLUR_DID_PUBLISH() (chaos_v2_cached_ready=chaos_v2_algorithm)
+#define P67_BLUR_DID_PUBLISH() (chaos_v2_cached_ready=(chaos_v2_algorithm?1u:0u))
 static void cc_buttons_frame(void);
 #define P67_BLUR_FRAME_READY() cc_buttons_frame()
 #define CC_PARAM(i) chaos_v2_params[i]
@@ -238,11 +238,12 @@ int chaos_corona_backgrounds_idle(void) {
     return 1;
 }
 
-int chaos_blur_select_algorithm(unsigned v2) {
-    v2=!!v2;
-    if (chaos_v2_algorithm==v2) return 0;
+/* 0 = 上游原生(radius 2 / 84x120, 省电), 1 = V2(SysPatch IIR), 2 = V3(V2 + 采集门控)。 */
+int chaos_blur_select_algorithm(unsigned algo) {
+    if (algo > 2u) algo = 2u;
+    if (chaos_v2_algorithm==algo) return 0;
     if (!chaos_corona_backgrounds_idle()) return -2145;
-    chaos_v2_algorithm=v2;
+    chaos_v2_algorithm=algo;
     p67_blur_drop();
     p67_blur_reset();
     return 0;
@@ -318,14 +319,35 @@ int chaos_corona_backgrounds_commit(uint32_t enabled, uint32_t region_mask) {
 /* Background and buttons have their own refresh requests. The raw capture is
  * shared: the shortest interval among visible enabled regions can refresh both. */
 static uint32_t chaos_v2_background_last_capture;
+/* 场景身份(Rust 每拍从 0x20119770 读表盘身份后写入)。只在真的换场景时变化,
+ * 静止时恒定 —— 用它代替"模糊层绘制次数"当采集判据。 */
+static uint32_t chaos_v2_scene_id, chaos_v2_scene_last;
+static unsigned chaos_v2_scene_valid;
+/* 采集卡住后的冷却截止时刻。 */
+static uint32_t chaos_v2_backoff_until;
+void chaos_corona_set_scene(uint32_t id){ chaos_v2_scene_id=id; }
 static void chaos_v2_background_refresh(void) {
+    /* 原生算法(0)不做周期重采: 它靠 entry/滚动/改参数时的一次请求就够了，
+       这正是上游 Canopus 的行为，也是"最省电"档的核心。 */
     if(!chaos_corona_enabled || !chaos_v2_algorithm || !chaos_blur_screen_on() || p67_blur_pending) return;
     unsigned regions=rh_background_is_blur(p67_path[p67_path_index])?1u:0u;
     for(unsigned i=0;i<3;++i)
         if(rh_background_is_blur(p67_surface_path(&p67_surfaces[i]))) regions|=2u<<i;
     if(!(regions&p67_blur_allowed_entries)) return;
     uint32_t now=chaos_blur_monotonic_ms();
+    if((int32_t)(now-chaos_v2_backoff_until)<0) return;
     if(now-chaos_v2_background_last_capture<chaos_v2_params[BP_BG_INTERVAL]) return;
+    /* 2026-11-19 第二次修复(CPU 98%): 之前用 p67_blur_draws(模糊层绘制次数)当判据,
+     * 但**采集本身会请求一次整屏重绘**(wake → invalidate 全屏 → 重画模糊层),
+     * 这次重绘正好把 draws 抬高 —— 于是每一轮采集都给下一轮"画面变了"的证据:
+     *     采集 → 整屏重绘 → draws++ → 到点再采集 → …
+     * 一开模糊就自激, CPU 贴着 100%。改成用"场景身份"(表盘 identity):
+     * 它只在你真的换表盘/换场景时变化, 静止和滚动都不变, 采集自然停下来。
+     * 首次进入桌面仍由 p67_blur_session_event 的 entry 请求完成, 不依赖这里;
+     * 从别的应用回到桌面也会重新 entry, 所以不会"永远不更新"。 */
+    /* 只有 V3 用场景门控; V2 保持它原本的"按间隔重采"行为(更清晰但更耗电)。 */
+    if(chaos_v2_algorithm>=2u && chaos_v2_scene_valid && chaos_v2_scene_id==chaos_v2_scene_last) return;
+    chaos_v2_scene_valid=1;chaos_v2_scene_last=chaos_v2_scene_id;
     chaos_v2_background_last_capture=now;
     p67_blur_request();p67_wake_pending=1;
 }
@@ -339,6 +361,17 @@ void chaos_corona_backgrounds_poll(void) {
     chaos_corona_display_rebind();
     chaos_corona_launcher_rebind();
     rh_platform_backgrounds_poll();
+    /* 采集卡住的兜底: 上游 poll_rearm 只要看到 pending 就每拍置 wake 并请求
+     * 整屏重绘; 如果这次采集因为 owner/门禁永远完不成, 就变成"重绘-重试"死循环。
+     * 超过 1.5s 没完成就主动放弃这次请求并冷却 3s, 保证不会长期贴 100% CPU。 */
+    {
+        static uint32_t stuck_at;
+        uint32_t t=chaos_blur_monotonic_ms();
+        if(p67_blur_pending){
+            if(!stuck_at) stuck_at=t?t:1u;
+            else if(t-stuck_at>1500u){ p67_blur_cancel_budget(); stuck_at=0; chaos_v2_backoff_until=t+3000u; }
+        } else stuck_at=0;
+    }
     chaos_corona_rearm_missing_source();
     chaos_v2_background_refresh();
     cc_buttons_poll();

@@ -1,6 +1,6 @@
 # 安装与升级
 
-Chaos 由两部分组成：一个内核模块（`chaos_sup.ko`）和一个 Lua 安装器容器（`chaos-installer-10p-3.101.043.bin`）。
+Chaos 由两部分组成：一个内核模块（`chaos_sup.ko`）和一个 Lua 安装器容器（`v<版本>-chaos-installer-10p-3.101.043.bin`）。
 安装器负责把模块放进 `/data/chaos/`、写开机脚本，并与模块完成一次握手；之后每次开机由 `/data/rc.d/chaos.sh` 加载模块。
 
 ## 前置条件
@@ -16,7 +16,7 @@ Chaos 由两部分组成：一个内核模块（`chaos_sup.ko`）和一个 Lua �
 
 ## 安装
 
-1. 使用本 fork 对应提交的 Release / CI artifact，或按 [构建指南](BUILD.md) 生成 `chaos-installer-10p-3.101.043.bin`。不要将上游旧安装包当作包含本 fork 修复的构建。
+1. 使用本 fork 对应提交的 Release / CI artifact，或按 [构建指南](BUILD.md) 生成 `v<版本>-chaos-installer-10p-3.101.043.bin`。不要将上游旧安装包当作包含本 fork 修复的构建。
 2. 用 AstroBox 的自定义表盘（或第三方应用）入口选择这个文件安装。
 3. 安装器会逐拍执行：部署模块 → 写 `/data/rc.d/chaos.sh` → 与模块握手校验 → 恢复占位。
    状态行会显示当前步骤，失败会停在失败的那一步。

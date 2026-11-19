@@ -155,6 +155,9 @@ unsafe fn drive() {
     }
     let Some(asset) = animation() else { port::animation_active(false, 20); forget(); return; };
     let _ = port::animation_active(true, asset.period_ms);
+    // 桌面滑动期间只保留帧定时器与周期, 跳过逐帧解码/上传; 停稳 160ms 后自动接上。
+    // 不调 animation_active(false): 停掉定时器就没人把播放拉回来(下一次唤醒要 1s)。
+    if port::launcher_scrolling() { return; }
     if OWNER != icon.object || icon.source != LAST_SOURCE {
         OWNER = icon.object; LAST_SOURCE = icon.source; LAST_FRAME = usize::MAX; START = None;
     }
@@ -174,8 +177,10 @@ pub(crate) unsafe fn tick() {
 }
 
 /// Dedicated UI timer: 20ms for the supplied GIF, 1000ms idle/asleep.
+/// 这里同时驱动图标包的预载(原来挂在主维护节拍上): 维护节拍不再为动画停在
+/// 50ms, 预载必须跟着帧定时器走才不会掉队 —— tick() 内含预载 + drive()。
 pub(crate) unsafe extern "C" fn animation_tick(_: u32) {
-    drive(); crate::icon_pack_animation::animation_tick();
+    drive(); crate::icon_pack_animation::tick();
 }
 
 #[cfg(test)]

@@ -127,7 +127,16 @@ unsafe extern "C" fn net_worker_entry(_argc: i32, _argv: *mut *mut u8) -> i32 {
 /// (RAM-only, cleared on reboot — 设置密码可覆盖, 5～31 位)。
 pub(crate) fn ensure_worker() {
     if WORKER_STARTED.swap(true, Ordering::AcqRel) { return; }
-    unsafe { chaos_net_set_credentials(b"chaos\0".as_ptr(), b"chaos\0".as_ptr()); }
+    // 只在"还没有凭据"时播种默认口令。原先每次启动 worker 都无条件写入,
+    // nsh_spawn 失败重试时会把用户设过的密码悄悄改回 chaos/chaos, 并关掉已开的
+    // HTTP 服务; 也让"请先设置密码"的门禁变成死代码。
+    unsafe {
+        let mut user = [0u8; 32];
+        let mut pass = [0u8; 65];
+        if chaos_web_credentials(user.as_mut_ptr(), 32, pass.as_mut_ptr(), 65) != 0 {
+            let _ = chaos_net_set_credentials(b"chaos\0".as_ptr(), b"chaos\0".as_ptr());
+        }
+    }
     let pid = unsafe { fw_api::nsh_spawn(b"chaos.net\0".as_ptr(), net_worker_entry, core::ptr::null_mut()) };
     WORKER_ERROR.store(if pid > 0 { 0 } else { pid.min(-1) }, Ordering::Release);
     if pid <= 0 { WORKER_STARTED.store(false, Ordering::Release); }
@@ -554,7 +563,9 @@ unsafe fn refresh_diag() {
         w.s("CoD ".as_bytes()); signed(w, d.result_cod);
         w.s(" IO ".as_bytes()); signed(w, d.result_iocap);
         w.s(" 3D ".as_bytes()); signed(w, d.result_paircfg);
-        w.s(" Name ".as_bytes()); signed(w, d.result_name);
+        // 本地蓝牙名不再由模块下发(见 bt_probe.c: 只回读, 不改写),
+        // 这一格恒为 0; 直接写文字, 免得看起来像一次失败的设置。
+        w.s(" 名保持系统".as_bytes());
     });
 
     row_built(PAGE_DIAG_PID, 8, "配对命令返回\0".as_bytes(), false, |w| {

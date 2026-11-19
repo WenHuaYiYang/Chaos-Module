@@ -168,7 +168,7 @@ pub struct Overlay {
     toast: u32,
     toast_text: u32,
     shown_size: u8,
-    ball_key: Option<(bool, Option<u8>)>,
+    ball_key: Option<(u8, Option<u8>)>,
     ball_slot: usize,
     shown_position: Option<Point>,
     shown: bool,
@@ -294,7 +294,7 @@ impl Overlay {
         }
     }
     pub unsafe fn ball(&mut self, config: Config, position: Point, battery: Option<u8>) -> bool {
-        let key = (config.translucent, battery);
+        let key = (config.opacity, battery);
         let mut ready = true;
         if self.ball_key != Some(key) {
             if s541_frame_idle() {
@@ -302,7 +302,7 @@ impl Overlay {
                 if DESCRIPTORS[next].0[0] != 0 {
                     fw_img_free_by_path(DESCRIPTORS[next].0.as_ptr() as u32);
                 }
-                pixels::render_battery(&mut PIXELS[next].0, config.translucent, battery);
+                pixels::render_battery(&mut PIXELS[next].0, config.opacity, battery);
                 s541_clean_pixels(PIXELS[next].0.as_ptr(), pixels::BYTES as u32);
                 DESCRIPTORS[next].0 = [
                     0x11019,
@@ -445,7 +445,10 @@ impl Overlay {
             opacity(View::Brightness),
         ];
         let has_band = (current.band() || previous.band()) && progress > 0;
-        visible(self.scrim, view != View::Closed);
+        // scrim 只服务带弧带的三级菜单(Fan/Duration/Brightness): 它的作用是"点空白
+        // 收起菜单"。Message 是 2 秒后自动收起的提示条, 不该拦截触摸 —— 原来按
+        // `view != Closed` 显示, 于是每次快捷操作后都有最长 2 秒的"第一下点击被吃掉"。
+        visible(self.scrim, view.band());
         visible(self.hit, view.band());
         let mut pending = false;
         if has_band {
@@ -463,7 +466,7 @@ impl Overlay {
             pending |= !self.skin(BandStyle {
                 corner: config.corner(),
                 size: config.size,
-                translucent: config.translucent,
+                opacity: config.opacity,
                 brightness: if view == View::Brightness {
                     Some(model::brightness_progress(brightness))
                 } else {

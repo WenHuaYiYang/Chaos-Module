@@ -41,13 +41,16 @@ pub(crate) unsafe fn serialize(skip_off: usize, skip_len: usize, append: u8) -> 
         lit!(b"]}".as_slice());
     } else {
         let mut first = true;
+        let mut wrote_array = false;
         let mut k = 0usize;
         while k < TL_N {
             if !first { putb!(b','); }
             first = false;
             if TL_ISARR[k] != 0 {
+                wrote_array = true;
                 lit!(b"\"InstalledApps\":[".as_slice());
                 let mut ifirst = true;
+                let mut freed = 0usize;
                 let mut i = 0usize;
                 while i < APP_N {
                     let o = E_OFF[i] as usize;
@@ -56,10 +59,18 @@ pub(crate) unsafe fn serialize(skip_off: usize, skip_len: usize, append: u8) -> 
                         if !ifirst { putb!(b','); }
                         ifirst = false;
                         copy!(o, l);
+                    } else {
+                        freed += l;
                     }
                     i += 1;
                 }
                 if append != 0 {
+                    // 2026-11-19: 追加会让写指针越过读指针(只删不增的不变量不成立)。
+                    // 数组后面还有顶层键时, 那些键要从**已被覆盖**的区间读, 写出来
+                    // 就是"数组 + 乱码", 下次开机固件解析失败 → 桌面应用全丢。
+                    // 被删掉的对象够长时写指针仍在读指针后面, 是安全的; 不够就
+                    // 明确失败让调用方回滚, 绝不写坏文件。
+                    if k + 1 < TL_N && freed < OBJ_CAP + 64 { return 0; }
                     if !ifirst { putb!(b','); }
                     if !write_obj(&mut w, append == 2) { return 0; }
                 }
@@ -68,6 +79,15 @@ pub(crate) unsafe fn serialize(skip_off: usize, skip_len: usize, append: u8) -> 
                 copy!(TL_S[k] as usize, (TL_E[k] as usize) - (TL_S[k] as usize));
             }
             k += 1;
+        }
+        if append != 0 && !wrote_array {
+            // 文件存在却没有 InstalledApps 数组(例如 "{}"): 原来 append 永远用不到,
+            // 对象被静默丢弃而函数仍返回成功 —— 调用方接着从源文件删掉条目, 该应用
+            // 就从两份注册表同时消失。这里补出数组, 与上面"文件不存在"那条同形。
+            if !first { putb!(b','); }
+            lit!(b"\"InstalledApps\":[".as_slice());
+            if !write_obj(&mut w, append == 2) { return 0; }
+            lit!(b"]".as_slice());
         }
         putb!(b'}');
     }

@@ -385,7 +385,9 @@ unsafe fn tick_busy() -> bool {
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()
     || crate::honeycomb::busy()
-    || crate::fw_api::dynamic_icon::pack_animation_busy()
+    // 图标动画有自己的帧定时器(动态图标 20-50ms 一拍), 预载也挂在那个定时器上
+    // (见 dynamic_icon::animation_tick)。维护节拍不必为它停在 50ms —— 那会让
+    // 整条五段流水线每秒跑 20 次, 和 LVGL 渲染抢同一帧时间。这里不再计入。
     // Boot retry deadlines run on idle ticks; waiting is not active work.
     || crate::terminal_ui::busy()
     || crate::connect_permission::pending()!=0

@@ -184,7 +184,9 @@ unsafe fn log_page_load() {
     }
 
     if count != 0 {
-        t.put_bytes(concat!("v", env!("CARGO_PKG_VERSION"), " · 共 ").as_bytes());
+        t.put_bytes(b"v");
+        t.put_bytes(crate::VERSION_TEXT.as_bytes());
+        t.put_bytes(" · 共 ".as_bytes());
         t.put_num(total as u32);
         t.put_bytes(" 条 · 第 ".as_bytes());
         t.put_num((LOG_SKIP / LOG_MAX_ENTRIES + 1) as u32);

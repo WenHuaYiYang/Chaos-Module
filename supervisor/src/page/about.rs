@@ -93,9 +93,23 @@ unsafe fn dbg_bump() {
     }
 }
 
+/// 版本串来自构建注入(形如 1.2.7-d)，带 "v" 前缀与结尾 NUL。
+/// 静态行放不下运行期字符串，所以填一次到固定缓冲，再按 Dyn 行读。
+static mut VERSION_TXT: [u8; 32] = [0; 32];
+unsafe fn version_ptr() -> *const u8 {
+    if VERSION_TXT[0] == 0 {
+        let src = crate::VERSION_TEXT.as_bytes();
+        let n = src.len().min(VERSION_TXT.len() - 2);
+        VERSION_TXT[0] = b'v';
+        VERSION_TXT[1..1 + n].copy_from_slice(&src[..n]);
+        VERSION_TXT[1 + n] = 0;
+    }
+    core::ptr::addr_of!(VERSION_TXT) as *const u8
+}
+
 static ABOUT_ROWS: &[RowModel] = &[
     RowModel { label: "Chaos\0".as_bytes(),
-               sub: RowSub::Static(concat!("v", env!("CARGO_PKG_VERSION"), "\0").as_bytes()),
+               sub: RowSub::Dyn(version_ptr),
                kind: RowKind::Fn(dbg_bump), trailing: 0, refresh: None },
     RowModel { label: "编译时间\0".as_bytes(), sub: RowSub::Dyn(about_bt_ptr),
                kind: RowKind::Display, trailing: 0, refresh: None },
