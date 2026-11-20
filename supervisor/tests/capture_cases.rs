@@ -7,7 +7,7 @@ fn reset() {
     START_REQUEST.store(false, Ordering::Relaxed);
     ERROR.store(0, Ordering::Relaxed); SHOT_ERROR.store(0, Ordering::Relaxed);
     WORKER.store(false, Ordering::Relaxed); FRAMES.store(0, Ordering::Relaxed);
-    REVISION.store(0, Ordering::Relaxed); SEQUENCE.store(0, Ordering::Relaxed);
+    REVISION.store(0, Ordering::Relaxed);
     FPS.store(0, Ordering::Relaxed); CONSTRAINED.store(false, Ordering::Relaxed);
     LIMITED.store(false, Ordering::Relaxed);
     REQUEST_SETTINGS.store(0, Ordering::Relaxed); SHOT_SETTINGS.store(0, Ordering::Relaxed);
@@ -398,7 +398,7 @@ fn spawn_failure_and_collision_do_not_clobber_existing_files() {
 
 #[test]
 fn filename_boundaries_and_free_space_units() {
-    let mut name = [0; format::NAME_BYTES]; format::name(&mut name, Kind::Screenshot, u32::MAX, u32::MAX);
+    let mut name = [0; format::NAME_BYTES]; format::name_with_png(&mut name, Kind::Screenshot, VideoFormat::Gif, false, 99991231, u32::MAX).unwrap();
     let n = name.iter().position(|&b| b == 0).unwrap(); assert_eq!(format::kind(&name[..n]), Some(Kind::Screenshot));
     let mut path = [0; 96]; assert!(format::path(b"../apps.json", false, &mut path).is_err());
     for bad in [b"chaos-rec-00000001-00000000.gif/../apps.json".as_slice(), b"chaos-rec-xxxxxxxx-00000000.gif", b"other.gif"] {
@@ -613,12 +613,62 @@ fn screenshot_preview_opens_without_deleting_and_requires_system_confirmation() 
     world(|w|{w.files.insert(log.clone(),vec![1]);w.files.insert(media.clone(),vec![2]);});
     let ctx=crate::page::PageCtx{content:1,title:2,rows:std::ptr::null_mut()};
     PAGE_SCREENSHOTS.render(&ctx).unwrap();
+    ui(|u|assert_eq!(u.image_attaches,0));
     PAGE_SCREENSHOTS.on_click(0);PAGE_SCREENSHOTS.tick();
     assert_eq!(file_count(".png"),2);ui(|u|assert_eq!(u.navigations.last(),Some(&62)));
-    PAGE_PREVIEW.render(&ctx).unwrap();ui(|u|assert!(u.rows.iter().any(|r|r.1=="删除截图")));
+    PAGE_PREVIEW.render(&ctx).unwrap();ui(|u|{assert!(u.rows.iter().any(|r|r.1=="删除截图"));assert_eq!(u.image_attaches,1);});
     PAGE_PREVIEW.on_click(1);PAGE_PREVIEW.tick();assert_eq!(file_count(".png"),2);
     unsafe{confirm_preview_for_test(false);}PAGE_PREVIEW.tick();assert_eq!(file_count(".png"),2);
     PAGE_PREVIEW.on_click(1);unsafe{confirm_preview_for_test(true);}PAGE_PREVIEW.tick();
     assert_eq!(file_count(".png"),1);world(|w|{assert!(w.files.contains_key(&media));assert!(!w.files.contains_key(&log));});
     ui(|u|assert_eq!(u.navigations.last(),Some(&u32::MAX)));check_clean();
+}
+
+#[test]
+fn capture_names_use_civil_date_decimal_sequence_and_preserve_legacy_recognition() {
+    let mut name=[0;format::NAME_BYTES];
+    for (kind,video,png,expected) in [
+        (Kind::Screenshot,VideoFormat::Gif,true,"Chaos-Shot-20260101-01.png"),
+        (Kind::Screenshot,VideoFormat::Gif,false,"Chaos-Shot-20260101-01.bmp"),
+        (Kind::Recording,VideoFormat::Gif,false,"Chaos-Rec-20260101-01.gif"),
+        (Kind::Recording,VideoFormat::Apng,false,"Chaos-Rec-20260101-01.apng"),
+    ] {
+        format::name_with_png(&mut name,kind,video,png,20260101,1).unwrap();
+        assert_eq!(crate::cstr(name.as_ptr()),expected);
+        assert_eq!(format::kind(expected.as_bytes()),Some(kind));
+        assert_eq!(format::numbered(format!("{expected}.part").as_bytes()),Some((kind,20260101,1)));
+    }
+    format::name_with_png(&mut name,Kind::Screenshot,VideoFormat::Gif,true,20240229,100).unwrap();
+    assert_eq!(crate::cstr(name.as_ptr()),"Chaos-Shot-20240229-100.png");
+    assert_eq!(format::date(2025,2,29),None);
+    assert_eq!(format::date(2026,11,21),Some(20261121));
+    for bad in ["Chaos-Shot-20260229-01.png","Chaos-Shot-20260101-00.png","Chaos-Shot-20260101-001.png",
+        "Chaos-Shot-20260101-01.gif","Chaos-Rec-20260101-01.png","Chaos-Shot-20260101-4294967296.png",
+        "Chaos-Shot-20260101-01.png/../apps.json"] {assert!(format::file_kind(bad.as_bytes()).is_none(),"{bad}");}
+    assert_eq!(format::file_kind(b"chaos-shot-00000001-00000000.png"),Some(Kind::Screenshot));
+    assert_eq!(format::file_kind(b"chaos-rec-00000001-00000000.apng.part"),Some(Kind::Recording));
+}
+
+#[test]
+fn capture_names_continue_across_storage_formats_and_injection_without_overwriting() {
+    reset();world(|w|{
+        w.files.insert("/data/offlinelog/Chaos-Shot-20260101-01.png".into(),b"first".to_vec());
+        w.files.insert("/data/chaos/media/Chaos-Shot-20260101-02.bmp.part".into(),b"partial".to_vec());
+        w.files.insert("/data/chaos/media/Chaos-Rec-20260101-03.apng".into(),b"recording".to_vec());
+    });
+    unsafe {
+        let mut out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::OfflineLog,true).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/offlinelog/Chaos-Shot-20260101-03.png");out.commit().unwrap();drop(out);
+        let mut out=Output::create(Kind::Recording,VideoFormat::Gif,Storage::Media,false).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Rec-20260101-04.gif");out.commit().unwrap();drop(out);
+        let mut out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::Media,false).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Shot-20260101-04.bmp");out.commit().unwrap();drop(out);
+        world(|w|w.date.as_mut().unwrap()[3]=2);
+        let out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::Media,true).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Shot-20260102-01.png");drop(out);
+        world(|w|w.date=None);
+        let out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::Media,true).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Shot-00000000-01.png");drop(out);
+    }
+    world(|w|assert_eq!(w.files["/data/offlinelog/Chaos-Shot-20260101-01.png"],b"first"));check_clean();
 }

@@ -41,7 +41,6 @@ static FRAMES: AtomicU32 = AtomicU32::new(0);
 static FPS: AtomicU32 = AtomicU32::new(0);
 static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 static REVISION: AtomicU32 = AtomicU32::new(0);
-static SEQUENCE: AtomicU32 = AtomicU32::new(0);
 static LIMITED: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 const FRAME_MS: u32 = 67;
@@ -116,6 +115,35 @@ impl Buffer {
 }
 impl Drop for Buffer { fn drop(&mut self) { unsafe { fw::fw_free(self.0 as _); } } }
 
+/// Once per capture, inspect both storage roots and all format variants. This
+/// survives reboot/reinjection without a counter file or per-frame filesystem IO.
+unsafe fn next_sequence(kind:Kind,day:u32)->Result<u32,i32> {
+    let mut highest=0;
+    for storage in Storage::ALL {
+        let dir=fw::opendir(storage.root().as_ptr());
+        if dir==0 {let e=fw::capture_result(-1);if e != -2{return Err(e);}continue;}
+        loop {
+            let entry=fw::readdir(dir);if entry==0{break;}
+            if ptr::read_volatile(entry as *const u8)!=8{continue;}
+            let mut name=[0;format::NAME_BYTES];let mut n=0;
+            while n<name.len(){let b=ptr::read_volatile((entry as usize+1+n)as *const u8);if b==0{break;}name[n]=b;n+=1;}
+            if let Some((k,d,index))=format::numbered(&name[..n]) {
+                if k==kind&&d==day{highest=highest.max(index);}
+            }
+        }
+        fw::closedir(dir);
+    }
+    highest.checked_add(1).ok_or(-75)
+}
+unsafe fn capture_date()->u32 {
+    fw::local_time_now().and_then(|tm|{
+        let year=u32::try_from(tm[5].checked_add(1900)?).ok()?;
+        let month=u32::try_from(tm[4].checked_add(1)?).ok()?;
+        let day=u32::try_from(tm[3]).ok()?;
+        format::date(year,month,day)
+    }).unwrap_or(0)
+}
+
 struct Output {
     fd: i32, bytes: u32, final_path: [u8; 96], temporary: [u8; 96], committed: bool,
     pending: Buffer, pending_len: usize,
@@ -128,9 +156,12 @@ impl Output {
         }
         let rc = fw::capture_mkdir_path(storage.root().as_ptr());
         if rc < 0 && rc != -17 { return Err(rc); }
-        for _ in 0..128 {
+        let day=capture_date();
+        let first=next_sequence(kind,day)?;
+        for offset in 0..128 {
+            let sequence=first.checked_add(offset).ok_or(-75)?;
             let mut name = [0; format::NAME_BYTES];
-            format::name_with_png(&mut name, kind, video, png, fw::capture_now_ms() / 1000, SEQUENCE.fetch_add(1, Ordering::Relaxed));
+            format::name_with_png(&mut name,kind,video,png,day,sequence)?;
             let mut out = Self { fd: -1, bytes: 0, final_path: [0; 96], temporary: [0; 96], committed: true,
                 pending: Buffer::new(OUTPUT_BUFFER_BYTES)?, pending_len: 0 };
             format::path_at(&name, false, storage, &mut out.final_path)?;

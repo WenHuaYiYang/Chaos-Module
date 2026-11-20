@@ -39,46 +39,70 @@ impl VideoFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind { Recording, Screenshot }
 
-pub fn kind(name: &[u8]) -> Option<Kind> {
-    let (prefix, suffix, result) = if name.starts_with(b"chaos-rec-") {
-        (b"chaos-rec-".as_slice(), if name.ends_with(b".apng") { b".apng".as_slice() } else { b".gif".as_slice() }, Kind::Recording)
-    } else {
-        (b"chaos-shot-".as_slice(), if name.ends_with(b".png") { b".png".as_slice() } else { b".bmp".as_slice() }, Kind::Screenshot)
+/// Civil date in YYYYMMDD; 00000000 is reserved for an unavailable clock.
+pub fn date(year:u32,month:u32,day:u32)->Option<u32> {
+    if year==0||year>9999||month==0||month>12{return None;}
+    let leap=year%4==0&&(year%100!=0||year%400==0);
+    let days=match month{2=>if leap{29}else{28},4|6|9|11=>30,_=>31};
+    if day==0||day>days{return None;}
+    Some(year*10000+month*100+day)
+}
+fn valid_date(value:u32)->bool {
+    value==0||date(value/10000,value/100%100,value%100)==Some(value)
+}
+/// Parse new filenames, including transactions, for cross-format daily numbering.
+pub fn numbered(name:&[u8])->Option<(Kind,u32,u32)> {
+    let name=name.strip_suffix(b".part").unwrap_or(name);
+    let (prefix,kind)=if name.starts_with(b"Chaos-Shot-"){(b"Chaos-Shot-".as_slice(),Kind::Screenshot)}
+        else if name.starts_with(b"Chaos-Rec-"){(b"Chaos-Rec-".as_slice(),Kind::Recording)}else{return None;};
+    let suffix=match kind {
+        Kind::Screenshot=>if name.ends_with(b".png"){b".png".as_slice()}else{b".bmp".as_slice()},
+        Kind::Recording=>if name.ends_with(b".apng"){b".apng".as_slice()}else{b".gif".as_slice()},
     };
-    let stem = prefix.len();
-    if name.len() != stem + 17 + suffix.len() || !name.starts_with(prefix)
-        || !name.ends_with(suffix) || name[stem + 8] != b'-' { return None; }
-    if !name[stem..stem + 8].iter().chain(&name[stem + 9..stem + 17])
-        .all(u8::is_ascii_hexdigit) { return None; }
+    if !name.ends_with(suffix)||name.len()<prefix.len()+9+2+suffix.len(){return None;}
+    let body=&name[prefix.len()..name.len()-suffix.len()];
+    if body[8]!=b'-'||!body[..8].iter().all(u8::is_ascii_digit){return None;}
+    let mut day=0;for &c in &body[..8]{day=day*10+(c-b'0')as u32;}
+    if !valid_date(day){return None;}
+    let digits=&body[9..];
+    if digits.len()>10||digits.len()>2&&digits[0]==b'0'{return None;}
+    let mut count=0u32;
+    for &c in digits{if !c.is_ascii_digit(){return None;}count=count.checked_mul(10)?.checked_add((c-b'0')as u32)?;}
+    if count==0{return None;}
+    Some((kind,day,count))
+}
+pub fn kind(name:&[u8])->Option<Kind> {
+    if name.ends_with(b".part"){return None;}
+    if let Some((kind,_,_))=numbered(name){return Some(kind);}
+    // Old captures remain manageable; they are never silently renamed.
+    let (prefix,suffix,result)=if name.starts_with(b"chaos-rec-") {
+        (b"chaos-rec-".as_slice(),if name.ends_with(b".apng"){b".apng".as_slice()}else{b".gif".as_slice()},Kind::Recording)
+    }else{
+        (b"chaos-shot-".as_slice(),if name.ends_with(b".png"){b".png".as_slice()}else{b".bmp".as_slice()},Kind::Screenshot)
+    };
+    let stem=prefix.len();
+    if name.len()!=stem+17+suffix.len()||!name.starts_with(prefix)||!name.ends_with(suffix)||name[stem+8]!=b'-'{return None;}
+    if !name[stem..stem+8].iter().chain(&name[stem+9..stem+17]).all(u8::is_ascii_hexdigit){return None;}
     Some(result)
 }
-
-/// Cache cleaning preserves our completed files and in-flight transactions.
-pub fn owned(name: &[u8]) -> bool {
-    file_kind(name).is_some()
-}
-pub fn file_kind(name: &[u8]) -> Option<Kind> { kind(name.strip_suffix(b".part").unwrap_or(name)) }
-
-pub fn name(out: &mut [u8; NAME_BYTES], kind: Kind, seconds: u32, sequence: u32) {
-    name_for(out, kind, VideoFormat::Gif, seconds, sequence)
-}
-pub fn name_for(out: &mut [u8; NAME_BYTES], kind: Kind, format: VideoFormat, seconds: u32, sequence: u32) {
-    name_with_png(out, kind, format, false, seconds, sequence)
-}
-pub fn name_with_png(out: &mut [u8; NAME_BYTES], kind: Kind, format: VideoFormat, png: bool, seconds: u32, sequence: u32) {
+/// Cache cleaning preserves both naming generations and in-flight transactions.
+pub fn owned(name:&[u8])->bool {file_kind(name).is_some()}
+pub fn file_kind(name:&[u8])->Option<Kind>{kind(name.strip_suffix(b".part").unwrap_or(name))}
+pub fn name_with_png(out:&mut[u8;NAME_BYTES],kind:Kind,format:VideoFormat,png:bool,day:u32,sequence:u32)->Result<(),i32> {
+    if !valid_date(day)||sequence==0{return Err(-22);}
     out.fill(0);
-    let prefix = if kind == Kind::Recording { b"chaos-rec-".as_slice() } else { b"chaos-shot-".as_slice() };
-    out[..prefix.len()].copy_from_slice(prefix);
-    let mut n = prefix.len();
-    for (i, value) in [seconds, sequence].iter().enumerate() {
-        if i != 0 { out[n] = b'-'; n += 1; }
-        for shift in (0..8).rev() {
-            out[n] = b"0123456789abcdef"[((value >> (shift * 4)) & 15) as usize]; n += 1;
-        }
-    }
-    let extension = if kind == Kind::Screenshot { if png { b".png".as_slice() } else { b".bmp".as_slice() } }
-        else if format == VideoFormat::Gif { b".gif".as_slice() } else { b".apng".as_slice() };
-    out[n..n + extension.len()].copy_from_slice(extension);
+    let prefix=if kind==Kind::Screenshot{b"Chaos-Shot-".as_slice()}else{b"Chaos-Rec-".as_slice()};
+    out[..prefix.len()].copy_from_slice(prefix);let mut n=prefix.len();
+    let mut divisor=10_000_000;
+    for _ in 0..8{out[n]=b'0'+((day/divisor)%10)as u8;n+=1;divisor/=10;}
+    out[n]=b'-';n+=1;
+    let mut digits=[0;10];let mut value=sequence;let mut at=10;
+    loop{at-=1;digits[at]=b'0'+(value%10)as u8;value/=10;if value==0{break;}}
+    if at==9{at-=1;digits[at]=b'0';}
+    out[n..n+10-at].copy_from_slice(&digits[at..]);n+=10-at;
+    let extension=if kind==Kind::Screenshot{if png{b".png".as_slice()}else{b".bmp".as_slice()}}
+        else if format==VideoFormat::Gif{b".gif".as_slice()}else{b".apng".as_slice()};
+    out[n..n+extension.len()].copy_from_slice(extension);Ok(())
 }
 
 pub fn path(name: &[u8], temporary: bool, out: &mut [u8; 96]) -> Result<(), i32> {

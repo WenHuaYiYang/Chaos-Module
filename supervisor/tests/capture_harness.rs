@@ -14,7 +14,7 @@ use std::{cell::RefCell, collections::HashMap};
 struct World {
     files: HashMap<String, Vec<u8>>, handles: HashMap<i32, (String, usize)>,
     allocations: HashMap<usize, std::alloc::Layout>, next_fd: i32,
-    now: u32, clock_step: u32, on: bool, captures: usize, spawn_result: i32, frame_error: i32,
+    date: Option<[i32;11]>, now: u32, clock_step: u32, on: bool, captures: usize, spawn_result: i32, frame_error: i32,
     write_size: usize, interrupts: u32, zero_write: bool, budget: usize,
     free_bytes: Option<u64>, fail_alloc: bool, rename_error: i32, close_error: i32,
     stop_during_capture: bool, lost_vsync: bool, write_cost_ms: u32, read_cost_ms: u32, switch_every_copy: bool,
@@ -25,7 +25,7 @@ struct World {
 impl Default for World {
     fn default() -> Self { Self {
         files: HashMap::new(), handles: HashMap::new(), allocations: HashMap::new(), next_fd: 3,
-        now: 1000, clock_step: 0, on: true, captures: 0, spawn_result: 42, frame_error: 0,
+        date: Some([0,0,0,1,0,126,0,0,0,0,0]), now: 1000, clock_step: 0, on: true, captures: 0, spawn_result: 42, frame_error: 0,
         write_size: usize::MAX, interrupts: 0, zero_write: false, budget: usize::MAX,
         free_bytes: Some(64 * 1024 * 1024), fail_alloc: false, rename_error: 0, close_error: 0,
         stop_during_capture: false, lost_vsync: false, write_cost_ms: 0, read_cost_ms: 0, switch_every_copy: false,
@@ -68,6 +68,7 @@ mod fw_api {
         let Some(bytes) = w.files.remove(&cstr(a)) else { return -2; };
         w.files.insert(cstr(b), bytes); 0
     }) }
+    pub unsafe fn local_time_now()->Option<[i32;11]>{world(|w|w.date)}
     pub fn capture_now_ms() -> u32 { world(|w| { let now = w.now; w.now = w.now.wrapping_add(w.clock_step); now }) }
     pub unsafe fn capture_free_bytes() -> Option<u64> { world(|w| w.free_bytes) }
     pub unsafe fn heap_malloc(n: u32) -> usize { world(|w| {
@@ -196,7 +197,7 @@ mod fw_api {
 }
 
 #[derive(Default)]
-struct Ui { rows: Vec<(usize, String, String, bool)>, slots: [u32; 12], navigations: Vec<u32>, renders: Vec<usize>, selected: HashMap<usize, bool>, events: Vec<(u32, u32, u32)> }
+struct Ui { image_attaches:usize, rows: Vec<(usize, String, String, bool)>, slots: [u32; 12], navigations: Vec<u32>, renders: Vec<usize>, selected: HashMap<usize, bool>, events: Vec<(u32, u32, u32)> }
 thread_local! { static UI: RefCell<Ui> = RefCell::new(Ui::default()); }
 fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R { UI.with(|u| f(&mut u.borrow_mut())) }
 
@@ -264,7 +265,7 @@ fn row_cb() -> u32 { 2000 }
 unsafe fn cstr_len(p: *const u8) -> usize { std::ffi::CStr::from_ptr(p.cast()).to_bytes().len() }
 
 mod capture_preview {
-    pub unsafe fn attach(_:usize,_:u32,_:u32,_:u32,_:[u8;96],_:u32,_:[u8;64])->bool{true}
+    pub unsafe fn attach(_:usize,_:u32,_:u32,_:u32,_:[u8;96],_:u32,_:[u8;64])->bool{crate::ui(|u|u.image_attaches+=1);true}
 }
 mod confirm_pop {
     pub const SLOT_SHOT:usize=4;

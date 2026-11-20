@@ -296,17 +296,11 @@ impl Page for FilesPage {
             let item = &list.entries[i];
             let mut w = W::new(list.subtitles[i].as_mut_ptr(), 64);
             w.sz(item.bytes).s(if item.storage == Storage::Media { " · 媒体".as_bytes() } else { " · 日志".as_bytes() })
-                .s(if self.kind == Kind::Screenshot { b"" }
+                .s(if self.kind == Kind::Screenshot { " · 点击预览".as_bytes() }
                     else if list.armed.same_file(item) { " · 再次点击删除".as_bytes() } else { " · 点击删除".as_bytes() }).end();
-            let prefix = if self.kind == Kind::Recording { 10 } else { 11 };
-            let row = build_row(ctx, anchor, i, &RowSpec::tap(&item.name[prefix..], list.subtitles[i].as_ptr()));
+            let row = build_row(ctx, anchor, i, &RowSpec::tap(&item.name, list.subtitles[i].as_ptr()));
             if row == 0 { return Err(PageError::RowFailed(i)); } anchor = row;
-            if self.kind == Kind::Screenshot {
-                let mut path = [0;96];
-                if format::path_at(&item.name,false,item.storage,&mut path).is_ok() {
-                    anchor = picture(ctx,anchor,i,row,path,Some(i),list.subtitles[i])?;
-                }
-            }
+
         }
         if list.offset != 0 { anchor = build_row(ctx, anchor, 8, &RowSpec::clickable("上一页\0".as_bytes())); }
         if list.more { anchor = build_row(ctx, anchor, 9, &RowSpec::clickable("下一页\0".as_bytes())); }
@@ -408,7 +402,7 @@ impl Page for PreviewPage {
         if item.name[0]==0||format::path_at(&item.name,false,item.storage,&mut path).is_err(){
             build_row(ctx,ctx.title,0,&RowSpec::display("未选择截图\0".as_bytes(),core::ptr::null()));return Ok(());
         }
-        let info=build_row(ctx,ctx.title,0,&RowSpec::display(&item.name[11..],"加载预览中\0".as_ptr()));
+        let info=build_row(ctx,ctx.title,0,&RowSpec::display(&item.name,"加载预览中\0".as_ptr()));
         if info==0{return Err(PageError::RowFailed(0));}
         let image=picture(ctx,info,8,info,path,None,[0;64])?;
         let delete=build_row(ctx,image,1,&RowSpec::clickable("删除截图\0".as_bytes()));
