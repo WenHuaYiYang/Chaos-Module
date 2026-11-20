@@ -93,8 +93,12 @@ LAYOUTS = {
 INSTALLER_BUTTONS = (('运行', 'primary'), ('注入设置', 'ghost'), ('安装日志', 'ghost'),
                      ('重启', 'ghost'), ('清除重置', 'danger'))
 
+# 主界面标题: 与 installer/chaos_installer.lua 一样的固定短串。
+# 版本号在关于页与容器头, 标题里不重复 —— tools/test_installer.py 会比对这两处。
+INSTALLER_TITLE = 'Chaos 安装器'
 
-def make_image(title='Chaos 安装器', status='准备就绪',
+
+def make_image(title=INSTALLER_TITLE, status='准备就绪',
                buttons=INSTALLER_BUTTONS, layout='installer'):
     """Chaos thumbnail = 对应表盘运行界面的 1:1 复刻。
 
@@ -290,7 +294,7 @@ def decode_block(blob):
     return w, h, bytes(out[:1024]), bytes(out[1024:])
 
 
-def build_blob(title='Chaos 安装器', status='准备就绪',
+def build_blob(title=INSTALLER_TITLE, status='准备就绪',
                buttons=INSTALLER_BUTTONS, layout='installer'):
     """按指定界面生成一块完整预览块(含 roundtrip 校验)。
 

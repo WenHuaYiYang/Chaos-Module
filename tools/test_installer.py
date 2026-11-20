@@ -361,6 +361,9 @@ class PreviewLayoutTests(unittest.TestCase):
         layout = gen_preview.LAYOUTS['installer']
         title = next(n for n in self.main_children() if n.props[b'text'] is not None)
         self.assertEqual(self.y_ofs(title), layout['title_y'])
+        # 标题是个固定短串: 版本号在关于页与容器头, 标题里不重复。
+        self.assertEqual(title.props[b'text'],
+                         gen_preview.INSTALLER_TITLE.encode())
         card = next(n for n in self.main_children()
                     if n.props[b'text'] is None and self.y_ofs(n) == layout['card_y'])
         self.assertEqual(self.y_ofs(card), layout['card_y'])
