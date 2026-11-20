@@ -455,6 +455,11 @@ unsafe fn tick_app() -> bool {
     // guest 复位(实例当场消失), 所以模拟器里整段跳过; 真机默认不走这条路。
     let lite = st_rd!(SIM_LITE) != 0;
     if !lite {
+        // UI owner after the boot gate: restore module preferences even if the
+        // Chaos app is never opened. Each helper applies only once per injection.
+        crate::screen_rotation::ensure_applied();
+        crate::dimmer_timeout::ensure_applied();
+        crate::touch_palm::ensure_applied();
         crate::appmgr::boot_apply();
         // 运行期看门狗: 换绑新手机/手机重发应用清单会触发固件重注册应用,
         // 普通隐藏的隐藏位会被新节点重置, 这里持续补回(见 appmgr::watch_keep 注释)。

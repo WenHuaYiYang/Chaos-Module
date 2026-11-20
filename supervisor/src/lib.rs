@@ -74,6 +74,7 @@ mod quickapp_exit;
 mod touch_palm;
 mod gyro_pointer;
 mod dimmer_timeout;
+mod settings_store;
 mod log_level;
 mod s541_launcher;
 mod s541_pixels;

@@ -29,21 +29,17 @@ thunk 本身在 flash（`ldr.w pc,[pc,#-0]` + 目标字），可以直接 `bl`�
 
 `supervisor/src/screen_rotation.rs`：
 
-- 配置 `/data/chaos/screen-rotation.cfg`，1 字节：`1`=正常、`2`=翻转。
-- `toggle()` 写配置并立即 `lv_display_set_rotation(disp, 2|0)`，随后把所有已建页面的
+- 翻转状态仅保存在模块本次运行的内存中，不读写配置文件；旧版
+  `/data/chaos/screen-rotation.cfg` 即使存在也会被忽略。
+- `toggle()` 立即调用 `lv_display_set_rotation(disp, 2|0)`，随后把所有已建页面的
   content 根 `obj_invalidate` 一次，避免旧方向的内容缓存和新画面叠在一起。
-- `ensure_applied()` 在主页与设置页 render 时调用，只在"配置值 ≠ 已下发值"时才动 display，
-  所以开机后进一次 Chaos 主页就会恢复上次方向；display 未就绪（返回 0）时留到下一次。
+- 每次重新注入从正常方向开始，在注入后的 UI 维护定时器中应用；display 未就绪时延后。
+  主页、设置页与触控点仍可补应用本次运行方向，但不会恢复上一次注入的翻转状态。
 
 **不用 `transform_rotation`**：那是对象级绘制变换，只转画面不转触摸，翻过来点哪都不对。
 display 级旋转由 LVGL 自己同步分辨率与 indev 坐标映射。
 
 ## 恢复
 
-若开启后无法操作（例如驱动不支持软件旋转导致画面异常），删除配置文件即可回到正常方向：
-
-```
-rm /data/chaos/screen-rotation.cfg
-```
-
-（NSH 终端或文件桥都能做。）
+关闭“屏幕翻转”即可恢复正常方向；重启并重新注入模块也会以正常方向开始。
+不再需要通过删除配置文件恢复。

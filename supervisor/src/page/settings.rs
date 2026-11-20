@@ -293,7 +293,7 @@ unsafe fn appicon_sub() -> *const u8 {
 
 static ROT_DEF: ToggleDef = ToggleDef { get: rot_get, toggle: rot_toggle, status: None };
 static PALM_DEF: ToggleDef = ToggleDef {
-    get: crate::touch_palm::enabled, toggle: crate::touch_palm::toggle, status: None,
+    get: crate::touch_palm::enabled, toggle: crate::touch_palm::toggle, status: Some(crate::touch_palm::status),
 };
 
 static SETTINGS_ROWS: &[RowModel] = &[
@@ -334,7 +334,7 @@ impl Page for SettingsPage {
     }
     fn render(&self, ctx: &PageCtx) -> PageResult {
         unsafe {
-            // 开机后第一次进设置页补一次方向；已经对齐过就是一次原子读。
+            // 仅补应用本次运行的方向，不读取历史翻转配置。
             crate::screen_rotation::ensure_applied();
             frame::build(self, ctx, ctx.title)
         }
