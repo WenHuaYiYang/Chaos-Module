@@ -264,8 +264,8 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
     _ver = f"{(p67_pack.VERSION >> 16) & 0xFF}.{(p67_pack.VERSION >> 8) & 0xFF}.{p67_pack.VERSION & 0xFF}"
     if "__CHAOS_VERSION__" not in text:
         raise RuntimeError("安装器脚本缺少 __CHAOS_VERSION__ 占位符, 标题会缺版本号")
-    text = text.replace("__CHAOS_VERSION__",
-                        _ver.replace(".", "") + getattr(p67_pack, "VERSION_SUFFIX", ""))
+    # 标题只带主版本(127): 构建号放进文件名与关于页, 避免标题过长被缩字号。
+    text = text.replace("__CHAOS_VERSION__", _ver.replace(".", ""))
     slim = minify_lua.strip_source(text)
     if minify_lua.tokens(text) != minify_lua.tokens(slim):
         raise RuntimeError("安装器瘦身改变了 token 序列, 中止打包")
@@ -429,9 +429,10 @@ def main() -> int:
     out = args.out or dist / f"{version}-chaos-installer-{target['id']}.bin"
     # 默认名也带版本号, 与标题/容器头一致; 显式传 --name 时尊重用户。
     default_named = args.name == DEFAULT_NAME
-    # 1.2.7-d -> 127d：标题保持一行短串
-    _compact = version.lstrip("v").replace(".", "").replace("-", "")
-    shown_name = f"Chaos{_compact}安装器" if default_named else args.name
+    # 标题只带主版本(Chaos127安装器); v1.2.7-c0ebd5f 这样的构建号在产物文件名与
+    # 关于页版本串里, 标题保持单行可读。
+    _major = "%d%d%d" % ((p67_pack.VERSION >> 16) & 0xFF, (p67_pack.VERSION >> 8) & 0xFF, p67_pack.VERSION & 0xFF)
+    shown_name = f"Chaos{_major}安装器" if default_named else args.name
     display_name = f"{shown_name} {target['model']} {target['version']}"
     info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")

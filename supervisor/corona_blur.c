@@ -353,6 +353,8 @@ static void chaos_v2_background_refresh(void) {
 }
 
 void chaos_corona_backgrounds_poll(void) {
+    static unsigned idle_skip;
+    unsigned busy;
     if (chaos_corona_in_call) return;
     /* 自愈也挂在 poll 上：标记卡住时上游 poll 会在门口直接 return，
      * 而 commit 又要求 idle —— 只有 poll 是每拍都跑的那条路。 */
@@ -360,7 +362,16 @@ void chaos_corona_backgrounds_poll(void) {
     chaos_corona_in_call = 1;
     chaos_corona_display_rebind();
     chaos_corona_launcher_rebind();
-    rh_platform_backgrounds_poll();
+    /* 空闲降频(2026-11-20): 上游 poll 每拍要做观察者/描述符校验并遍历三个
+     * surface 的通知列表, 桌面静置时这些检查全部为"无变化"。稳定态下每
+     * 2 次才完整跑一次(配合维护节拍 400ms -> 约 0.8s 一次); 一旦有活
+     * (采集未完成/待重绘/刚装配/冷却/交互)立刻恢复每拍, 恢复速度不变。 */
+    busy = p67_blur_pending || p67_wake_pending || p67_blur_busy || p67_blur_polling
+        || chaos_blur_interacting() || !chaos_corona_enabled;
+    if (busy || ++idle_skip >= 2u) {
+        idle_skip = 0;
+        rh_platform_backgrounds_poll();
+    }
     /* 采集卡住的兜底: 上游 poll_rearm 只要看到 pending 就每拍置 wake 并请求
      * 整屏重绘; 如果这次采集因为 owner/门禁永远完不成, 就变成"重绘-重试"死循环。
      * 超过 1.5s 没完成就主动放弃这次请求并冷却 3s, 保证不会长期贴 100% CPU。 */

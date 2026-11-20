@@ -23,10 +23,10 @@ from pathlib import Path
 
 MAGIC = 0x1234A55A
 VERSION = 0x00010207
-# 每次改完代码、准备重新编译出包时，把这一个后缀往后改一遍: Alpha -> Beta -> ...
-# （只改这一处；文件名、容器名、安装器标题、关于页的版本串都从这里派生）
-VERSION_SUFFIX = "Alpha"
-VERSION_TEXT = "%d.%d.%d-%s" % ((VERSION >> 16) & 0xFF, (VERSION >> 8) & 0xFF, VERSION & 0xFF, VERSION_SUFFIX)
+# 构建号: 每次构建前更新为当前的 git 短哈希(工作区有未提交改动时追加 d)。
+# 只改这一处; 产物文件名、关于页版本串、连接日志都从这里派生。
+VERSION_BUILD = "c0ebd5f"
+VERSION_TEXT = "%d.%d.%d-%s" % ((VERSION >> 16) & 0xFF, (VERSION >> 8) & 0xFF, VERSION & 0xFF, VERSION_BUILD)
 HDR = 0xA8
 PAIR_OFF = 0xA8
 PAIRS = 11
