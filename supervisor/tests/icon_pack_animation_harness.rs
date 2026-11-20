@@ -12,7 +12,7 @@ struct Ui {
     icons:BTreeMap<u32,Icon>,registry:BTreeMap<u32,u32>,pack:u32,epoch:u32,ready:bool,
     screen:bool,home:bool,now:u32,heap:usize,allocations:usize,oom:bool,file_oom:bool,delete:bool,
     opens:usize,reads:usize,scans:usize,writes:usize,drops:Vec<u32>,timer:bool,period:u32,
-    chunk:usize,fail_reads:bool,
+    chunk:usize,fail_reads:bool,scrolling:bool,
 }
 static UI:Mutex<Option<Ui>>=Mutex::new(None);
 fn with<T>(f:impl FnOnce(&mut Ui)->T)->T { f(UI.lock().unwrap().as_mut().unwrap()) }
@@ -74,6 +74,9 @@ mod fw_api {
     pub mod dynamic_icon {
         use super::*;
         pub unsafe fn launcher_active()->bool { with(|u|u.home) }
+        // 桌面滑动期间冻结逐帧解码(生产代码据此跳过 lseek/read/上传), 这里保持默认不安
+        // 装新用例 —— 只补桩, 让既有断言继续代表"未滑动"的常态。
+        pub unsafe fn launcher_scrolling()->bool { with(|u|u.scrolling) }
         pub unsafe fn current(id:u32)->Option<Icon> { with(|u|{u.scans+=1;u.icons.get(&id).copied()}) }
         pub unsafe fn pack_animation_active(active:bool,period:u32)->bool { with(|u|{u.timer=active;u.period=period;});true }
     }
@@ -86,7 +89,7 @@ fn setup(mask:Option<u64>,count:usize) {
     }
     let mut u=Ui { files:BTreeMap::new(),fds:BTreeMap::new(),next_fd:3,icons:BTreeMap::new(),registry:BTreeMap::new(),
         pack:1,epoch:1,ready:true,screen:true,home:true,now:0,heap:0x20020000,allocations:0,oom:false,file_oom:false,delete:false,
-        opens:0,reads:0,scans:0,writes:0,drops:Vec::new(),timer:false,period:0,chunk:usize::MAX,fail_reads:false };
+        opens:0,reads:0,scans:0,writes:0,drops:Vec::new(),timer:false,period:0,chunk:usize::MAX,fail_reads:false,scrolling:false };
     if let Some(mask)=mask {
         let mut manifest=b"CIA1\x60\0\x60\0\x26\0\0\0".to_vec();manifest.extend(mask.to_le_bytes());
         u.files.insert(b"/data/chaos/icons/01/animations.bin".to_vec(),manifest);
@@ -102,7 +105,10 @@ fn setup(mask:Option<u64>,count:usize) {
     *UI.lock().unwrap()=Some(u);
 }
 fn tick(now:u32) { with(|u|u.now=now);unsafe { animation::tick(); } }
-fn fast(now:u32) { with(|u|u.now=now);unsafe { animation::animation_tick(); } }
+// 生产侧原先有两条入口(维护 tick 与只跑 drive 的 animation_tick), c0ebd5f9 把后者并进了
+// tick(), 现在 dynamic_icon::animation_tick 与 watchface 维护节拍都只调 tick()。
+// 这里保留 fast() 这个名字表示"再压一拍帧定时器", 目标实现同样是 tick()。
+fn fast(now:u32) { with(|u|u.now=now);unsafe { animation::tick(); } }
 fn source(id:u32)->u32 { with(|u|u.icons[&id].source) }
 fn is_file(pointer:u32)->bool { unsafe { (pointer as *const u8).read()==b'/' } }
 fn pixels(pointer:u32)->Vec<u8> {
