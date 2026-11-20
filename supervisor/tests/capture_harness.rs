@@ -41,7 +41,7 @@ fn cstr(p: *const u8) -> String { unsafe { std::ffi::CStr::from_ptr(p.cast()).to
 mod fw_api {
     use super::*;
     pub mod oflag { pub const RDONLY: u32 = 1; pub const WRONLY: u32 = 2; pub const CREAT: u32 = 4; }
-    pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX: u32 = 2; }
+    pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX: u32 = 2; pub const SWITCH: u32 = 1; }
     pub unsafe fn row_trailing(row: u32) -> u32 { row + 100 }
     pub unsafe fn obj_add_event(object: u32, callback: u32, event: u32, _: u32) {
         crate::ui(|u| u.events.push((object, callback, event)));
@@ -200,11 +200,14 @@ mod page {
         fn fill_title(&self, buf: *mut u8);
         fn render(&self, ctx: &PageCtx) -> PageResult;
         fn on_click(&self, i: usize);
+        fn is_switch_row(&self, _: usize) -> bool { false }
+        fn on_switch(&self, _: usize) {}
         fn needs_tick(&self) -> bool { false }
         fn tick(&self) {}
     }
     pub struct RowSpec<'a> { pub text: &'a [u8], pub sub: *const u8, pub clickable: bool, pub trailing: u32 }
     impl<'a> RowSpec<'a> {
+        pub fn switch(text: &'a [u8]) -> Self { Self { text, sub: std::ptr::null(), clickable: true, trailing: crate::fw_api::trailing::SWITCH } }
         pub fn clickable(text: &'a [u8]) -> Self { Self { text, sub: std::ptr::null(), clickable: true, trailing: 0 } }
         pub fn tap(text: &'a [u8], sub: *const u8) -> Self { Self { text, sub, clickable: true, trailing: 0 } }
         pub fn display(text: &'a [u8], sub: *const u8) -> Self { Self { text, sub, clickable: false, trailing: 0 } }

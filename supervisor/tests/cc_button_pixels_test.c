@@ -41,7 +41,7 @@ int main(void) {
     unsigned char saved[4];memcpy(saved,out,4);
     assert(!cc_copy_atlas(atlas,out+1,1,1,4,4,0,0,1));
     assert(!cc_copy_atlas(atlas,out,1,1,5,5,0,0,1));
-    assert(!cc_copy_atlas(atlas,out,161,1,644,644,0,0,1));
+    assert(!cc_copy_atlas(atlas,out,337,1,1348,1348,0,0,1));
     assert(!cc_copy_atlas(atlas,out,1,129,4,516,0,0,1));
     assert(!cc_copy_atlas(atlas,out,78,64,320,320*64-1,0,0,2));
     assert(!cc_copy_atlas(atlas,out,1,1,4,4,0,0,0));

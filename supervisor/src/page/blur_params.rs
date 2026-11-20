@@ -66,7 +66,7 @@ unsafe fn reset(){let _=crate::blur_params::reset_group(BUTTON_GROUP);render_gro
 static ROWS: &[RowModel]=&[
     RowModel::nav("背景调整\0".as_bytes(),Pid::BlurBackgroundParams as u32),
     RowModel::nav("按钮调整\0".as_bytes(),Pid::BlurButtonParams as u32),
-    RowModel::note("背景和按钮分别设置模糊、亮度、透明度、饱和度、对比度和RGB染色。参数自动保存，仅对模糊V2生效。\0".as_bytes()),
+    RowModel::note("背景和按钮分别设置模糊、亮度、透明度、饱和度、对比度和RGB染色。参数自动保存，模糊V2与V3共用；按钮调整同时应用于控制中心和启动器布局切换按钮。\0".as_bytes()),
 ];
 static BACKGROUND_ROWS: &[RowModel]=&[
     RowModel::section("模糊与透明度\0".as_bytes()),
@@ -78,7 +78,7 @@ static BACKGROUND_ROWS: &[RowModel]=&[
     RowModel::section("刷新与重置\0".as_bytes()),
     param_row!(20,bg_interval,bg_interval_value),
     RowModel{label:"恢复背景默认参数\0".as_bytes(),sub:RowSub::Dyn(reset_status),kind:RowKind::Fn(reset),trailing:0,refresh:None},
-    RowModel::note("当前为省电滤波（上游原生，radius 2 / 84x120）。以下强度、色彩与按钮参数属于 V2 滤波，V2 未启用时不生效。\0".as_bytes()),
+    RowModel::note("以下参数由模糊V2与V3共用；省电滤波使用原生参数，不应用这些设置。\0".as_bytes()),
     RowModel::note("强度0关闭模糊。亮度、饱和度和对比度100%为原值；饱和度0为灰度，对比度0为均匀灰色。染色比例0不染色，100%为所设RGB纯色。\0".as_bytes()),
     RowModel::note("不透明度0隐藏模糊层、透出下层画面。背景与按钮独立调色；两边共享表盘采集，可见区域中较短的采集间隔会让共享源更快更新。\0".as_bytes()),
 ];

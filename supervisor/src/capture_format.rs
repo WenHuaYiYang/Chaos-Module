@@ -43,7 +43,7 @@ pub fn kind(name: &[u8]) -> Option<Kind> {
     let (prefix, suffix, result) = if name.starts_with(b"chaos-rec-") {
         (b"chaos-rec-".as_slice(), if name.ends_with(b".apng") { b".apng".as_slice() } else { b".gif".as_slice() }, Kind::Recording)
     } else {
-        (b"chaos-shot-".as_slice(), b".bmp".as_slice(), Kind::Screenshot)
+        (b"chaos-shot-".as_slice(), if name.ends_with(b".png") { b".png".as_slice() } else { b".bmp".as_slice() }, Kind::Screenshot)
     };
     let stem = prefix.len();
     if name.len() != stem + 17 + suffix.len() || !name.starts_with(prefix)
@@ -63,6 +63,9 @@ pub fn name(out: &mut [u8; NAME_BYTES], kind: Kind, seconds: u32, sequence: u32)
     name_for(out, kind, VideoFormat::Gif, seconds, sequence)
 }
 pub fn name_for(out: &mut [u8; NAME_BYTES], kind: Kind, format: VideoFormat, seconds: u32, sequence: u32) {
+    name_with_png(out, kind, format, false, seconds, sequence)
+}
+pub fn name_with_png(out: &mut [u8; NAME_BYTES], kind: Kind, format: VideoFormat, png: bool, seconds: u32, sequence: u32) {
     out.fill(0);
     let prefix = if kind == Kind::Recording { b"chaos-rec-".as_slice() } else { b"chaos-shot-".as_slice() };
     out[..prefix.len()].copy_from_slice(prefix);
@@ -73,7 +76,7 @@ pub fn name_for(out: &mut [u8; NAME_BYTES], kind: Kind, format: VideoFormat, sec
             out[n] = b"0123456789abcdef"[((value >> (shift * 4)) & 15) as usize]; n += 1;
         }
     }
-    let extension = if kind == Kind::Screenshot { b".bmp".as_slice() }
+    let extension = if kind == Kind::Screenshot { if png { b".png".as_slice() } else { b".bmp".as_slice() } }
         else if format == VideoFormat::Gif { b".gif".as_slice() } else { b".apng".as_slice() };
     out[n..n + extension.len()].copy_from_slice(extension);
 }

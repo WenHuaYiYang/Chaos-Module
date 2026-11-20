@@ -160,16 +160,32 @@ impl Page for SettingsPage {
     fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, if self.recording { "录屏设置\0".as_bytes() } else { "截图设置\0".as_bytes() }); } }
     fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
         let spec = CapSetCheck { recording: self.recording };
-        let anchor = ck_render(&spec, ctx)?;
+        let mut anchor = ck_render(&spec, ctx)?;
+        let mut footer = spec.count();
+        if !self.recording {
+            anchor = build_row(ctx, anchor, 2, &RowSpec::switch("转换为PNG\0".as_bytes()));
+            if anchor == 0 { return Err(PageError::RowFailed(2)); }
+            fw_api::row_update(anchor, core::ptr::null(), core::ptr::null(), core::ptr::null(), 0,
+                capture_settings::get().screenshot_png as u8);
+            footer += 1;
+        }
         // 条件提示行(失败/录屏中修改的说明), 跟在选项列表后
         if SETTINGS_RESULT[self.slot()] < 0 {
-            build_row(ctx, anchor, spec.count(), &RowSpec::display("设置保存失败，请重试\0".as_bytes(), core::ptr::null()));
+            build_row(ctx, anchor, footer, &RowSpec::display("设置保存失败，请重试\0".as_bytes(), core::ptr::null()));
         } else if capture::state() != State::Idle && self.recording {
-            build_row(ctx, anchor, spec.count(), &RowSpec::display("修改将在下次录屏生效\0".as_bytes(), core::ptr::null()));
+            build_row(ctx, anchor, footer, &RowSpec::display("修改将在下次录屏生效\0".as_bytes(), core::ptr::null()));
         }
         Ok(())
     } }
+    fn is_switch_row(&self, i: usize) -> bool { !self.recording && i == 2 }
+    fn on_switch(&self, i: usize) { if self.is_switch_row(i) { self.on_click(i); } }
     fn on_click(&self, i: usize) { unsafe {
+        if self.is_switch_row(i) {
+            let mut setting = capture_settings::get();
+            setting.screenshot_png = !setting.screenshot_png;
+            SETTINGS_RESULT[self.slot()] = capture_settings::set(setting).err().unwrap_or(0);
+            capture::settings_changed(); render_req(self.pid() as u32); return;
+        }
         let spec = CapSetCheck { recording: self.recording };
         ck_click(&spec, self.pid() as u32, i);
     } }

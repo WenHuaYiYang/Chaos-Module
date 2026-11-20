@@ -21,6 +21,9 @@ pub extern "C" fn chaos_blur_control_buttons_set(_:u32) {}
 #[no_mangle]
 pub extern "C" fn chaos_corona_set_scene(_:u32) {}
 mod blur_params {pub unsafe fn apply(){}}
+#[no_mangle]
+pub extern "C" fn chaos_blur_launcher_buttons_set(_:u32) {}
+mod launcher_buttons_config {pub unsafe fn enabled()->bool{true}}
 mod cc_buttons_config { pub unsafe fn enabled() -> bool { true } }
 
 #[path = "../src/corona_blur.rs"]

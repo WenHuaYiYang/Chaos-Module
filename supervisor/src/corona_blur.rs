@@ -22,6 +22,7 @@ pub(crate) const ALGO_V3: u32 = 2;
 extern "C" {
     fn chaos_blur_select_algorithm(algo: u32) -> i32;
     fn chaos_blur_control_buttons_set(enabled: u32);
+    fn chaos_blur_launcher_buttons_set(enabled: u32);
     fn chaos_corona_backgrounds_commit(enabled: u32, region_mask: u32) -> i32;
     fn chaos_corona_backgrounds_poll();
     fn chaos_corona_backgrounds_pending() -> u32;
@@ -136,6 +137,7 @@ pub(crate) unsafe fn set_scene(id: u32) {
 pub(crate) unsafe fn backgrounds_poll() {
     crate::blur_params::apply();
     chaos_blur_control_buttons_set((algo() != 0 && crate::cc_buttons_config::enabled()) as u32);
+    chaos_blur_launcher_buttons_set((algo() != 0 && crate::launcher_buttons_config::enabled()) as u32);
     let _ = chaos_blur_select_algorithm(algo());
     chaos_corona_backgrounds_poll();
 }

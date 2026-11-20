@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='chaos-cc-buttons-') as folder:
-    for name in ('cc_button_pixels_test','cc_buttons_harness'):
+    for name in ('cc_button_pixels_test','cc_buttons_harness','launcher_button_harness'):
         binary=Path(folder)/name
         subprocess.run([os.environ.get('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror',
                         '-fsanitize=address,undefined','-O1',str(ROOT/f'supervisor/tests/{name}.c'),

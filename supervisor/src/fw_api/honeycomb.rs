@@ -804,3 +804,17 @@ pub(crate) unsafe fn geometry_matches(icon: u32, f: Frame) -> bool {
     let dy = cy - (word(grid, 0x20) as i32 + f.y);
     dx.abs() <= 1 && dy.abs() <= 1
 }
+
+/// UI-owner only: resolve the same verified native button used by S541.
+/// Never retain a freed grid/button or paint over S541's replacement control.
+#[no_mangle]
+pub unsafe extern "C" fn chaos_blur_launcher_target(root: *mut u32) -> u32 {
+    if root.is_null() { return 0; }
+    *root = 0;
+    if crate::s541_launcher::enabled() { return 0; }
+    let grid = launcher();
+    if grid == 0 || !s541_supported(grid) { return 0; }
+    let button = s541_button(grid);
+    if button != 0 { *root = parent(grid); }
+    button
+}

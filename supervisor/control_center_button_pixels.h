@@ -56,7 +56,7 @@ static inline int cc_build_atlas(const struct cc_pixels *source,uint32_t *atlas,
     return brightness<=100 && cc_build_atlas_styled(source,atlas,&style);
 }
 static int cc_prepare_mask(unsigned char *out,unsigned w,unsigned h,unsigned stride,unsigned size,unsigned radius) {
-    if(!out || !w || !h || w>160 || h>128 || stride<w*4 || stride>1024 || size<stride*h) return 0;
+    if(!out || !w || !h || w>336 || h>128 || stride<w*4 || stride>2048 || size<stride*h) return 0;
     if(radius>w/2)radius=w/2;if(radius>h/2)radius=h/2;
     for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
         unsigned char *p=out+y*stride+x*4;p[0]=p[1]=p[2]=0;
@@ -66,9 +66,9 @@ static int cc_prepare_mask(unsigned char *out,unsigned w,unsigned h,unsigned str
 }
 static int cc_copy_atlas(const uint32_t *atlas,unsigned char *out,unsigned w,unsigned h,
                          unsigned stride,unsigned size,int left,int top,unsigned scale) {
-    if(!atlas || !out || ((uintptr_t)out&3u) || (stride&3u) || !w || !h || w>160 || h>128 || stride<w*4 || stride>1024 || size<stride*h ||
+    if(!atlas || !out || ((uintptr_t)out&3u) || (stride&3u) || !w || !h || w>336 || h>128 || stride<w*4 || stride>2048 || size<stride*h ||
        (scale!=1 && scale!=2) || left < -1024 || left>1024 || top < -2048 || top>2048) return 0;
-    unsigned columns[160];
+    unsigned columns[336];
     for(unsigned x=0;x<w;++x) {
         int sx=(left+(int)(x*scale))/2;if(sx<0)sx=0;if(sx>167)sx=167;columns[x]=(unsigned)sx;
     }

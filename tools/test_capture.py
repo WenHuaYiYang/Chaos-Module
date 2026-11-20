@@ -76,6 +76,31 @@ def main():
                 value = (value * 1664525 + 1013904223) & 0xffffffff
                 b, g, r = value.to_bytes(4, "little")[:3]
                 assert pixels.getpixel((pixel % 336, pixel // 336)) == (r, g, b)
+        for filename in ("worker.png", "solid.png"):
+            data = (directory / filename).read_bytes()
+            offset = 8; compressed = bytearray(); tags = []
+            assert data[:8] == b"\x89PNG\r\n\x1a\n"
+            while offset < len(data):
+                size = int.from_bytes(data[offset:offset+4], "big"); tag = data[offset+4:offset+8]
+                payload = data[offset+8:offset+8+size]; tags.append(tag)
+                assert zlib.crc32(tag+payload) == int.from_bytes(data[offset+8+size:offset+12+size], "big")
+                if tag == b"IDAT": compressed.extend(payload)
+                if tag == b"IHDR": assert payload == struct.pack(">IIBBBBB",336,480,8,2,0,0,0)
+                offset += 12+size
+            assert tags[0] == b"IHDR" and tags[-1] == b"IEND" and b"acTL" not in tags
+            assert offset == len(data)
+            raw = zlib.decompress(compressed)
+            assert len(raw) == (336*3+1)*480
+            assert all(raw[y*(336*3+1)] == 0 for y in range(480))
+            with Image.open(directory / filename) as png:
+                assert png.format == "PNG" and png.size == (336,480) and png.mode == "RGB"
+                if filename == "solid.png": assert png.getextrema() == ((0,0),)*3
+                if filename == "worker.png":
+                    value = 1
+                    for pixel in range(336*480):
+                        value = (value*1664525+1013904223)&0xffffffff
+                        b,g,r = value.to_bytes(4,"little")[:3]
+                        assert png.getpixel((pixel%336,pixel//336)) == (r,g,b)
         with Image.open(directory / "size-limit.gif") as gif:
             assert gif.n_frames > 1
             gif.seek(gif.n_frames - 1)
@@ -175,7 +200,7 @@ def main():
             assert animation.convert("RGB").getextrema() == ((0, 0),) * 3
         with Image.open(directory / "fifteen.gif") as animation:
             assert animation.n_frames == 15
-        print("PASS: GIF/APNG/BMP pixels and timing, neutral gray cards/primary channels, bounded snapshot repair and relaxed fallback")
+        print("PASS: GIF/APNG/BMP/PNG pixels and timing, neutral gray cards/primary channels, bounded snapshot repair and relaxed fallback")
 
 if __name__ == "__main__":
     main()

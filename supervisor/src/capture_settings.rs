@@ -7,24 +7,30 @@ const LOADED: u32 = 1 << 31;
 static VALUE: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Settings { pub format: VideoFormat, pub recording: Storage, pub screenshot: Storage }
+pub struct Settings { pub format: VideoFormat, pub recording: Storage, pub screenshot: Storage, pub screenshot_png: bool }
 impl Settings {
-    pub const DEFAULT: Self = Self { format: VideoFormat::Gif, recording: Storage::OfflineLog, screenshot: Storage::OfflineLog };
-    pub fn pack(self) -> u32 { self.format as u32 | ((self.recording as u32) << 1) | ((self.screenshot as u32) << 2) }
+    pub const DEFAULT: Self = Self { format: VideoFormat::Gif, recording: Storage::OfflineLog, screenshot: Storage::OfflineLog, screenshot_png: false };
+    pub fn pack(self) -> u32 { self.format as u32 | ((self.recording as u32) << 1) | ((self.screenshot as u32) << 2) | ((self.screenshot_png as u32) << 3) }
     pub fn unpack(bits: u32) -> Self { Self {
         format: if bits & 1 == 0 { VideoFormat::Gif } else { VideoFormat::Apng },
         recording: if bits & 2 == 0 { Storage::OfflineLog } else { Storage::Media },
         screenshot: if bits & 4 == 0 { Storage::OfflineLog } else { Storage::Media },
+        screenshot_png: bits & 8 != 0,
     } }
     fn bytes(self) -> [u8; 8] {
-        [b'C', b'A', b'P', b'2', self.format as u8, self.recording as u8, self.screenshot as u8,
-            self.format as u8 ^ self.recording as u8 ^ self.screenshot as u8 ^ 0x5a]
+        let shot = self.screenshot as u8 | ((self.screenshot_png as u8) << 1);
+        [b'C', b'A', b'P', b'3', self.format as u8, self.recording as u8, shot,
+            self.format as u8 ^ self.recording as u8 ^ shot ^ 0x5a]
     }
 }
 fn parse(bytes: &[u8; 8]) -> Option<Settings> {
-    if &bytes[..4] != b"CAP2" || bytes[4..7].iter().any(|&v| v > 1)
+    // CAP2 remains readable; CAP3 adds PNG in bit 1 of the screenshot byte.
+    let old = &bytes[..4] == b"CAP2";
+    if (!old && &bytes[..4] != b"CAP3") || bytes[4] > 1 || bytes[5] > 1
+        || bytes[6] > if old { 1 } else { 3 }
         || bytes[7] != bytes[4] ^ bytes[5] ^ bytes[6] ^ 0x5a { return None; }
-    Some(Settings::unpack(bytes[4] as u32 | (bytes[5] as u32) << 1 | (bytes[6] as u32) << 2))
+    Some(Settings::unpack(bytes[4] as u32 | (bytes[5] as u32) << 1
+        | ((bytes[6] & 1) as u32) << 2 | ((bytes[6] >> 1) as u32) << 3))
 }
 unsafe fn read(path: *const u8) -> Result<[u8; 8], i32> {
     let fd = fw::capture_result(fw::open(path, fw::oflag::RDONLY, 0));
