@@ -40,6 +40,19 @@ fn cstr(p: *const u8) -> String { unsafe { std::ffi::CStr::from_ptr(p.cast()).to
 
 mod fw_api {
     use super::*;
+    pub const LV_OBJ_FLAG_SCROLLABLE:u32=16;
+    pub const LV_OBJ_FLAG_SCROLL_CHAIN:u32=0x300;
+    pub const LV_OBJ_FLAG_CLICKABLE:u32=2;
+    pub mod align {pub const OUT_BOTTOM_MID:u32=14;pub const TOP_LEFT:u32=1;}
+    pub unsafe fn obj_create(_:u32,_:u32)->u32{500}
+    pub unsafe fn obj_clear_box_spacing(_:u32){}
+    pub unsafe fn obj_set_size_wh(_:u32,_:u32,_:u32){}
+    pub unsafe fn background_set_opa(_:u32,_:u32){}
+    pub unsafe fn obj_clear_flag(_:u32,_:u32){}
+    pub unsafe fn obj_add_flag(_:u32,_:u32){}
+    pub unsafe fn obj_align_to(_:u32,_:u32,_:u32,_:i32,_:i32){}
+    pub unsafe fn obj_align(_:u32,_:u32,_:i32,_:i32){}
+    pub unsafe fn background_image_create(_:u32)->u32{600}
     pub mod oflag { pub const RDONLY: u32 = 1; pub const WRONLY: u32 = 2; pub const CREAT: u32 = 4; }
     pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX: u32 = 2; pub const SWITCH: u32 = 1; }
     pub unsafe fn row_trailing(row: u32) -> u32 { row + 100 }
@@ -189,7 +202,7 @@ fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R { UI.with(|u| f(&mut u.borrow_mut())
 
 mod page {
     pub mod kit { pub use crate::checklist; }
-    pub(crate) use crate::fw_api;
+    pub(crate) use crate::{fw_api,row_cb};
     pub(crate) use std::ptr::read_volatile;
     pub const DT_REG: u8 = 8;
     pub struct PageCtx { pub content: u32, pub title: u32, pub rows: *mut u32 }
@@ -200,6 +213,8 @@ mod page {
         fn fill_title(&self, buf: *mut u8);
         fn render(&self, ctx: &PageCtx) -> PageResult;
         fn on_click(&self, i: usize);
+        fn on_instance_reset(&self) {}
+        fn on_pause(&self) {}
         fn is_switch_row(&self, _: usize) -> bool { false }
         fn on_switch(&self, _: usize) {}
         fn needs_tick(&self) -> bool { false }
@@ -224,6 +239,8 @@ mod page {
     }
     pub unsafe fn put_str(out: *mut u8, bytes: &[u8]) { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()); }
     pub fn render_req(pid: u32) { crate::ui(|u| u.renders.push(pid as usize)); }
+    pub enum Pid {ShotPreview=62}
+    pub unsafe fn nav_back(){crate::ui(|u|u.navigations.push(u32::MAX));}
     pub unsafe fn nav_goto(pid: u32, _: u32) { crate::ui(|u| u.navigations.push(pid)); }
     pub fn page_rows_ptr(_: usize) -> *mut u32 { crate::ui(|u| u.slots.as_mut_ptr()) }
     pub unsafe fn row_ev_fn(slot: usize) -> u32 { 1000 + slot as u32 }
@@ -245,3 +262,17 @@ use page::*;
 const MAX_PID: usize = 42;
 fn row_cb() -> u32 { 2000 }
 unsafe fn cstr_len(p: *const u8) -> usize { std::ffi::CStr::from_ptr(p.cast()).to_bytes().len() }
+
+mod capture_preview {
+    pub unsafe fn attach(_:usize,_:u32,_:u32,_:u32,_:[u8;96],_:u32,_:[u8;64])->bool{true}
+}
+mod confirm_pop {
+    pub const SLOT_SHOT:usize=4;
+    pub static mut SHOWN:bool=false;
+    pub unsafe fn forget(_:usize){SHOWN=false;}
+    pub unsafe fn reset(_:usize){SHOWN=false;}
+    pub unsafe fn shown(_:usize)->bool{SHOWN}
+    pub unsafe fn build(_:usize,_:u32,_:*const u8,_:usize,_:u32,_:u32)->u32{SHOWN=true;0}
+    pub unsafe fn click(_:usize,event:u32)->u32{if SHOWN&&event==7{SHOWN=false;1}else{0}}
+    pub unsafe fn close_deferred(_:usize)->bool{false}
+}

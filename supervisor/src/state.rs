@@ -222,7 +222,8 @@ pub static PAGE_FLOATING_BALL_SIZE: [u8; 9] = *b"dotsizes\0";
 pub static PAGE_FLOATING_BALL_ACTION: [u8; 9] = *b"dotacts0\0";
 pub static PAGE_GYRO_POINTER: [u8; 12] = *b"gyropointer\0";
 
-pub const PAGE_COUNT: usize = 62;                   // 注册页数(页0..页61)
+pub static PAGE_SHOT_PREVIEW: [u8; 12] = *b"shotpreview\0";
+pub const PAGE_COUNT: usize = 63;                   // 注册页数(页0..页62)
 pub const MAX_PID: usize = PAGE_COUNT - 1;          // 页号上界, 所有 pid 校验统一引用它
 pub static mut DESC: [u32; PAGE_COUNT * 29] = [0; PAGE_COUNT * 29]; // 116B/页
 

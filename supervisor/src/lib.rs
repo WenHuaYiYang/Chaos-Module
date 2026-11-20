@@ -85,6 +85,8 @@ mod icon_pack_animation;
 mod capture_format;
 mod capture_apng;
 mod capture_settings;
+mod capture_decode;
+mod capture_preview;
 mod capture;
 mod debug_info;
 

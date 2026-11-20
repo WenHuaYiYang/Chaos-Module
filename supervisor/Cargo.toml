@@ -21,3 +21,4 @@ codegen-units = 1
 debug = false
 
 [dependencies]
+miniz_oxide = { version = "=0.8.9", default-features = false }

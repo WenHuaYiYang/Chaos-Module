@@ -381,6 +381,7 @@ unsafe fn tick_busy() -> bool {
     || confirm_pop::pending()
     || background_home::pending()
     || crate::s541_launcher::pending()
+    || crate::capture_preview::pending()
     || crate::quickapp_animation::pending()
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()
@@ -435,6 +436,7 @@ unsafe fn tick_adapt() {
 unsafe fn tick_terminal() {
     // 终端输出即使别的页在前台也要排掉, 所以放在最前、且不过开机延迟门。
     crate::terminal_ui::poll_output();
+    crate::capture_preview::poll();
     // 文件桥只在这里启动/停止：UI owner 已就绪，且开关变化由维护 tick
     // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
     crate::bridge_cfg::tick();

@@ -586,7 +586,7 @@ fn png_transaction_failure_removes_partial_file_and_keeps_previous_screenshot() 
 
 #[test]
 fn png_long_runs_keep_true_colour_and_are_managed_alongside_bmp() {
-    use crate::{capture_page::PAGE_SCREENSHOTS, page::Page};
+    use crate::{capture_page::{PAGE_SCREENSHOTS,PAGE_PREVIEW,confirm_preview_for_test}, page::Page};
     reset(); capture_settings::set(Settings { screenshot_png: true, screenshot: Storage::Media, ..Settings::DEFAULT }).unwrap();
     world(|w| w.frame_mode = 1);
     let mut worker = Worker::new(); request_shot_now().unwrap(); unsafe { worker.step(); }
@@ -599,6 +599,26 @@ fn png_long_runs_keep_true_colour_and_are_managed_alongside_bmp() {
     let name=b"chaos-shot-00000001-00000000.png";
     assert_eq!(format::file_kind(name),Some(Kind::Screenshot));
     assert_eq!(format::file_kind(b"chaos-shot-00000001-00000000.png.part"),Some(Kind::Screenshot));
-    PAGE_SCREENSHOTS.on_click(0); PAGE_SCREENSHOTS.on_click(0); PAGE_SCREENSHOTS.tick();
+    PAGE_SCREENSHOTS.on_click(0); PAGE_PREVIEW.on_click(1);
+    unsafe { confirm_preview_for_test(true); } PAGE_PREVIEW.tick();
     assert_eq!(file_count(".png"),0); check_clean();
+}
+
+#[test]
+fn screenshot_preview_opens_without_deleting_and_requires_system_confirmation() {
+    use crate::{capture_page::*,page::Page,ui};
+    reset();ui(|u|*u=Default::default());
+    let filename="chaos-shot-00000001-00000000.png";
+    let media=format!("/data/chaos/media/{filename}");let log=format!("/data/offlinelog/{filename}");
+    world(|w|{w.files.insert(log.clone(),vec![1]);w.files.insert(media.clone(),vec![2]);});
+    let ctx=crate::page::PageCtx{content:1,title:2,rows:std::ptr::null_mut()};
+    PAGE_SCREENSHOTS.render(&ctx).unwrap();
+    PAGE_SCREENSHOTS.on_click(0);PAGE_SCREENSHOTS.tick();
+    assert_eq!(file_count(".png"),2);ui(|u|assert_eq!(u.navigations.last(),Some(&62)));
+    PAGE_PREVIEW.render(&ctx).unwrap();ui(|u|assert!(u.rows.iter().any(|r|r.1=="删除截图")));
+    PAGE_PREVIEW.on_click(1);PAGE_PREVIEW.tick();assert_eq!(file_count(".png"),2);
+    unsafe{confirm_preview_for_test(false);}PAGE_PREVIEW.tick();assert_eq!(file_count(".png"),2);
+    PAGE_PREVIEW.on_click(1);unsafe{confirm_preview_for_test(true);}PAGE_PREVIEW.tick();
+    assert_eq!(file_count(".png"),1);world(|w|{assert!(w.files.contains_key(&media));assert!(!w.files.contains_key(&log));});
+    ui(|u|assert_eq!(u.navigations.last(),Some(&u32::MAX)));check_clean();
 }
