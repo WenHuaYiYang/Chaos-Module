@@ -7,6 +7,10 @@ struct Ui { log: connect_log_buffer::Records<32768>, text: String, height: u32, 
 static UI: Mutex<Option<Ui>> = Mutex::new(None);
 fn with<T>(f: impl FnOnce(&mut Ui)->T)->T { f(UI.lock().unwrap().as_mut().unwrap()) }
 pub const FW_STYLE_MISANS_REG_24:u32=24;
+// build.rs 在 cargo 构建时把 CHAOS_VERSION_TEXT(缺省退回 CARGO_PKG_VERSION)写进
+// OUT_DIR/version.rs, 由 lib.rs include! 成 crate::VERSION_TEXT。这里用裸 rustc 编译,
+// 没有构建脚本, 所以按同样的优先级补给页面根部一份, 否则日志页尾行的版本号无处可取。
+pub const VERSION_TEXT:&str=match option_env!("CARGO_PKG_VERSION"){Some(v)=>v,None=>"0.0.0"};
 mod connect_log {
     pub unsafe fn page(p:*mut u8,cap:usize,skip:usize,limit:usize)->(usize,usize){
         super::with(|u|u.log.page(core::slice::from_raw_parts_mut(p,cap),skip,limit))

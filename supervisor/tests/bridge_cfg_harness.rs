@@ -1,7 +1,7 @@
 //! Production switch config: the native gate must change before storage or maintenance.
 #![allow(dead_code,static_mut_refs)]
 use std::sync::Mutex;
-#[derive(Default)]struct Fixture{config:Option<Vec<u8>>,gate:bool,fail_write:bool,started:bool,revoked:bool,events:Vec<String>}
+#[derive(Default)]struct Fixture{config:Option<Vec<u8>>,gate:bool,fail_write:bool,started:bool,revoked:bool,events:Vec<String>,now:u32}
 static FIX:Mutex<Option<Fixture>>=Mutex::new(None);
 fn with<T>(f:impl FnOnce(&mut Fixture)->T)->T{f(FIX.lock().unwrap().as_mut().unwrap())}
 #[macro_export]macro_rules! st_rd{($e:expr)=>{core::ptr::read_volatile(core::ptr::addr_of!($e))};}
@@ -15,6 +15,9 @@ mod connect_permission{
 }
 mod fw_api{
     pub mod oflag{pub const RDONLY:u32=1;pub const WRONLY:u32=2;pub const CREAT:u32=4;}
+    // 维护节拍现在按毫秒退避重启(生产代码读 capture_now_ms 算 RETRY_AT)。每次读表前进
+    // 1 秒, 连续 tick 之间足够越过 RETRY_MS 窗口, 用例不必关心具体时间点。
+    pub unsafe fn capture_now_ms()->u32{super::with(|f|{f.now=f.now.wrapping_add(1000);f.now})}
     pub unsafe fn open(_: *const u8,flags:u32,_:u32)->i32{super::with(|f|{
         if flags&2!=0{f.events.push("save".into());2}else if f.config.is_some(){1}else{-1}
     })}
