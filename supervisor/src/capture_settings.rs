@@ -9,7 +9,7 @@ static VALUE: AtomicU32 = AtomicU32::new(0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings { pub format: VideoFormat, pub recording: Storage, pub screenshot: Storage, pub screenshot_png: bool }
 impl Settings {
-    pub const DEFAULT: Self = Self { format: VideoFormat::Gif, recording: Storage::OfflineLog, screenshot: Storage::OfflineLog, screenshot_png: false };
+    pub const DEFAULT: Self = Self { format: VideoFormat::Gif, recording: Storage::OfflineLog, screenshot: Storage::OfflineLog, screenshot_png: true };
     pub fn pack(self) -> u32 { self.format as u32 | ((self.recording as u32) << 1) | ((self.screenshot as u32) << 2) | ((self.screenshot_png as u32) << 3) }
     pub fn unpack(bits: u32) -> Self { Self {
         format: if bits & 1 == 0 { VideoFormat::Gif } else { VideoFormat::Apng },
@@ -24,13 +24,14 @@ impl Settings {
     }
 }
 fn parse(bytes: &[u8; 8]) -> Option<Settings> {
-    // CAP2 remains readable; CAP3 adds PNG in bit 1 of the screenshot byte.
+    // CAP2 has no PNG preference, so migrate it to the enabled default.
+    // CAP3 preserves the explicitly saved switch in bit 1 of the screenshot byte.
     let old = &bytes[..4] == b"CAP2";
     if (!old && &bytes[..4] != b"CAP3") || bytes[4] > 1 || bytes[5] > 1
         || bytes[6] > if old { 1 } else { 3 }
         || bytes[7] != bytes[4] ^ bytes[5] ^ bytes[6] ^ 0x5a { return None; }
     Some(Settings::unpack(bytes[4] as u32 | (bytes[5] as u32) << 1
-        | ((bytes[6] & 1) as u32) << 2 | ((bytes[6] >> 1) as u32) << 3))
+        | ((bytes[6] & 1) as u32) << 2 | ((bytes[6] >> 1) as u32) << 3 | if old { 8 } else { 0 }))
 }
 unsafe fn read(path: *const u8) -> Result<[u8; 8], i32> {
     let fd = fw::capture_result(fw::open(path, fw::oflag::RDONLY, 0));
