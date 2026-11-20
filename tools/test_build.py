@@ -116,6 +116,37 @@ class BuildPreflightTests(unittest.TestCase):
                     "project-python", str(repo / "tools/gen_preview.py"), str(output),
                 ], repo)
 
+    def test_prepare_preview_rerenders_even_when_block_already_exists(self):
+        """旧块在场也必须重画: 否则改完界面缩略图还是上一版。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp); dist = repo / "dist"
+            dist.mkdir(parents=True)
+            stale = dist / "preview.bin"
+            stale.write_bytes(b"old")
+
+            def fake_rerender(_repo, out, _python):
+                out.write_bytes(b"fresh")
+
+            with patch.object(build, "build_preview", side_effect=fake_rerender) as preview:
+                result = build.prepare_preview(repo, dist, None, "project-python")
+            preview.assert_called_once_with(repo, stale, "project-python")
+            self.assertEqual(result, stale)
+            self.assertEqual(stale.read_bytes(), b"fresh")
+
+    def test_prepare_preview_honours_explicit_block(self):
+        """--preview 给的是手工素材, 不再渲染也不覆盖。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp); dist = repo / "dist"
+            dist.mkdir(parents=True)
+            manual = repo / "p67-preview.block"
+            manual.write_bytes(b"manual")
+            with patch.object(build, "build_preview") as preview:
+                result = build.prepare_preview(repo, dist, manual, "project-python")
+            preview.assert_not_called()
+            self.assertEqual(result, manual)
+            self.assertEqual(manual.read_bytes(), b"manual")
+            self.assertFalse((dist / "preview.bin").exists())
+
 
 class ContainerIntegrityTests(unittest.TestCase):
     def test_container_preserves_every_payload_byte_including_fetch(self):
