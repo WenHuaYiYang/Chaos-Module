@@ -145,6 +145,25 @@ def build_preview(repo: Path, out: Path, python: str) -> None:
     run([python, str(repo / "tools" / "gen_preview.py"), str(out)], repo)
 
 
+def prepare_preview(repo: Path, dist: Path, explicit, python) -> bytes:
+    """容器头里的预览块: 默认每次都按当前安装器界面重渲染。
+
+    以前是"dist/preview.bin 不存在才生成"。改完 installer/chaos_installer.lua 的
+    界面后, 只要上一轮的文件还在, 表盘列表里的缩略图就一直是旧骨架 —— 产物与源码
+    对不上。现在每次构建都重画(约 0.2s), 显式 --preview 才原样使用调用方给的块
+    (如手工素材 tools/p67-preview.block)。
+    """
+    if explicit:
+        blob = explicit.read_bytes()
+        print(f"预览块: 使用 {len(blob)} bytes -> {explicit}")
+        return blob
+    out = dist / "preview.bin"
+    build_preview(repo, out, python or find_icon_python(repo))
+    blob = out.read_bytes()
+    print(f"预览块: gen_preview 自产 {len(blob)} bytes -> {out}")
+    return blob
+
+
 def module_sections(path: Path) -> dict:
     """区分加载内容、BSS和符号/重定位，避免把.a/.ko/容器大小混为一谈。"""
     data = path.read_bytes()
@@ -413,14 +432,9 @@ def main() -> int:
         print(f"完成（未打容器）: {dist}")
         return 0
 
-    # 预览块(容器头里的缩略图): 默认 dist/preview.bin, 不存在时由 gen_preview.py
-    # 自产(与固件解压函数同格式: 0x5AA521E0 RLE, 336x480)。--preview 可显式指定
-    # 其它块(如 tools/p67-preview.block)。
-    preview = args.preview or dist / "preview.bin"
-    if not preview.is_file():
-        build_preview(repo, preview, icon_python or find_icon_python(repo))
-        blob = preview.read_bytes()
-        print(f"预览块: gen_preview 自产 {len(blob)} bytes -> {preview}")
+    # 预览块(容器头里的缩略图): 与固件解压函数同格式(0x5AA521E0 RLE, 336x480),
+    # 每次都按当前的 installer/chaos_installer.lua 重渲染 —— 见 prepare_preview。
+    blob = prepare_preview(repo, dist, args.preview, icon_python)
     # 产物名带版本号前缀, 一眼能区分手上是哪个包(v1.2.7-chaos-installer-<目标>.bin)。
     # 版本号的真源仍是 p67_pack.VERSION —— 与容器头写的是同一个数。
     sys.path.insert(0, str(repo / "tools"))

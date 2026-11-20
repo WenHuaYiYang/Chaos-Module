@@ -175,7 +175,7 @@ C 功能桩（`-fsanitize`）在 Windows 宿主不可运行，属 Linux CI。真
 - 安装器脚本打包时瘦身（`tools/minify_lua.py`：去注释/缩进/空行，token 序列逐字比对断言），容器内 main.lua 约 46.5KB→32.9KB。
 - 容器内的模块副本在打包时 `--strip-unneeded`（`tools/build.py`，llvm/ rust-objcopy 优先，失败自动回退未 strip），副本约 1.45MB→1.40MB；构建产物 `supervisor/chaos_sup.ko` 本身不 strip。
 - `chaos-fetch/build.py` 兼容新旧两代 clang：统计计数器需要 `-Wunused-but-set-global` 豁免，但 CI 的 NDK clang 还不认识这个告警组（未知 `-Wno-*` 在 `-Werror` 下同样报错），改成运行期探测本机是否接受该开关、接受才加；重定位表校验在缺 `llvm-readelf` 的环境退用 `llvm-objdump -r`（解析只认 R_ARM_ 前缀）。
-- 容器预览块改由 `tools/gen_preview.py` 自产（构建时不存在 `dist/preview.bin` 就现场渲染，
+- 容器预览块改由 `tools/gen_preview.py` 自产（每次构建都现场重渲染，
   与固件解压函数同格式 0x5AA521E0 RLE、336x480，与旧链预览块逐字节一致）；`--preview` 仍可显式指定其它块。
   预览图字体按仓库内 MiSans → 系统中文（微软雅黑/Noto CJK/文泉驿/苹方）顺序解析，可用 `CHAOS_PREVIEW_FONT`
   指定；一个都没有时退回 Pillow 内置位图字体并告警，不再因"这台机器没装中文字体"而构建失败。

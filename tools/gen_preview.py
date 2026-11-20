@@ -70,25 +70,32 @@ def preview_font(size):
 
 
 # 界面骨架的两套口径, 每个数字都取自创建那块界面的 Lua(不是设计稿):
-#   installer —— chaos_installer.lua 的运行界面:
+#   installer —— chaos_installer.lua 的运行界面(main_view):
 #                 标题 32px @ y_ofs -212 / 状态卡 304x68 @ -150 (边框 #2A2A2C) /
-#                 四个按钮 304x64: 运行 @ -76(primary)、注入设置 @ 2(ghost)、
-#                 重启 @ 80(ghost)、清除重置 @ 158(danger)
+#                 五个按钮 304x56: 运行 @ -76(primary)、注入设置 @ -12(ghost)、
+#                 安装日志 @ 52(ghost)、重启 @ 116(ghost)、清除重置 @ 180(danger)
 #   pack      —— font_pack.lua 与 icon_pack.lua 的投递界面:
-#                 标题 40px @ -170 / 状态卡 304x150 @ -20 / 单按钮 @ 110
+#                 标题 40px @ -170 / 状态卡 304x150 @ -20 / 单按钮 304x64 @ 110
 # 两套都: 页底 #1C1C1E、卡底 #2C2C2E、圆角 24、状态文字 22px、按钮文字 24px。
+# 改 Lua 的 align/尺寸就必须同步改这里(tools/test_installer.py 会把两边比一遍,
+# 漏改的按钮位置/高度会在 CI 上直接失败, 不会再出现"预览块和界面不一致")。
 LAYOUTS = {
-    'installer': dict(title=32, title_y=-212, card_h=68, card_y=-150,
-                      line=(0x2A, 0x2A, 0x2C), btn_ys=(-76, 2, 80, 158)),
-    'pack': dict(title=40, title_y=-170, card_h=150, card_y=-20,
+    'installer': dict(title=32, title_y=-212, card_w=304, card_h=68, card_y=-150,
+                      btn_w=304, btn_h=56,
+                      line=(0x2A, 0x2A, 0x2C), btn_ys=(-76, -12, 52, 116, 180)),
+    'pack': dict(title=40, title_y=-170, card_w=304, card_h=150, card_y=-20,
+                 btn_w=304, btn_h=64,
                  line=(0x3C, 0x3C, 0x3E), btn_ys=(110,)),
 }
 
+# 主界面五个按钮的文案与配色, 顺序与 LAYOUTS['installer']['btn_ys'] 一一对应
+# (y_ofs 从小到大 = 屏幕从上到下)。按钮增删必须两处一起改。
+INSTALLER_BUTTONS = (('运行', 'primary'), ('注入设置', 'ghost'), ('安装日志', 'ghost'),
+                     ('重启', 'ghost'), ('清除重置', 'danger'))
+
 
 def make_image(title='Chaos 安装器', status='准备就绪',
-               buttons=(('运行', 'primary'), ('注入设置', 'ghost'),
-                        ('重启', 'ghost'), ('清除重置', 'danger')),
-               layout='installer'):
+               buttons=INSTALLER_BUTTONS, layout='installer'):
     """Chaos thumbnail = 对应表盘运行界面的 1:1 复刻。
 
     几何全部取自 `LAYOUTS[layout]`, 也就是各自 Lua 里的 align y_ofs 与 w/h;
@@ -129,7 +136,7 @@ def make_image(title='Chaos 安装器', status='准备就绪',
     dl = ImageDraw.Draw(layer)
     dl.text((s(168), s(240 + L['title_y'])), title, font=font_title,
             fill=(0xF2, 0xF2, 0xF2, 255), anchor='mm')
-    card(168, 240 + L['card_y'], 304, L['card_h'], (0x2C, 0x2C, 0x2E), L['line'])
+    card(168, 240 + L['card_y'], L['card_w'], L['card_h'], (0x2C, 0x2C, 0x2E), L['line'])
     dl.text((s(168), s(240 + L['card_y'])), status, font=font_status,
             fill=(0xB3, 0xB3, 0xB3, 255), anchor='mm')
 
@@ -144,7 +151,7 @@ def make_image(title='Chaos 安装器', status='准备就绪',
         else:  # danger: bg_opa=OPA(15) 的红压在页底上, 无边框, 红字
             bgc = tuple(round(a + (b - a) * 0.15) for a, b in zip(page, (0xFF, 0x45, 0x3A)))
             linec, fg = bgc, (0xFF, 0x45, 0x3A)
-        card(168, 240 + y_ofs, 304, 64, bgc, linec)
+        card(168, 240 + y_ofs, L['btn_w'], L['btn_h'], bgc, linec)
         dl.text((s(168), s(240 + y_ofs)), btn_text, font=font_btn,
                 fill=fg + (255,), anchor='mm')
     img.alpha_composite(layer)
@@ -284,9 +291,7 @@ def decode_block(blob):
 
 
 def build_blob(title='Chaos 安装器', status='准备就绪',
-               buttons=(('运行', 'primary'), ('注入设置', 'ghost'),
-                        ('重启', 'ghost'), ('清除重置', 'danger')),
-               layout='installer'):
+               buttons=INSTALLER_BUTTONS, layout='installer'):
     """按指定界面生成一块完整预览块(含 roundtrip 校验)。
 
     三个打包脚本各取所需: 主包 = 安装器运行界面(layout='installer'),
