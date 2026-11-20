@@ -5,7 +5,7 @@
 
   dist/10p-3.101.043/chaos_sup.ko   Chaos 内核模块
   dist/10p-3.101.043/fetch-module.ko 恢复 fetch 支持的 TUN 内核模块
-  dist/10p-3.101.043/v1.2.7-chaos-installer-10p-3.101.043.bin  带版本与目标的容器
+  dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin  目标容器(版本号在容器头)
   dist/<目标>/assets/chaos_sup.bin 容器内使用的 Chaos ko 副本
   dist/<目标>/assets/fetch-module.bin  容器内使用的 fetch ko 副本
   dist/<目标>/assets/chaos_icon.bin 96px 应用图标
@@ -427,14 +427,11 @@ def main() -> int:
     # 预览块(容器头里的缩略图): 与固件解压函数同格式(0x5AA521E0 RLE, 336x480),
     # 每次都按当前的 installer/chaos_installer.lua 重渲染 —— 见 prepare_preview。
     preview = prepare_preview(repo, dist, args.preview, icon_python)
-    # 产物名带版本号前缀, 一眼能区分手上是哪个包(v1.2.7-chaos-installer-<目标>.bin)。
-    # 版本号的真源仍是 p67_pack.VERSION —— 与容器头写的是同一个数。
-    sys.path.insert(0, str(repo / "tools"))
-    import p67_pack  # noqa: PLC0415
-    version = "v" + p67_pack.VERSION_TEXT
-    out = args.out or dist / f"{version}-chaos-installer-{target['id']}.bin"
+    # 产物名保持短: chaos-installer-<目标>.bin。目标串里已含机型与固件,
+    # 版本号在容器头(p67_pack.VERSION)与 build-report.json 里, 文件名不再重复。
+    out = args.out or dist / f"chaos-installer-{target['id']}.bin"
     # 应用列表里显示的容器名保持简短: "Chaos 安装器 <机型> <固件>"。
-    # 版本号只在容器头(p67_pack.VERSION)与产物文件名上, 名字里再塞一遍会挤成
+    # 版本号只在容器头(p67_pack.VERSION)与关于页上, 名字里再塞一遍会挤成
     # "Chaos127Alpha安装器", 列表里既难读也难认。
     display_name = f"{args.name} {target['model']} {target['version']}"
     info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
