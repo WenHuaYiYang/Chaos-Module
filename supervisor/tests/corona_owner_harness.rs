@@ -38,6 +38,7 @@ struct State {
     calls: Vec<&'static str>, status: u32, top: u32, owned: bool,
     saved_mask: Option<u8>, opens: u32, reads: u32,
     v2_enabled: bool, icon_hooked: bool, icon_restore_ok: bool,
+    watchface: u32, scene: u32,
 }
 impl State {
     fn new() -> Self {
@@ -46,7 +47,8 @@ impl State {
                commit_rc: 0, region_mask: 0x0f, commits: Vec::new(), calls: Vec::new(), status: 99,
                top: 200, owned: true,
                saved_mask: None, opens: 0, reads: 0,
-               v2_enabled: false, icon_hooked: false, icon_restore_ok: true }
+               v2_enabled: false, icon_hooked: false, icon_restore_ok: true,
+               watchface: 0, scene: 0 }
     }
 }
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -123,6 +125,7 @@ mod fw_api {
     pub unsafe fn screen_is_on() -> bool { crate::with(|s| s.screen) }
     pub const HOME_APP_ID: u32 = 200;
     pub unsafe fn top_app_id() -> u32 { crate::with(|s| s.top) }
+    pub unsafe fn background_watchface_identity() -> u32 { crate::with(|s| s.watchface) }
     pub unsafe fn background_home_targets() -> Option<[u32; 4]> {
         crate::with(|s| s.targets.then_some([10, 20, 30, 40]))
     }
@@ -170,6 +173,10 @@ mod background_surfaces {
 mod corona_blur {
     pub unsafe fn enabled() -> bool { crate::with(|s| s.enabled) }
     pub unsafe fn v2_enabled() -> bool { crate::with(|s| s.v2_enabled) }
+    // c0ebd5f9 起生产代码用算法号判断 V2/V3(v2_active = algo() != 0), 不再读 v2_enabled();
+    // 这里把测试既有的 v2_enabled 开关映射成"选了 V2", 语义保持不变。
+    pub unsafe fn algo() -> u32 { crate::with(|s| if s.v2_enabled { 1 } else { 0 }) }
+    pub unsafe fn set_scene(id: u32) { crate::with(|s| s.scene = id) }
     pub unsafe fn active() -> bool { enabled() || v2_enabled() }
     pub unsafe fn backgrounds_idle() -> bool { crate::with(|s| s.idle) }
     pub unsafe fn backgrounds_owned() -> bool { crate::with(|s| s.owned) }
@@ -579,7 +586,10 @@ fn sleeping_or_native_busy_prevents_icon_enable_but_keeps_engine_polling() {
         reset(); with(|s| s.enabled = true);
         unsafe { assert!(corona_tick()); }
         with(|s| { s.calls.clear(); s.v2_enabled = true; s.screen = screen; s.idle = idle; });
-        unsafe { assert!(corona_tick()); assert_eq!(pending(), screen); }
+        // c0ebd5f9 起重不必再报"引擎开着": 不装/拆、掩码未变、无冷却、无清理时
+        // pending() 为 false, 节拍回落到 200ms。图标只是想装但 native 还忙,
+        // 不算必须 50ms 推进的工作 —— 下一拍(poll)依然会把它装上。
+        unsafe { assert!(corona_tick()); assert!(!pending()); }
         with(|s| {
             assert_eq!(s.calls, ["poll"]); assert!(!s.icon_hooked);
             assert_eq!(s.commits, [(true, 15)]);
