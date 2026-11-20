@@ -348,6 +348,19 @@ const TICK_FAST_MS: u32 = 50;
 /// 一半来自这条每拍五段流水线 + corona poll + 通知扫描。有活时仍走 FAST(50ms),
 /// 失败恢复/装配/滚动自愈都在忙态, 不受影响。
 const TICK_MID_MS: u32 = 400;
+/// 极致省电模式的中档节拍: 稳定态 1Hz。有活时仍是 FAST(50ms)。
+const TICK_POWER_MS: u32 = 1000;
+
+/// 当前稳定态节拍(实验性「极致省电」开关可拉到 1s)。
+fn tick_mid_ms() -> u32 {
+    unsafe {
+        if crate::power_mode::enabled() {
+            TICK_POWER_MS
+        } else {
+            TICK_MID_MS
+        }
+    }
+}
 /// 息屏档从 1s 加深到 4s: 息屏时唯一可能的长活是后台终端会话(它有自己的
 /// busy 信号), 其余全是旗标检查。4s 一拍 = 整夜唤醒再降 4 倍。
 const TICK_IDLE_MS: u32 = 4000;
@@ -409,7 +422,7 @@ unsafe fn tick_adapt() {
     } else if fw_api::screen_is_on() || crate::connect_permission::state()&1!=0 {
         // An active plugin may request on-watch consent while the screen is off;
         // keep its UI mailbox responsive instead of sleeping for four seconds.
-        TICK_MID_MS
+        tick_mid_ms()
     } else {
         TICK_IDLE_MS
     };

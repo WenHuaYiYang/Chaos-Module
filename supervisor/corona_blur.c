@@ -352,6 +352,10 @@ static void chaos_v2_background_refresh(void) {
     p67_blur_request();p67_wake_pending=1;
 }
 
+/* 空闲 poll 降频倍数: 标准 2, 实验性「极致省电」档 4(Rust 侧写入)。 */
+static unsigned chaos_poll_skip = 2u;
+void chaos_corona_set_poll_skip(unsigned n) { chaos_poll_skip = n ? n : 1u; }
+
 void chaos_corona_backgrounds_poll(void) {
     static unsigned idle_skip;
     unsigned busy;
@@ -360,16 +364,17 @@ void chaos_corona_backgrounds_poll(void) {
      * 而 commit 又要求 idle —— 只有 poll 是每拍都跑的那条路。 */
     chaos_corona_latch_rescue();
     chaos_corona_in_call = 1;
-    chaos_corona_display_rebind();
-    chaos_corona_launcher_rebind();
     /* 空闲降频(2026-11-20): 上游 poll 每拍要做观察者/描述符校验并遍历三个
      * surface 的通知列表, 桌面静置时这些检查全部为"无变化"。稳定态下每
      * 2 次才完整跑一次(配合维护节拍 400ms -> 约 0.8s 一次); 一旦有活
      * (采集未完成/待重绘/刚装配/冷却/交互)立刻恢复每拍, 恢复速度不变。 */
     busy = p67_blur_pending || p67_wake_pending || p67_blur_busy || p67_blur_polling
         || chaos_blur_interacting() || !chaos_corona_enabled;
-    if (busy || ++idle_skip >= 2u) {
+    if (busy || ++idle_skip >= chaos_poll_skip) {
         idle_skip = 0;
+        /* rebind 也是自愈的一环, 跟着同一档节流; 忙态仍每拍。 */
+        chaos_corona_display_rebind();
+        chaos_corona_launcher_rebind();
         rh_platform_backgrounds_poll();
     }
     /* 采集卡住的兜底: 上游 poll_rearm 只要看到 pending 就每拍置 wake 并请求

@@ -5,6 +5,7 @@
 #![no_main]
 #![allow(static_mut_refs)]
 
+mod power_mode;
 mod state;
 mod version_text {
     include!(concat!(env!("OUT_DIR"), "/version.rs"));

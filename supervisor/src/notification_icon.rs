@@ -24,6 +24,11 @@ static mut ACTIVE: bool = false;
 /// 静置 CPU 的主要来源之一。有变化(mutated)或发现不完整时立刻恢复每拍。
 static mut QUIET: u32 = 0;
 const QUIET_SKIP: u32 = 8;
+
+/// 空闲跳拍档位(实验性「极致省电」开关拉到 12 拍)。
+unsafe fn quiet_skip() -> u32 {
+    crate::power_mode::quiet_skip()
+}
 static mut SOURCE: u32 = 0;
 static mut RETRY_TICKS: u32 = 0;
 
@@ -184,7 +189,7 @@ pub(crate) unsafe fn tick(wanted: bool) -> bool {
         st_wr!(QUIET, 0);
     } else if st_rd!(QUIET) == 0 {
         // 本轮扫完且无改动: 接下来 QUIET_SKIP-1 拍直接跳过。
-        st_wr!(QUIET, QUIET_SKIP - 1);
+        st_wr!(QUIET, quiet_skip().saturating_sub(1));
     }
     found && complete
 }

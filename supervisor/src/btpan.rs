@@ -1,5 +1,5 @@
 //! BTPAN and HTTP pages. Firmware calls stay in fw_api and the audited C port.
-use crate::page::kit::{RowKind, RowModel, RowSub};
+use crate::page::kit::{RowKind, RowModel, RowSub, ToggleDef};
 use crate::*;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -677,10 +677,22 @@ impl crate::page::Page for WebSrvPage {
     fn tick(&self) {unsafe{if visible(PAGE_WEBSRV_PID) && fw_api::screen_is_on(){refresh_web();}}}
 }
 
-/// 主页 -> 实验性功能(页35)。收拢未稳定入口: btpan联网 / 网页服务器 / 连接信息。
+/// 主页 -> 实验性功能(页35)。收拢未稳定入口: btpan联网 / 网页服务器 / 连接信息,
+/// 以及极致省电开关。
 pub(crate) struct ExpPage;
 pub(crate) static PAGE_EXP_P: ExpPage = ExpPage;
+
+unsafe fn power_saver() -> bool { crate::power_mode::enabled() }
+unsafe fn power_saver_toggle() { crate::power_mode::set_enabled(!crate::power_mode::enabled()); }
+static POWER_SAVER: ToggleDef = ToggleDef {
+    get: power_saver,
+    toggle: power_saver_toggle,
+    status: None,
+};
+
 static EXP_ROWS: &[RowModel] = &[
+    RowModel::toggle("极致省电模式\0".as_bytes(), &POWER_SAVER),
+    RowModel::note("开启后维护节拍降到 1 秒一拍、模糊自愈与通知变化的检测间隔拉长到数秒：静置 CPU 与耗电更低，代价是这些变化响应变慢；装配、滚动、采集和失败恢复仍是快节拍。设置随重启保留。\0".as_bytes()),
     RowModel { label: "btpan联网\0".as_bytes(), sub: RowSub::Static("蓝牙网络共享实验功能\0".as_bytes()),
                kind: RowKind::Nav(PAGE_BTPAN_PID), trailing: 0, refresh: None },
     RowModel { label: "网页服务器\0".as_bytes(), sub: RowSub::Static("局域网控制台(实验)\0".as_bytes()),
