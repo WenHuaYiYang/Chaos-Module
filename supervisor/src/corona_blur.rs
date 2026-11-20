@@ -86,23 +86,27 @@ pub(crate) unsafe fn algo() -> u32 {
     ALGO
 }
 
+/// 写盘失败后本次切换仍立即生效, 但同值调用要重试写盘 —— 否则用户改了设置、
+/// 那一刻正好 IO 失败, 就会永久"看着开着但重启即丢"。
 pub(crate) unsafe fn set_enabled(on: bool) {
     load();
-    if ENABLED == on { return; }
+    let changed = ENABLED != on;
+    if !changed && !SAVE_FAILED { return; }
     ENABLED = on;
     SAVE_FAILED = !persist();
-    crate::background_home::remount();
+    if changed { crate::background_home::remount(); }
 }
 
 /// 选算法同时打开模糊: 这三个选项本身互斥, 点哪个就切到哪个。
 pub(crate) unsafe fn set_algo(next: u32) {
     load();
     let next = next.min(ALGO_V3);
-    if ENABLED && ALGO == next { return; }
+    let changed = !ENABLED || ALGO != next;
+    if !changed && !SAVE_FAILED { return; }
     ENABLED = true;
     ALGO = next;
     SAVE_FAILED = !persist();
-    crate::background_home::remount();
+    if changed { crate::background_home::remount(); }
 }
 
 /// Commit Corona's background configuration using the shared region mask:

@@ -1,6 +1,10 @@
 //! Host configuration tests compiling the entire production corona_blur.rs.
 //! Each scenario runs in a fresh process, so production lazy-load flags reset
 //! naturally; no extracted function copies or test-only production resets.
+//!
+//! c0ebd5f9 把配置模型从"两个开关文件(corona_blur.cfg + blur_v2.cfg)"换成了
+//! "一个文件三态"(:/data/chaos/blur_algo.cfg, 0=关 / 1=原生 / 2=V2 / 3=V3),
+//! 开关与算法号合并在同一个字节里; 旧 blur_v2.cfg 只剩一次性迁移。
 #![allow(dead_code, static_mut_refs)]
 
 use std::cell::RefCell;
@@ -8,12 +12,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CStr;
 use std::process::Command;
 
-const CORONA: &str = "/data/chaos/corona_blur.cfg";
-const V2: &str = "/data/chaos/blur_v2.cfg";
+const ALGO: &str = "/data/chaos/blur_algo.cfg";
+const LEGACY: &str = "/data/chaos/blur_v2.cfg";
 #[no_mangle]
 pub extern "C" fn chaos_blur_select_algorithm(_:u32)->i32 {0}
 #[no_mangle]
 pub extern "C" fn chaos_blur_control_buttons_set(_:u32) {}
+#[no_mangle]
+pub extern "C" fn chaos_corona_set_scene(_:u32) {}
 mod blur_params {pub unsafe fn apply(){}}
 mod cc_buttons_config { pub unsafe fn enabled() -> bool { true } }
 
@@ -58,7 +64,7 @@ mod fw_api {
     }
     pub unsafe fn open(path: *const u8, flags: u32, mode: u32) -> i32 {
         let path = super::CStr::from_ptr(path.cast()).to_str().unwrap().to_owned();
-        assert!(path == super::CORONA || path == super::V2, "unexpected config path");
+        assert!(path == super::ALGO || path == super::LEGACY, "unexpected config path");
         super::with(|s| {
             s.opens.push((path.clone(), flags));
             if flags == oflag::RDONLY {
@@ -92,7 +98,8 @@ mod fw_api {
     pub unsafe fn write(fd: i32, input: *const u8, len: u32) -> i32 {
         assert_eq!(len, 1);
         let bytes = std::slice::from_raw_parts(input, len as usize).to_vec();
-        assert!(bytes[0] <= 1);
+        // 0=关, 1/2/3 = 开启 + 算法号, 一个字节同时表达开关和档位。
+        assert!(bytes[0] <= 3);
         super::with(|s| {
             let (path, flags) = s.fds[&fd].clone();
             assert_eq!(flags, oflag::WRONLY | oflag::CREAT);
@@ -109,7 +116,7 @@ mod fw_api {
         super::with(|s| {
             assert!(s.fds.remove(&fd).is_some());
             s.closes += 1;
-        });
+        })
     }
 }
 mod background_home {
@@ -131,23 +138,21 @@ pub extern "C" fn chaos_corona_backgrounds_owned() -> u32 { 1 }
 #[no_mangle]
 pub extern "C" fn chaos_corona_diagnostics(_out: *mut u8, _capacity: u32) -> u32 { 0 }
 
-unsafe fn assert_modes(corona: bool, v2: bool) {
-    assert_eq!(corona_blur::enabled(), corona);
-    assert_eq!(corona_blur::v2_enabled(), v2);
-    assert_eq!(corona_blur::active(), v2);
+/// 三态约定: 0=关 / 1=原生 / 2=V2 / 3=V3。关闭时 algo() 无意义, 只看 active()。
+unsafe fn assert_algo(value: u8) {
+    let on = value != 0;
+    assert_eq!(corona_blur::active(), on, "value {value}: enabled flag");
+    assert_eq!(corona_blur::enabled(), on, "value {value}: enabled flag");
+    if on { assert_eq!(corona_blur::algo(), (value - 1) as u32, "value {value}: algorithm"); }
 }
-fn reboot(corona: bool, v2: bool) {
-    let bytes = with(|s| (s.files.get(CORONA).cloned(), s.files.get(V2).cloned()));
-    let encode = |value: Option<Vec<u8>>| -> String {
-        match value {
-            None => "missing".to_owned(),
-            Some(bytes) if bytes.is_empty() => "empty".to_owned(),
-            Some(bytes) => bytes[0].to_string(),
-        }
+fn reboot(value: Option<&[u8]>) {
+    let encode = match value {
+        None => "missing".to_owned(),
+        Some(bytes) if bytes.is_empty() => "empty".to_owned(),
+        Some(bytes) => bytes[0].to_string(),
     };
     let status = Command::new(std::env::current_exe().unwrap())
-        .args(["probe", &encode(bytes.0), &encode(bytes.1),
-               &u8::from(corona).to_string(), &u8::from(v2).to_string()])
+        .args(["probe", &encode])
         .status().unwrap();
     assert!(status.success(), "fresh-process restart probe failed");
 }
@@ -166,55 +171,36 @@ fn allow_save(path: &str) {
 fn io_counts() -> (usize, usize, usize) {
     with(|s| (s.opens.len(), s.writes.len(), s.closes))
 }
-unsafe fn save_failure_retries(initial: bool, failure: SaveFailure) {
-    let target = !initial;
-    seed(CORONA, &[u8::from(initial)]); seed(V2, &[u8::from(initial)]);
-    assert_modes(initial, initial);
-    fail_save(CORONA, failure); fail_save(V2, failure);
-    corona_blur::set(target); corona_blur::set_v2_enabled(target);
-    assert_modes(target, target);
-    assert_eq!(saved(CORONA), [u8::from(initial)]);
-    assert_eq!(saved(V2), [u8::from(initial)]);
-    with(|s| assert_eq!(s.remounts, 2, "failed saves must still apply immediately"));
+
+/// 写盘失败后**本次切换立即生效**(SAVE_FAILED 只用于下次同值重试),
+/// 且失败期间同值调用必须继续重试写盘, 成功一次后重新变干净。
+unsafe fn save_failure_retries(algo: u32, failure: SaveFailure) {
+    let value = (algo + 1) as u8;
+    seed(ALGO, &[0]);
+    assert_algo(0);
+    fail_save(ALGO, failure);
+    corona_blur::set_algo(algo);
+    assert_algo(value);
+    assert_eq!(saved(ALGO), [0], "failed save must not change the file");
+    with(|s| assert_eq!(s.remounts, 1, "failed saves must still apply immediately"));
     assert_closed();
 
     let before = io_counts();
-    for _ in 0..100 {
-        assert_modes(target, target);
-        corona_blur::backgrounds_poll();
-    }
+    for _ in 0..100 { assert_algo(value); }
     assert_eq!(io_counts(), before, "reads/polls must not retry failed saves");
 
-    corona_blur::set(target); corona_blur::set_v2_enabled(target);
-    with(|s| assert_eq!(s.opens.len(), 6, "same-value calls must retry each failed switch"));
+    corona_blur::set_algo(algo);
+    with(|s| assert_eq!(s.opens.len(), 3, "same-value calls must retry each failed switch"));
     assert_closed();
 
-    allow_save(CORONA);
-    corona_blur::set(target);
-    assert_eq!(saved(CORONA), [u8::from(target)]);
-    assert_eq!(saved(V2), [u8::from(initial)]);
+    allow_save(ALGO);
+    corona_blur::set_algo(algo);
+    assert_eq!(saved(ALGO), [value]);
     let before = io_counts();
-    for _ in 0..100 { corona_blur::set(target); }
-    assert_eq!(io_counts(), before, "a successful peer save must stay clean");
-    corona_blur::set_v2_enabled(target);
-    with(|s| assert_eq!(s.opens.len(), 8, "peer success must not clear this switch's failure"));
-    assert_eq!(saved(V2), [u8::from(initial)]);
+    for _ in 0..100 { corona_blur::set_algo(algo); }
+    assert_eq!(io_counts(), before, "a successful save must stay clean");
     assert_closed();
-
-    allow_save(V2);
-    corona_blur::set_v2_enabled(target);
-    assert_eq!(saved(V2), [u8::from(target)]);
-    let before = io_counts();
-    for _ in 0..100 { corona_blur::set(target); corona_blur::set_v2_enabled(target); }
-    assert_eq!(io_counts(), before, "successful retries must clear both failure flags");
-    with(|s| {
-        assert_eq!(s.opens.len(), 9);
-        assert_eq!(s.remounts, 2, "persistence-only retries must not remount");
-        assert_eq!(s.writes.len(), if matches!(failure, SaveFailure::Open) { 2 } else { 7 });
-        assert_eq!(s.closes, if matches!(failure, SaveFailure::Open) { 4 } else { 9 });
-        assert!(s.writes.iter().all(|(_, bytes)| bytes == &[u8::from(target)]));
-    });
-    reboot(target, target);
+    reboot(Some(&[value]));
 }
 
 fn main() {
@@ -223,110 +209,130 @@ fn main() {
     unsafe {
         match case {
             "probe" => {
-                for (path, value) in [(CORONA, &args[2]), (V2, &args[3])] {
-                    match value.as_str() {
-                        "missing" => {},
-                        "empty" => seed(path, &[]),
-                        _ => seed(path, &[value.parse().unwrap()]),
+                let expected = match args[2].as_str() {
+                    "missing" => 0u8,
+                    "empty" => { seed(ALGO, &[]); 0u8 },
+                    value => {
+                        let value: u8 = value.parse().unwrap();
+                        seed(ALGO, &[value]);
+                        // 只接受 0..=3, 其余按"坏值"处理成关闭。
+                        if value <= 3 { value } else { 0 }
                     }
-                }
-                assert_modes(args[4] == "1", args[5] == "1");
+                };
+                assert_algo(expected);
                 with(|s| { assert!(s.writes.is_empty()); assert_eq!(s.remounts, 0); });
             }
             "missing" => {
-                assert_modes(false, false);
+                assert_algo(0);
+                // 先试新文件, 再试旧文件迁移: 两个都是 -1。
                 with(|s| { assert_eq!(s.opens.len(), 2); assert_eq!(s.reads, 0); });
             }
             "empty" => {
-                seed(CORONA, &[]); seed(V2, &[]);
-                assert_modes(false, false);
-                with(|s| { assert_eq!(s.reads, 2); assert_eq!(s.closes, 2); });
+                seed(ALGO, &[]);
+                assert_algo(0);
+                with(|s| { assert_eq!(s.reads, 1); assert_eq!(s.closes, 1); });
             }
             "invalid" => {
-                seed(CORONA, &[2]); seed(V2, &[255]);
-                assert_modes(false, false);
-                assert_eq!(saved(CORONA), [2]); assert_eq!(saved(V2), [255]);
+                seed(ALGO, &[4]);
+                assert_algo(0);
+                assert_eq!(saved(ALGO), [4]);
                 with(|s| assert!(s.writes.is_empty()));
             }
             "short-read" | "read-error" | "read-open-error" => {
-                seed(CORONA, &[1]); seed(V2, &[1]);
+                seed(ALGO, &[1]);
                 with(|s| {
                     s.read_result = match case { "short-read" => Some(0), "read-error" => Some(-1), _ => None };
                     s.read_open_error = case == "read-open-error";
                 });
-                assert_modes(false, false);
+                assert_algo(0);
                 with(|s| { assert!(s.writes.is_empty()); assert_eq!(s.remounts, 0); });
             }
             "read-once" => {
-                seed(CORONA, &[1]); seed(V2, &[0]);
-                assert_modes(true, false);
-                seed(CORONA, &[0]); seed(V2, &[1]);
-                for _ in 0..100 { assert_modes(true, false); }
-                with(|s| { assert_eq!(s.reads, 2); assert_eq!(s.opens.len(), 2); });
+                seed(ALGO, &[1]);
+                assert_algo(1);
+                seed(ALGO, &[0]);
+                for _ in 0..100 { assert_algo(1); }
+                with(|s| { assert_eq!(s.reads, 1); assert_eq!(s.opens.len(), 1); });
             }
-            "independent-load" => {
-                seed(CORONA, &[1]); seed(V2, &[1]);
-                assert!(corona_blur::active());
-                with(|s| assert_eq!(s.opens, [(V2.to_owned(), fw_api::oflag::RDONLY)]));
-                assert!(corona_blur::v2_enabled());
-                with(|s| assert_eq!(s.reads, 1));
+            // 旧 blur_v2.cfg = 1 迁移成"开启 + V3": 观感不变但拿到场景门控省电。
+            "legacy-migrate" => {
+                seed(LEGACY, &[1]);
+                assert_algo(3);
+                with(|s| {
+                    assert_eq!(s.opens, [(ALGO.to_owned(), fw_api::oflag::RDONLY),
+                                         (LEGACY.to_owned(), fw_api::oflag::RDONLY)]);
+                    assert_eq!(s.reads, 1, "新文件打不开才读旧文件");
+                });
+                // 迁移只读不写: 真正的落盘发生在用户下一次切换。
+                with(|s| assert!(s.writes.is_empty()));
+            }
+            "legacy-off" => {
+                seed(LEGACY, &[0]);
+                assert_algo(0);
+                with(|s| assert!(s.writes.is_empty()));
+            }
+            // 新文件存在时绝不看旧文件, 哪怕旧文件写着"开"。
+            "legacy-ignored" => {
+                seed(ALGO, &[0]); seed(LEGACY, &[1]);
+                assert_algo(0);
+                with(|s| assert_eq!(s.opens.len(), 1, "新文件可读就不再回退"));
             }
             "combinations" => {
-                for (corona, v2) in [(false, false), (true, false), (true, true), (false, true), (false, false)] {
-                    corona_blur::set(corona);
-                    corona_blur::set_v2_enabled(v2);
-                    assert_modes(corona, v2);
+                for value in [1u8, 2, 3, 0, 3, 1] {
+                    if value == 0 { corona_blur::set_enabled(false); } else { corona_blur::set_algo((value - 1) as u32); }
+                    assert_algo(value);
                 }
-                with(|s| { assert_eq!(s.remounts, 4); assert_eq!(s.writes.len(), 4); assert!(s.commits.is_empty()); });
+                with(|s| { assert_eq!(s.remounts, 6); assert_eq!(s.writes.len(), 6); assert!(s.commits.is_empty()); });
             }
-            "independent-save" => {
-                seed(CORONA, &[1]); seed(V2, &[0]);
-                corona_blur::set_v2_enabled(true);
-                assert_eq!(saved(CORONA), [1]); assert_eq!(saved(V2), [1]);
-                corona_blur::set(false);
-                assert_eq!(saved(CORONA), [0]); assert_eq!(saved(V2), [1]);
-                with(|s| assert_eq!(s.writes, [(V2.to_owned(), vec![1]), (CORONA.to_owned(), vec![0])]));
+            // 同一档位重复点不写盘: 开关与算法合并在一个字节里, 没有"关着但选 V2"的中间态。
+            "unchanged" => {
+                seed(ALGO, &[2]);
+                for _ in 0..100 { corona_blur::set_algo(1); }
+                with(|s| { assert!(s.writes.is_empty()); assert_eq!(s.remounts, 0); assert_eq!(s.reads, 1); });
+                corona_blur::set_algo(2);
+                for _ in 0..100 { corona_blur::set_algo(2); }
+                with(|s| { assert_eq!(s.writes.len(), 1); assert_eq!(s.remounts, 1); assert_eq!(s.reads, 1); });
+                assert_eq!(saved(ALGO), [3]);
+            }
+            // 关闭后再次选算法: 字节从 0 变 2, 必须重写并 remount。
+            "reopen" => {
+                seed(ALGO, &[3]);
+                corona_blur::set_enabled(false);
+                assert_algo(0);
+                corona_blur::set_algo(1);
+                assert_algo(2);
+                with(|s| assert_eq!(s.writes, [(ALGO.to_owned(), vec![0]), (ALGO.to_owned(), vec![2])]));
+                assert_eq!(saved(ALGO), [2]);
             }
             "restart" => {
-                assert_modes(false, false);
-                reboot(false, false);
-                corona_blur::set_v2_enabled(true); reboot(false, true);
-                corona_blur::set(true); reboot(true, true);
-                corona_blur::set_v2_enabled(false); reboot(true, false);
-                corona_blur::set(false); reboot(false, false);
+                assert_algo(0);
+                reboot(Some(&[0]));
+                corona_blur::set_algo(2); reboot(Some(&[3]));
+                corona_blur::set_algo(0); reboot(Some(&[1]));
+                corona_blur::set_enabled(false); reboot(Some(&[0]));
             }
-            "unchanged" => {
-                seed(CORONA, &[0]); seed(V2, &[1]);
-                for _ in 0..100 { corona_blur::set(false); corona_blur::set_v2_enabled(true); }
-                with(|s| { assert!(s.writes.is_empty()); assert_eq!(s.remounts, 0); assert_eq!(s.reads, 2); });
-                corona_blur::set(true); corona_blur::set_v2_enabled(false);
-                for _ in 0..100 { corona_blur::set(true); corona_blur::set_v2_enabled(false); }
-                with(|s| { assert_eq!(s.writes.len(), 2); assert_eq!(s.remounts, 2); assert_eq!(s.reads, 2); });
-            }
-            "save-open-error" => save_failure_retries(false, SaveFailure::Open),
-            "save-write-error" => save_failure_retries(false, SaveFailure::Write(-1)),
-            "save-short-write" => save_failure_retries(false, SaveFailure::Write(0)),
-            "save-invalid-count" => save_failure_retries(false, SaveFailure::Write(2)),
-            "save-disable-retry" => save_failure_retries(true, SaveFailure::Write(-1)),
+            "save-open-error" => save_failure_retries(1, SaveFailure::Open),
+            "save-write-error" => save_failure_retries(1, SaveFailure::Write(-1)),
+            "save-short-write" => save_failure_retries(1, SaveFailure::Write(0)),
+            "save-invalid-count" => save_failure_retries(2, SaveFailure::Write(2)),
             "save-latest-value" => {
-                seed(CORONA, &[0]); seed(V2, &[0]);
-                fail_save(CORONA, SaveFailure::Open);
-                fail_save(V2, SaveFailure::Write(0));
-                corona_blur::set(true); corona_blur::set_v2_enabled(true);
-                assert_modes(true, true);
+                seed(ALGO, &[0]);
+                fail_save(ALGO, SaveFailure::Open);
+                corona_blur::set_algo(2);
+                assert_algo(3);
                 assert_closed();
-                allow_save(CORONA); allow_save(V2);
-                corona_blur::set(false); corona_blur::set_v2_enabled(false);
-                assert_modes(false, false);
-                assert_eq!(saved(CORONA), [0]); assert_eq!(saved(V2), [0]);
+                allow_save(ALGO);
+                corona_blur::set_enabled(false);
+                assert_algo(0);
+                assert_eq!(saved(ALGO), [0]);
                 let before = io_counts();
-                for _ in 0..100 { corona_blur::set(false); corona_blur::set_v2_enabled(false); }
+                for _ in 0..100 { corona_blur::set_enabled(false); }
                 assert_eq!(io_counts(), before);
                 with(|s| {
-                    assert_eq!(s.remounts, 4);
-                    assert_eq!(s.writes, [(V2.to_owned(), vec![1]), (CORONA.to_owned(), vec![0]), (V2.to_owned(), vec![0])]);
+                    assert_eq!(s.remounts, 2);
+                    assert_eq!(s.writes, [(ALGO.to_owned(), vec![0])]);
                 });
-                reboot(false, false);
+                reboot(Some(&[0]));
             }
             "native-abi" => {
                 with(|s| s.commit_result = -2145);
@@ -340,7 +346,9 @@ fn main() {
                 assert!(corona_blur::backgrounds_pending()); assert!(corona_blur::backgrounds_idle());
                 with(|s| {
                     assert_eq!(s.polls, 1);
-                    assert_eq!(s.opens, [(V2.to_owned(), fw_api::oflag::RDONLY)]);
+                    // 两个配置文件都不存在: 先试新文件, 再试旧文件迁移, 都打不开即"关闭"。
+                    assert_eq!(s.opens, [(ALGO.to_owned(), fw_api::oflag::RDONLY),
+                                         (LEGACY.to_owned(), fw_api::oflag::RDONLY)]);
                     assert_eq!(s.remounts, 0);
                 });
             }
