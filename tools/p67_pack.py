@@ -19,14 +19,29 @@ from __future__ import annotations
 
 import argparse
 import struct
+import re
 from pathlib import Path
 
 MAGIC = 0x1234A55A
-VERSION = 0x00010207
-# 每次改完代码、准备重新编译出包时，把这一个后缀往后改一遍: Alpha -> Beta -> ...
-# （只改这一处；文件名、容器名、安装器标题、关于页的版本串都从这里派生）
-VERSION_SUFFIX = "Alpha"
-VERSION_TEXT = "%d.%d.%d-%s" % ((VERSION >> 16) & 0xFF, (VERSION >> 8) & 0xFF, VERSION & 0xFF, VERSION_SUFFIX)
+def read_version(manifest: Path) -> tuple[str, int]:
+    """Read the package version; container components each occupy one byte."""
+    source = manifest.read_text(encoding="utf-8")
+    package = re.search(r"(?ms)^\[package\]\s*$\n(.*?)(?=^\[|\Z)", source)
+    version = re.search(r"(?m)^version\s*=\s*[\"']([^\"']+)[\"']\s*(?:#.*)?$", package[1] if package else "")
+    if version is None:
+        raise ValueError(f"找不到 [package].version: {manifest}")
+    text = version[1]
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", text)
+    if match is None:
+        raise ValueError(f"无效的 Cargo 版本号: {text}")
+    major, minor, patch = map(int, match.groups())
+    if max(major, minor, patch) > 255:
+        raise ValueError(f"容器版本分量不能超过255: {text}")
+    return text, (major << 16) | (minor << 8) | patch
+
+
+# Cargo.toml is the sole version source for package metadata and the container.
+VERSION_TEXT, VERSION = read_version(Path(__file__).resolve().parents[1] / "supervisor" / "Cargo.toml")
 HDR = 0xA8
 PAIR_OFF = 0xA8
 PAIRS = 11

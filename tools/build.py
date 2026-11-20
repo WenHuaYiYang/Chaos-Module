@@ -96,9 +96,7 @@ def build_ko(repo: Path, out: Path, build_time: str, ident: str = DEFAULT_TARGET
     out.parent.mkdir(parents=True, exist_ok=True)
     env = firmware_env(ident)
     env["CHAOS_BUILD_TIME"] = build_time
-    # 版本串(含 -d 这类后缀)交给 build.rs 生成 version.rs，关于页/连接日志直接用它。
-    import p67_pack  # noqa: PLC0415
-    env["CHAOS_VERSION_TEXT"] = getattr(p67_pack, "VERSION_TEXT", "0.0.0")
+    # build.rs reads CARGO_PKG_VERSION directly from supervisor/Cargo.toml.
     run(["sh", str(repo / "tools" / "build_ko.sh"), "supervisor", str(out)], repo, env)
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError(f"没有生成有效 ko: {out}")
@@ -432,7 +430,7 @@ def main() -> int:
     out = args.out or dist / f"chaos-installer-{target['id']}.bin"
     # 应用列表里显示的容器名保持简短: "Chaos 安装器 <机型> <固件>"。
     # 版本号只在容器头(p67_pack.VERSION)与关于页上, 名字里再塞一遍会挤成
-    # "Chaos127Alpha安装器", 列表里既难读也难认。
+    # 很长的安装器名，列表里既难读也难认。
     display_name = f"{args.name} {target['model']} {target['version']}"
     info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")
