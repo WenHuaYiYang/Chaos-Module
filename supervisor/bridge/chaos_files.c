@@ -277,7 +277,7 @@ static const char *audit_action(uint8_t op){
  case CCF_OP_WRITE:return "写入文件数据";case CCF_OP_COMMIT:return "校验并提交文件";
  case CCF_OP_ABORT:return "取消写入/清理临时文件";case CCF_OP_PING:return "连接检查";
  case 0x50:return "启动NSH终端";case 0x51:return "NSH输入";case 0x52:return "读取NSH输出";case 0x53:return "关闭NSH终端";
- case 0x70:return "读取Chaos设置目录";case 0x71:return "修改Chaos设置";case 0x72:return "读取设置执行结果";
+ case 0x70:return "读取Chaos设置目录";case 0x71:return "修改Chaos设置";case 0x72:return "读取设置执行结果";case 0x73:return "修改并回读关联设置";
  case 0x31:return "链路回显测速";case CCF_OP_SET_DEV:return "设置开发者模式";
  case CCF_OP_GET_DEV:return "查询开发者模式";case 0x42:return "查询客户端权限";case 0x43:return "结束客户端会话";default:return "未知请求";}
 }
@@ -441,7 +441,7 @@ static void ccf_handle_hello(uint16_t req)
     uint32_t n = 0;
     out[n++] = CCF_PROTO_VERSION;
     ccf_put_u16(&out[n], g_chunk); n += 2u;
-    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | (android_client?(16u|64u):0u) | 32u); /* status/authorization support */
+    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | (android_client?(16u|64u|128u):0u) | 32u); /* status/authorization support */
     out[n++] = g_dev_mode;
     ccf_put_u16(&out[n], (uint16_t)CCF_MAX_PATH); n += 2u;
     ccf_put_u32(&out[n], CC_WINDOW); n += 4u;
@@ -963,14 +963,14 @@ void cc_files_dispatch(const struct cc_frame *frame)
       case CCF_OP_MKDIR:case CCF_OP_OPEN_WRITE:case CCF_OP_WRITE:case CCF_OP_COMMIT:need=2;break;
       case CCF_OP_REMOVE:case CCF_OP_RMDIR:case CCF_OP_RENAME:need=4;break;
       case CCF_OP_SET_DEV:if(plen&&p[0])need=8;break;
-      case 0x70:case 0x71:case 0x72:need=16u;break;
+      case 0x70:case 0x71:case 0x72:case 0x73:need=16u;break;
       case 0x50:case 0x51:case 0x52:case 0x53:need=android_client?32u:0u;break;
      }
      if(op==CCF_OP_COPY)need|=2;
      if(!chaos_bridge_enabled() || !access_granted || client_policy()==CCF_POLICY_DENY || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
     }
     if(op>=0x50&&op<=0x53&&!android_client){ccf_send(op,req,CCF_ST_UNSUPPORTED,0,0);return;}
-    if(op>=0x70&&op<=0x72){
+    if(op>=0x70&&op<=0x73){
      if(!android_client){ccf_send(op,req,CCF_ST_UNSUPPORTED,0,0);return;}
      static uint8_t out[CC_MAX_PAYLOAD]; /* File owner serializes dispatch; do not grow its stack. */
      if(op==0x72){

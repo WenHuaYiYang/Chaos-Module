@@ -84,7 +84,7 @@ uint32_t cc_test_terminal_counter(uint32_t what){return what==0?terminal_start_c
 static uint32_t control_calls,control_token,control_resets;
 void chaos_control_reset(void){control_token=0;control_resets++;}
 uint32_t chaos_control_submit(uint32_t op,const uint8_t *p,uint32_t n,uint32_t *token){
- if((op==0x70&&n!=2)||(op==0x71&&(n<4||(uint32_t)(p[2]|p[3]<<8)!=n-4)))return 1;
+ if((op==0x70&&n!=2&&n!=3)||((op==0x71||op==0x73)&&(n<4||(uint32_t)(p[2]|p[3]<<8)!=n-4)))return 1;
  control_calls++;control_token=control_calls;*token=control_token;return 0;
 }
 int32_t chaos_control_result(uint32_t token,uint8_t *p,uint32_t cap){

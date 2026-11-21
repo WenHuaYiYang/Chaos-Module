@@ -947,12 +947,12 @@ pub unsafe extern "C" fn chaos_control_submit(
     if !allowed() {
         return 3;
     }
-    if !matches!(op, 0x70 | 0x71) || n > 244 || p.is_null() || token.is_null() {
+    if !matches!(op, 0x70 | 0x71 | 0x73) || n > 244 || p.is_null() || token.is_null() {
         return 1;
     }
     let data = core::slice::from_raw_parts(p, n as usize);
-    if (op == 0x70 && n != 2)
-        || (op == 0x71 && (n < 4 || u16::from_le_bytes([data[2], data[3]]) as u32 != n - 4))
+    if (op == 0x70 && n != 2 && !(n == 3 && (1..=32).contains(&data[2])))
+        || (op != 0x70 && (n < 4 || u16::from_le_bytes([data[2], data[3]]) as u32 != n - 4))
     {
         return 1;
     }
@@ -1085,7 +1085,8 @@ pub(crate) unsafe fn tick() {
             e.u16(total as u16);
             e.u16(offset as u16);
             e.put(&[0]);
-            for index in offset..(offset + 8).min(total) {
+            let limit = if m.len == 3 { m.input[2] as usize } else { 8 };
+            for index in offset..(offset + limit).min(total) {
                 let before = e.n;
                 let d = definition(index);
                 let v = value(d.id);
@@ -1122,19 +1123,23 @@ pub(crate) unsafe fn tick() {
             crate::ui::render_req(st_rd!(FG_PAGE));
         }
         if ok {
-            let v = value(id);
-            let mut e = Encoder {
-                buf: &mut m.out,
-                n: 2,
-                failed: false,
-            };
-            e.u16(id);
-            e.text(vbytes(&v));
-            if e.failed {
-                m.used = 2;
-                m.out[1] = 13;
+            if m.op == 0x73 {
+                m.used = sync_values(id, &m.input[4..m.len], &mut m.out);
             } else {
-                m.used = e.n;
+                let v = value(id);
+                let mut e = Encoder {
+                    buf: &mut m.out,
+                    n: 2,
+                    failed: false,
+                };
+                e.u16(id);
+                e.text(vbytes(&v));
+                if e.failed {
+                    m.used = 2;
+                    m.out[1] = 13;
+                } else {
+                    m.used = e.n;
+                }
             }
             if let Some(d) = DEFS.iter().find(|d| d.id == id) {
                 let mut text = [0; 128];
@@ -1155,6 +1160,8 @@ pub(crate) unsafe fn tick() {
 static mut FONT_OPTIONS: Value = [0; 256];
 static mut ICON_OPTIONS: Value = [0; 256];
 static mut APP_COUNT: usize = 0;
+static mut APP_LIVE: [bool; 64] = [false; 64];
+static mut FACE_NODES: [u32; 24] = [0; 24];
 static mut FACE_COUNT: usize = 0;
 static mut ITEMS_GENERATION: u32 = 0;
 static mut APP_PACKAGES: [[u8; 44]; 64] = [[0; 44]; 64];
@@ -1167,6 +1174,7 @@ unsafe fn snapshot_items(generation: u32) {
     appmgr::reload();
     APP_COUNT = appmgr::count().min(64);
     for i in 0..APP_COUNT {
+        APP_LIVE[i] = true;
         APP_PACKAGES[i] = [0; 44];
         let pkg = cstring(appmgr::pkg_ptr(i));
         APP_PACKAGES[i][..vbytes(&pkg).len()].copy_from_slice(vbytes(&pkg));
@@ -1188,6 +1196,7 @@ unsafe fn snapshot_items(generation: u32) {
     FACE_COUNT = st_rd!(WF_COUNT).min(24) as usize;
     for i in 0..FACE_COUNT {
         FACE_IDS[i] = WF_IDS[i];
+        FACE_NODES[i] = WF_NODES[i];
         let name = cstring(WF_NAMES[i].as_ptr());
         let mut w = W::new(FACE_LABELS[i].as_mut_ptr(), 96);
         w.s(vbytes(&name))
@@ -1228,10 +1237,14 @@ unsafe fn definition(index: usize) -> Def {
             id: 1000 + i as u16,
             group: "已安装应用",
             label: label(APP_LABELS[i].as_ptr(), 96),
-            kind: 2,
+            kind: if APP_LIVE[i] { 2 } else { 5 },
             min: 0,
             max: 5,
-            options: "保持不变|打开应用|隐藏应用|显示应用|切换批量排除|卸载应用",
+            options: if APP_LIVE[i] {
+                "保持不变|打开应用|隐藏应用|显示应用|切换批量排除|卸载应用"
+            } else {
+                ""
+            },
         }
     } else {
         let j = i - APP_COUNT;
@@ -1255,6 +1268,9 @@ unsafe fn write_dynamic(id: u16, text: &[u8]) -> bool {
     };
     if id >= 1000 && ((id - 1000) as usize) < APP_COUNT {
         let i = (id - 1000) as usize;
+        if !APP_LIVE[i] {
+            return false;
+        }
         if n == 0 {
             return true;
         }
@@ -1286,6 +1302,7 @@ unsafe fn write_dynamic(id: u16, text: &[u8]) -> bool {
         st_wr!(WF_WIN, win);
         for j in 0..st_rd!(WF_COUNT).min(24) as usize {
             if WF_IDS[j] == id {
+                FACE_NODES[i] = WF_NODES[j];
                 watchface::desel_set(WF_NODES[j], n == 3);
                 return true;
             }
@@ -1309,4 +1326,204 @@ unsafe fn capture_status() -> Value {
     .n(capture::error().unsigned_abs());
     w.end();
     out
+}
+
+/// APPLY replies carry owner-read values, without re-enumerating the catalogue.
+/// Keep the legacy WRITE response byte-for-byte compatible with older clients.
+unsafe fn related(changed: u16, other: &Def) -> bool {
+    if changed == other.id {
+        return true;
+    }
+    if matches!(changed, 27..=29 | 36) && matches!(other.id, 25..=29) {
+        return true;
+    }
+    if (1000..1064).contains(&changed) {
+        return other.group == "应用管理";
+    }
+    if (2000..2024).contains(&changed) {
+        return other.group == "表盘管理";
+    }
+    DEFS.iter()
+        .find(|d| d.id == changed)
+        .is_some_and(|d| d.group == other.group)
+}
+fn patch(
+    e: &mut Encoder<'_>,
+    id: u16,
+    flags: u8,
+    val: &[u8],
+    label: &[u8],
+    options: &[u8],
+) -> bool {
+    let before = e.n;
+    e.u16(id);
+    e.put(&[flags]);
+    if flags & 1 != 0 {
+        e.text(val);
+    }
+    if flags & 2 != 0 {
+        e.text(label);
+    }
+    if flags & 4 != 0 {
+        e.text(options);
+    }
+    if e.failed {
+        e.failed = false;
+        e.n = before;
+        false
+    } else {
+        true
+    }
+}
+unsafe fn app_label(i: usize) -> bool {
+    let target = APP_PACKAGES[i];
+    let n = target.iter().position(|c| *c == 0).unwrap_or(44);
+    for j in 0..appmgr::count() {
+        let pkg = cstring(appmgr::pkg_ptr(j));
+        if vbytes(&pkg) != &target[..n] {
+            continue;
+        }
+        let name = cstring(appmgr::entry_primary(j));
+        let mut w = W::new(APP_LABELS[i].as_mut_ptr(), 96);
+        w.s(vbytes(&name))
+            .c(b'\n')
+            .s(vbytes(&pkg))
+            .s(if appmgr::visible(j) {
+                "（显示）".as_bytes()
+            } else {
+                "（隐藏）".as_bytes()
+            });
+        w.end();
+        return true;
+    }
+    APP_LIVE[i] = false;
+    false
+}
+unsafe fn face_label(i: usize) {
+    let old = bytes(&FACE_LABELS[i]);
+    let text = core::str::from_utf8(vbytes(&old)).unwrap_or("");
+    let prefix = text
+        .strip_suffix("（已排除轮换）")
+        .or_else(|| text.strip_suffix("（参与轮换）"))
+        .unwrap_or(text);
+    let mut w = W::new(FACE_LABELS[i].as_mut_ptr(), 96);
+    w.s(prefix.as_bytes())
+        .s(if watchface::desel_has(FACE_NODES[i]) {
+            "（已排除轮换）".as_bytes()
+        } else {
+            "（参与轮换）".as_bytes()
+        });
+    w.end();
+}
+unsafe fn sync_values(id: u16, input: &[u8], out: &mut [u8; 2304]) -> usize {
+    let mut e = Encoder {
+        buf: out,
+        n: 2,
+        failed: false,
+    };
+    e.put(&[1, 0]);
+    e.u16(0);
+    let mut count = 0u16;
+    let mut incomplete = false;
+    // The requested setting always comes first, including actions and removals.
+    let mut flags = 1u8;
+    let mut caption = [0; 256];
+    let mut options = [0; 256];
+    if (1000..1064).contains(&id) {
+        let i = (id - 1000) as usize;
+        if app_label(i) {
+            flags |= 2;
+            caption = bytes(&APP_LABELS[i]);
+        } else {
+            flags |= 8;
+        }
+    }
+    if (2000..2024).contains(&id) {
+        let i = (id - 2000) as usize;
+        face_label(i);
+        flags |= 2;
+        caption = bytes(&FACE_LABELS[i]);
+    }
+    if id == 150 {
+        flags |= 4;
+        options = font_list::remote_options();
+    }
+    if id == 151 {
+        flags |= 4;
+        options = icon_apply::remote_options();
+    }
+    let actual = value(id);
+    if patch(
+        &mut e,
+        id,
+        flags,
+        vbytes(&actual),
+        vbytes(&caption),
+        vbytes(&options),
+    ) {
+        count += 1;
+    }
+    for d in DEFS {
+        if d.id == id || d.kind == 4 || !related(id, d) {
+            continue;
+        }
+        let actual = value(d.id);
+        let mut flags = 1;
+        let options = if d.id == 150 {
+            flags |= 4;
+            font_list::remote_options()
+        } else if d.id == 151 {
+            flags |= 4;
+            icon_apply::remote_options()
+        } else {
+            [0; 256]
+        };
+        if patch(&mut e, d.id, flags, vbytes(&actual), &[], vbytes(&options)) {
+            count += 1;
+        } else {
+            incomplete = true;
+        }
+    }
+    // Stable snapshot IDs remain valid: update only the affected list captions.
+    if matches!(id, 191..=195) {
+        for i in 0..APP_COUNT {
+            let p = APP_PACKAGES[i];
+            let n = p.iter().position(|c| *c == 0).unwrap_or(44);
+            if &p[..n] != input {
+                continue;
+            }
+            let live = app_label(i);
+            let caption = bytes(&APP_LABELS[i]);
+            if patch(
+                &mut e,
+                1000 + i as u16,
+                if live { 2 } else { 8 },
+                &[],
+                vbytes(&caption),
+                &[],
+            ) {
+                count += 1;
+            } else {
+                incomplete = true;
+            }
+        }
+    }
+    if id == 164 {
+        for i in 0..FACE_COUNT {
+            let before = FACE_LABELS[i];
+            face_label(i);
+            if before == FACE_LABELS[i] {
+                continue;
+            }
+            let caption = bytes(&FACE_LABELS[i]);
+            if patch(&mut e, 2000 + i as u16, 2, &[], vbytes(&caption), &[]) {
+                count += 1;
+            } else {
+                incomplete = true;
+            }
+        }
+    }
+    e.buf[3] = incomplete as u8;
+    e.buf[4..6].copy_from_slice(&count.to_le_bytes());
+    e.n
 }
