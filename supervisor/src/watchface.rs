@@ -397,7 +397,11 @@ unsafe fn tick_busy() -> bool {
     || confirm_pop::pending()
     || background_home::pending()
     || crate::s541_launcher::pending()
-    || crate::capture_preview::pending()
+    // 2026-11-21: 上游直接把它无条件加进来 —— 截图缩略图槽的 status==0 会一直
+    // 残留(离开页面后无人推进), 于是 FG_PAGE 停在截图页、APP_FG=0 时仍然每拍
+    // 返回"忙", 整机永久 50ms 快拍, 省电模式的节拍设置被完全绕过。
+    // 缩略图只在截图 App 真的在前台时才值得为它加快节拍。
+    || (st_rd!(APP_FG) != 0 && crate::capture_preview::pending())
     || crate::quickapp_animation::pending()
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()

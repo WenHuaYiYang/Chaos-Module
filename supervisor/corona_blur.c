@@ -401,7 +401,9 @@ void chaos_corona_backgrounds_poll(void) {
     }
     chaos_corona_rearm_missing_source();
     chaos_v2_background_refresh();
-    cc_buttons_poll();
+    /* 按钮纹理轮询同样只在"该跑的那一拍"执行: 创建/更新按钮图源是重活,
+     * 桌面静置时结果不会变。忙态(按钮正在做/有需求变化)仍每拍。 */
+    if (busy || !idle_skip || idle_skip + 1 >= chaos_poll_skip) cc_buttons_poll();
     chaos_corona_in_call = 0;
 }
 

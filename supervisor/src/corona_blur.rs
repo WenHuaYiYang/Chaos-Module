@@ -136,8 +136,17 @@ pub(crate) unsafe fn set_scene(id: u32) {
 
 pub(crate) unsafe fn backgrounds_poll() {
     crate::blur_params::apply();
-    chaos_blur_control_buttons_set((algo() != 0 && crate::cc_buttons_config::enabled()) as u32);
-    chaos_blur_launcher_buttons_set((algo() != 0 && crate::launcher_buttons_config::enabled()) as u32);
+    // 2026-11-21: 上游 1.27 的「控制中心按钮/启动器按钮」模糊默认开启, 它们让
+    // P67_BLUR_EXTRA_DEMAND 恒为真 —— 模糊引擎永久"有需求", 节拍/poll 降频对它
+    // 无效, 静置 CPU 反而比合并前更高。极致省电模式下强制关掉这两处:
+    // 桌面/控制中心少一层每帧合成纹理, 关掉省电模式即恢复用户原本的设置。
+    let buttons_off = crate::power_mode::enabled();
+    chaos_blur_control_buttons_set(
+        (algo() != 0 && !buttons_off && crate::cc_buttons_config::enabled()) as u32,
+    );
+    chaos_blur_launcher_buttons_set(
+        (algo() != 0 && !buttons_off && crate::launcher_buttons_config::enabled()) as u32,
+    );
     let _ = chaos_blur_select_algorithm(algo());
     chaos_corona_backgrounds_poll();
 }
