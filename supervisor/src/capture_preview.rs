@@ -97,6 +97,12 @@ pub(crate) unsafe fn pending()->bool {
     SLOTS.iter().any(|s|s.object!=0&&s.status==0&&s.pid==foreground)
 }
 pub(crate) unsafe fn poll() {
+    // 快速路径: 从没用过截图(九个槽全空)且没有在跑的活时, 一拍都不多花。
+    // 不用截图的人本来就不该为这个功能付任何周期成本。
+    if JOB.load(Ordering::Acquire)==0
+        && !SLOTS.iter().any(|s| s.object!=0 || s.allocation!=0) {
+        return;
+    }
     let completed=JOB.load(Ordering::Acquire)==2;
     let retire=(0..COUNT).any(|i|SLOTS[i].allocation!=0 && (SLOTS[i].object==0||SLOTS[i].status==0));
     if (completed||retire) && !fw::s541_frame_idle(){return;}
