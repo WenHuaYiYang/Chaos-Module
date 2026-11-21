@@ -142,6 +142,13 @@ unsafe fn owns_images() -> bool {
 
 pub(crate) unsafe fn pending() -> bool { st_rd!(ACTIVE) || owns_images() }
 
+/// 真的有活要推进: 重试未清零, 或还持有要回收的图源。
+/// 2026-11-21: `pending()` 把"功能启用"也算作真(ACTIVE 一旦开过恒真), 于是
+/// `background_home::pending()` 恒真、`tick_busy` 永远是"忙", 维护节拍降不下来;
+/// 和 1s 节拍组合时还会来回抖动, 静置 CPU 从 20-30% 顶到 95%。
+/// 维护节拍只该为真活让路, 所以那里改用 busy()。
+pub(crate) unsafe fn busy() -> bool { st_rd!(RETRY_TICKS) != 0 || owns_images() }
+
 pub(crate) unsafe fn tick(wanted: bool) -> bool {
     if !wanted && !owns_images() {
         st_wr!(ACTIVE, false);

@@ -44,13 +44,12 @@ pub(crate) unsafe fn save_failed() -> bool {
     SAVE_FAILED
 }
 
-/// 空闲时上游 poll 的间隔倍数: 标准 2, 极致省电 4。
+/// 空闲时上游 poll 的间隔倍数。
+/// 2026-11-21 实测: 拉到 4(配合 1s 节拍 = 4s 一次) 会让模糊 owner 心跳超时,
+/// 上游反复 detach/commit 重建整屏纹理, 静置 CPU 反而从 20-30% 飙到 95%。
+/// 降频只在节拍那一层做, poll 一律保持 2 —— 宁可少省一点, 不能引发抖动。
 pub(crate) unsafe fn poll_skip() -> u32 {
-    if enabled() {
-        4
-    } else {
-        2
-    }
+    2
 }
 
 /// 通知图标扫描的空闲跳拍: 标准 8 拍, 极致省电 12 拍。

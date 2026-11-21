@@ -201,6 +201,12 @@ pub(crate) unsafe fn tick() {
     render(grid);
 }
 pub(crate) unsafe fn pending() -> bool {
+    // 极致省电模式: 控制条"可见"就要求 50ms 快拍, 意味着只要停在桌面整机就永远
+    // 50ms —— 静置 CPU 的一大来源。省电模式下让它走 600ms 中档(跟随滚动略钝,
+    // 这是省电模式明确接受的代价); 关掉开关立即恢复原来的跟手感。
+    if crate::power_mode::enabled() {
+        return false;
+    }
     // 控制条跟随滚动也需要快拍，不能在捕获完成后降到200ms。
     ENABLED && OWNER != 0 && native::launcher() == OWNER
         && fw::screen_is_on() && fw::top_app_id() == fw::HOME_APP_ID && native::visible(OWNER)

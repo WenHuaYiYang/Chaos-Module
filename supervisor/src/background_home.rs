@@ -721,7 +721,9 @@ pub(crate) unsafe fn pending() -> bool {
     } else if st_rd!(CORONA_BG_ACTIVE) != 0 || crate::corona_blur::backgrounds_pending() {
         return true;
     }
-    crate::notification_icon::pending() || st_rd!(REQUEST) != 0 || SCENE.pending()
+    // 只用"真的有活"(busy), 不用"功能启用"(pending): 后者一旦开过通知图标
+    // 就恒真, 会把维护节拍永久钉在 50ms。
+    crate::notification_icon::busy() || st_rd!(REQUEST) != 0 || SCENE.pending()
         || st_rd!(REFRESH) != 0 || crate::background_surfaces::pending()
 }
 
