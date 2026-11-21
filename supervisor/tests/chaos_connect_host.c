@@ -79,3 +79,15 @@ uint32_t chaos_connect_terminal_receive(uint8_t *p,uint32_t n){
 }
 void chaos_connect_terminal_stop(void){++terminal_stop_count;terminal_state=5;terminal_size=0;}
 uint32_t cc_test_terminal_counter(uint32_t what){return what==0?terminal_start_count:what==1?terminal_stop_count:terminal_write_count;}
+/* Control mailbox stand-in: only the production C authorization/dispatch is under
+ * test here. Native getters/setters and UI-owner execution are not emulated. */
+static uint32_t control_calls,control_token,control_resets;
+void chaos_control_reset(void){control_token=0;control_resets++;}
+uint32_t chaos_control_submit(uint32_t op,const uint8_t *p,uint32_t n,uint32_t *token){
+ if((op==0x70&&n!=2)||(op==0x71&&(n<4||(uint32_t)(p[2]|p[3]<<8)!=n-4)))return 1;
+ control_calls++;control_token=control_calls;*token=control_token;return 0;
+}
+int32_t chaos_control_result(uint32_t token,uint8_t *p,uint32_t cap){
+ if(cap<2)return -1;if(!token||token!=control_token)return -11;p[0]=1;p[1]=0;return 2;
+}
+uint32_t cc_test_control_counter(uint32_t what){return what==0?control_calls:control_resets;}

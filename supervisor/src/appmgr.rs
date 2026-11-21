@@ -298,3 +298,22 @@ unsafe fn reg_sig() -> u32 {
 
 /// 列表被截断时禁止一切改写
 unsafe fn write_blocked() -> bool { TRUNC != 0 || OVERSIZE != 0 || PARSE_BAD != 0 }
+
+/// UI-owner-only entry for authenticated Android control. Match a complete package,
+/// never accept paths, and reuse native registry validation and deferred operations.
+pub(crate) unsafe fn remote_action(text:&[u8],op:u32)->bool {
+    if text.is_empty()||text.len()>=PKG_CAP||!text.iter().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'.'|b'_'|b'-')){return false;}
+    if has_req()||mode_pending()||batch_pending()||del_pending()||excl_has_req(){return false;}reload();
+    for i in 0..APP_N {
+        let pkg=core::slice::from_raw_parts(pkg_ptr(i),cstr_len(pkg_ptr(i)));
+        if pkg!=text{continue;}
+        let mut target=[0u8;44];target[..text.len()].copy_from_slice(text);
+        match op {
+            0|1=>{if visible(i)==(op==1){return true;}let hide=op==0;
+                let ok=if hide{op_hide_pkg(target.as_ptr())}else{op_show_pkg(target.as_ptr())};
+                if ok {if !hide&&find_node(target.as_ptr())==0{let _=fw_api::quickapp_register_pkg(target.as_ptr());}apply_pkg(hide,target.as_ptr());reload();invalidate();crate::ui::render_req(1);}return ok;},
+            2=>{if write_blocked(){return false;}let mut p=[0;44];p[..text.len()].copy_from_slice(text);let mut name=[0;32];name.copy_from_slice(&E_NAME[i]);return uninstall_pkg(p.as_ptr(),name.as_ptr());},
+            3=>{detail_open_ctx(i,0);return detail_launch();},4=>{let ok=excl_toggle(target.as_ptr());if ok{reload();invalidate();crate::ui::render_req(1);}return ok;},_=>return false
+        }
+    }false
+}

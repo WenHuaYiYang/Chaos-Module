@@ -277,6 +277,7 @@ static const char *audit_action(uint8_t op){
  case CCF_OP_WRITE:return "写入文件数据";case CCF_OP_COMMIT:return "校验并提交文件";
  case CCF_OP_ABORT:return "取消写入/清理临时文件";case CCF_OP_PING:return "连接检查";
  case 0x50:return "启动NSH终端";case 0x51:return "NSH输入";case 0x52:return "读取NSH输出";case 0x53:return "关闭NSH终端";
+ case 0x70:return "读取Chaos设置目录";case 0x71:return "修改Chaos设置";case 0x72:return "读取设置执行结果";
  case 0x31:return "链路回显测速";case CCF_OP_SET_DEV:return "设置开发者模式";
  case CCF_OP_GET_DEV:return "查询开发者模式";case 0x42:return "查询客户端权限";case 0x43:return "结束客户端会话";default:return "未知请求";}
 }
@@ -310,7 +311,7 @@ static void ccf_send(uint8_t op,uint16_t req,uint8_t status,const uint8_t *paylo
  if(op==CCF_OP_READ&&status==0)g_read_transferred+=plen;
  if(op==0x31&&status==0)benchmark_bytes+=plen;
  if(status==0&&queued>=0){
-  if(op==CCF_OP_PING||op==0x42||op==0x52||op==0x61||op==0x63)return; /* Polling is presence, not a user file operation. */
+  if(op==0x72||op==CCF_OP_PING||op==0x42||op==0x52||op==0x61||op==0x63)return; /* Polling is presence, not a user file operation. */
   if(op==CCF_OP_READ&&audit_offset!=0&&audit_offset/65536==(audit_offset+plen)/65536&&audit_offset+plen<g_read_size&&plen==audit_length)return;
   if(op==CCF_OP_WRITE&&audit_offset!=0&&audit_offset/65536==(audit_offset+audit_length)/65536&&g_write_written<g_write_expected)return;
   if(op==0x31&&benchmark_bytes!=plen&&(benchmark_bytes-plen)/262144==benchmark_bytes/262144)return;
@@ -340,7 +341,11 @@ static void ccf_discard_write(void){
 }
 #include "chaos_terminal.inc"
 #include "chaos_package.inc"
+extern void chaos_control_reset(void);
+extern uint32_t chaos_control_submit(uint32_t,const uint8_t*,uint32_t,uint32_t*);
+extern int32_t chaos_control_result(uint32_t,uint8_t*,uint32_t);
 void cc_files_reset(void){
+ chaos_control_reset();
  ccf_terminal_stop();ccp_reset();
  if(g_read_fd>=0){audit_used=0;audit_text("会话结束/重置：关闭读取文件");audit_path(g_read_target);chaos_connect_log(audit_context);}
  if(g_write_fd>=0){audit_used=0;audit_text("会话结束/重置：取消未提交写入并清理临时文件");audit_path(g_write_target);chaos_connect_log(audit_context);}
@@ -436,7 +441,7 @@ static void ccf_handle_hello(uint16_t req)
     uint32_t n = 0;
     out[n++] = CCF_PROTO_VERSION;
     ccf_put_u16(&out[n], g_chunk); n += 2u;
-    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | (android_client?16u:0u) | 32u); /* status/authorization support */
+    out[n++] = (uint8_t)(CCF_FLAG_DEV_MODE | CCF_FLAG_RMDIR | 4u | 8u | (android_client?(16u|64u):0u) | 32u); /* status/authorization support */
     out[n++] = g_dev_mode;
     ccf_put_u16(&out[n], (uint16_t)CCF_MAX_PATH); n += 2u;
     ccf_put_u32(&out[n], CC_WINDOW); n += 4u;
@@ -958,12 +963,23 @@ void cc_files_dispatch(const struct cc_frame *frame)
       case CCF_OP_MKDIR:case CCF_OP_OPEN_WRITE:case CCF_OP_WRITE:case CCF_OP_COMMIT:need=2;break;
       case CCF_OP_REMOVE:case CCF_OP_RMDIR:case CCF_OP_RENAME:need=4;break;
       case CCF_OP_SET_DEV:if(plen&&p[0])need=8;break;
+      case 0x70:case 0x71:case 0x72:need=16u;break;
       case 0x50:case 0x51:case 0x52:case 0x53:need=android_client?32u:0u;break;
      }
      if(op==CCF_OP_COPY)need|=2;
      if(!chaos_bridge_enabled() || !access_granted || client_policy()==CCF_POLICY_DENY || (mask&need)!=need){ccf_send(op,req,CCF_ST_ACCESS,0,0);return;}
     }
     if(op>=0x50&&op<=0x53&&!android_client){ccf_send(op,req,CCF_ST_UNSUPPORTED,0,0);return;}
+    if(op>=0x70&&op<=0x72){
+     if(!android_client){ccf_send(op,req,CCF_ST_UNSUPPORTED,0,0);return;}
+     static uint8_t out[CC_MAX_PAYLOAD]; /* File owner serializes dispatch; do not grow its stack. */
+     if(op==0x72){
+      if(plen!=4){ccf_send(op,req,CCF_ST_BAD,0,0);return;}
+      int32_t n=chaos_control_result(ccf_get_u32(p),out,sizeof(out));
+      ccf_send(op,req,n<0?(uint8_t)-n:0,n<0?0:out,n<0?0:(uint32_t)n);
+     }else{uint32_t token=0;uint32_t status=chaos_control_submit(op,p,plen,&token);ccf_put_u32(out,token);ccf_send(op,req,status,status?0:out,status?0:4);}
+     return;
+    }
     if(op>=0x60&&op<=0x66){ccp_dispatch(op,req,p,plen);return;}
     switch (op) {
     case 0x50:case 0x51:case 0x52:case 0x53:ccf_terminal_dispatch(op,req,p,plen);break;

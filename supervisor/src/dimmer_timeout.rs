@@ -54,3 +54,5 @@ pub(crate) unsafe fn save(text: *const u8) -> bool {
 }
 #[cfg(test)]
 pub(crate) unsafe fn reset_for_test() { LOADED = false; SECONDS = None; SAVE_FAILED = false; }
+
+pub(crate) unsafe fn seconds() -> u32 { ensure_applied(); SECONDS.unwrap_or_else(||fw_api::screen_timeout_ms()/1000) }

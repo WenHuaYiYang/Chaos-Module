@@ -704,3 +704,24 @@ impl crate::page::Page for ExpPage {
 #[cfg(test)]
 #[path = "../tests/btpan_ui_cases.rs"]
 mod tests;
+
+// Remote commands use the same validated worker and service queue as the pages.
+pub(crate) unsafe fn remote_pan_enabled()->bool {let(v,_)=snapshot();pan_selected(&v)}
+pub(crate) unsafe fn remote_pan(on:bool){let(v,_)=snapshot();if !on{chaos_connect_pan_cancel();}request_pan(on,&v);}
+pub(crate) unsafe fn remote_web_enabled()->bool {chaos_httpd_enabled()!=0}
+pub(crate) unsafe fn remote_web(on:bool){ensure_worker();if WORKER_STARTED.load(Ordering::Acquire){chaos_httpd_set_enable(on as i32);}}
+pub(crate) unsafe fn remote_connect(text:&[u8])->bool {
+    if text.len()!=17{return false;}let mut address=[0u8;6];
+    fn hex(b:u8)->Option<u8>{match b{b'0'..=b'9'=>Some(b-b'0'),b'A'..=b'F'=>Some(b-b'A'+10),b'a'..=b'f'=>Some(b-b'a'+10),_=>None}}
+    for i in 0..6{if i<5&&text[i*3+2]!=b':'{return false;}let(Some(a),Some(b))=(hex(text[i*3]),hex(text[i*3+1]))else{return false;};address[5-i]=(a<<4)|b;}
+    ensure_worker();if !WORKER_STARTED.load(Ordering::Acquire){return false;}crate::connect_radio::prepare_pan(address.as_ptr(),b"Android remote\0".as_ptr())==0
+}
+pub(crate) unsafe fn remote_disconnect(){chaos_connect_pan_cancel();chaos_pan_disconnect();}
+pub(crate) unsafe fn remote_info()->crate::control_catalog::Value {
+    let(v,ip)=snapshot();let mut out=[0;256];let mut p=[0;20];ip_text(&ip.ip,&mut p);let mut w=W::new(out.as_mut_ptr(),256);
+    w.s(cbytes(phase(&v))).s(b" IP ").s(cbytes(&p)).s(b" MTU ").n(ip.mtu as u32);w.end();out
+}
+
+pub(crate) unsafe fn remote_scan()->bool{let(v,_)=snapshot();chaos_connect_pan_cancel();if !pan_selected(&v){request_pan(true,&v);}else{chaos_pan_scan();}WORKER_STARTED.load(Ordering::Acquire)}
+pub(crate) unsafe fn remote_pair_confirm()->bool{let(v,_)=snapshot();if v.phase!=4{return false;}chaos_pan_pair_confirm();true}
+pub(crate) unsafe fn remote_credentials()->crate::control_catalog::Value{let mut user=[0;32];let mut pass=[0;65];let mut out=remote_info();let mut w=W::new(out.as_mut_ptr(),256);let(v,ip)=snapshot();let mut addr=[0;20];ip_text(&ip.ip,&mut addr);w.s(cbytes(phase(&v))).s(b" http://").s(cbytes(&addr));if chaos_web_credentials(user.as_mut_ptr(),32,pass.as_mut_ptr(),65)==0{w.s(" 用户：".as_bytes()).s(cbytes(&user)).s(" 密码：".as_bytes()).s(cbytes(&pass));}w.end();out}

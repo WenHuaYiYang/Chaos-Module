@@ -370,7 +370,8 @@ unsafe fn tick_busy() -> bool {
     {
         return true;
     }
-    dirty::any_pending()
+    crate::control_catalog::busy()
+    || dirty::any_pending()
     || st_rd!(SHAKE_PENDING) != 0
     || st_rd!(SHAKE_COOL) != 0
     || st_rd!(HEAL_TRYS) != 0
@@ -441,6 +442,7 @@ unsafe fn tick_terminal() {
     // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
     crate::bridge_cfg::tick();
     crate::connect_prompt::tick();
+    crate::control_catalog::tick();
 }
 
 /// 返回 false = 开机延迟还没走完, 本拍后面的段都不跑。
@@ -682,3 +684,23 @@ pub(crate) unsafe fn maintenance_arm() {
     }
 }
 
+
+pub(crate) unsafe fn remote_select(text:&[u8])->bool {
+    if text.len()!=12 || !text.iter().all(|c|c.is_ascii_alphanumeric()){return false;}
+    let win=st_rd!(WF_WIN);load_watchfaces(1);
+    for i in 0..st_rd!(WF_COUNT).min(24) as usize {
+        if &WF_IDS[i][..12]!=text{continue;}
+        let node=WF_NODES[i];let mut id=[0u8;16];id[..12].copy_from_slice(text);
+        let sw:unsafe extern "C" fn(*const u8)->i32=core::mem::transmute(FW_SET_WATCHFACE as usize);
+        let rc=sw(id.as_ptr());st_wr!(WF_SW_RC,rc);
+        if rc==0{let rf:unsafe extern "C" fn(u32,u32)->i32=core::mem::transmute(FW_REFRESH_CUR_WF as usize);st_wr!(WF_RF_RC,rf(1,node));}
+        remote_restore_view(win);return rc==0;
+    }remote_restore_view(win);false
+}
+
+pub(crate) unsafe fn control_ready()->bool {BOOT_DELAY==0}
+/// Metadata reads must preserve the native page's filter and click-to-row mapping.
+pub(crate) unsafe fn remote_restore_view(win:u32){
+    if APP_FG!=0&&matches!(FG_PAGE,8|9){let filter=if FG_PAGE==8{WF_SHOW_BUILTIN}else{WF_SEL_BUILTIN};load_watchfaces(filter);}
+    WF_WIN=win;
+}
