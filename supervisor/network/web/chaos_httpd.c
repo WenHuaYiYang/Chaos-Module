@@ -9,6 +9,7 @@
 #include "pan_ethernet.h"
 #include "websocket_codec.h"
 #include "web_index.h"
+#include "buzz_page.h"
 #include <string.h>
 #define CLIENTS 3u
 #define REQUEST_CAP 18432u
@@ -416,6 +417,11 @@ static void serve(struct client *c)
         respond(c, 200, "OK", "text/html; charset=utf-8", web_index, WEB_INDEX_SIZE, 1);
         return;
     }
+    /* 同步器页面: 静态外壳, 与首页同一档免鉴权; 数据接口在下方鉴权区。 */
+    if (c->method != 3 && !strcmp(path, "/buzz")) {
+        respond(c, 200, "OK", "text/html; charset=utf-8", web_buzz, WEB_BUZZ_SIZE, 1);
+        return;
+    }
     if (!authorized(c)) {
         json(c, 401, "{\"error\":\"authentication_required\"}");
         return;
@@ -487,6 +493,25 @@ static void serve(struct client *c)
     }
 
     /* --- 重启：先让 WebSocket 收尾，再交给平台层 --- */
+    /* --- 马达音乐: 同步器上传序列 (slot 1..6, 请求体 = .buzz 二进制) --- */
+    if (c->method == 3 && !strncmp(path, "/api/buzz/save", 14)) {
+        unsigned slot = 0;
+        const char *q = strstr(path, "slot=");
+        if (q) {
+            q += 5;
+            while (*q >= '0' && *q <= '9' && slot < 100) slot = slot * 10 + (unsigned)(*q++ - '0');
+        }
+        if (!c->content || c->content > 6144) {
+            json(c, 413, "{\"error\":\"maximum_6_KiB\"}");
+            return;
+        }
+        if (chaos_web_buzz_offer(slot, c->request + c->head, c->content) == 0) {
+            json(c, 200, "{\"saved\":true}");
+        } else {
+            json(c, 400, "{\"error\":\"bad_sequence\"}");
+        }
+        return;
+    }
     if (c->method == 3 && !strcmp(path, "/api/system/reboot")) {
         struct chaos_web_sysinfo info;
         chaos_web_sysinfo_read(&info);

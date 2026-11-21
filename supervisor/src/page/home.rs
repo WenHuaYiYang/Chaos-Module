@@ -46,6 +46,7 @@ static HOME_ROWS: &[RowModel] = &[
     RowModel::nav("快应用动画\0".as_bytes(),Pid::QuickappAnimation as u32),
     RowModel::nav(b"\xe6\x88\xaa\xe5\xb1\x8f\xe4\xb8\x8e\xe5\xbd\x95\xe5\xb1\x8f\x00", Pid::Capture as u32), // 截屏与录屏
     RowModel::nav(b"NSH\xe7\xbb\x88\xe7\xab\xaf\x00", Pid::Nsh as u32),                              // NSH终端
+    RowModel::nav("马达音乐\0".as_bytes(), Pid::BuzzMusic as u32),
     RowModel::nav(b"\xe5\xae\x9e\xe9\xaa\x8c\xe6\x80\xa7\xe5\x8a\x9f\xe8\x83\xbd\x00", Pid::Exp as u32), // 实验性功能
     RowModel::section(b"\xe4\xbf\xa1\xe6\x81\xaf\x00"),          // 信息
     RowModel::nav(b"ChaosConnect\0", Pid::Connect as u32),

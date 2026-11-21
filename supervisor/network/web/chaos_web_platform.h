@@ -34,6 +34,9 @@ unsigned chaos_web_terminal_receive(char *, unsigned);
 void chaos_web_terminal_stop(void);
 int chaos_web_terminal_state(void);
 int chaos_web_terminal_error(void);
+/* 马达音乐同步器: 把 .buzz 序列写入 /data/chaos/music/buzzN.buzz (slot 1..6)。
+ * 返回 0 成功, -22 内容非法, -5 IO 失败。数据只在本次调用内有效。 */
+int chaos_web_buzz_offer(unsigned slot, const unsigned char *data, unsigned len);
 /* Called only after an authenticated explicit reboot request was answered.
  * Advertise CAN_REBOOT only if this operation is implemented and audited. */
 int chaos_web_reboot(void);

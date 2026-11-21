@@ -734,6 +734,7 @@ pub(crate) unsafe fn tick() {
     load_mode();
     consume_deleted();
     vib_tick();   // 滑动震动 + 震动测试
+    let _ = crate::buzz_music::tick(fw_api::capture_now_ms()); // 马达音乐时间轴
     if !crate::font_apply::quiet() { return; }
     sv_watch_tick();
     // 档位或状态一变就排一次整页重建: 回调里(事件派发链上)只登记请求, 控件由这里
