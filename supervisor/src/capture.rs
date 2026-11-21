@@ -29,7 +29,7 @@ static STATE: AtomicU8 = AtomicU8::new(0);
 // Starting reserves the slot; this separate release publishes the reset fields.
 static START_REQUEST: AtomicBool = AtomicBool::new(false);
 static REQUEST_SETTINGS: AtomicU32 = AtomicU32::new(0);
-static SHOT_STORAGE: AtomicU8 = AtomicU8::new(0);
+static SHOT_SETTINGS: AtomicU8 = AtomicU8::new(0);
 // Screenshot: 0 idle, 1 waiting for OFF/AOD, 2 capturing, 3 saved.
 static SHOT: AtomicU8 = AtomicU8::new(0);
 static SHOT_STARTED: AtomicU32 = AtomicU32::new(0);
@@ -41,7 +41,6 @@ static FRAMES: AtomicU32 = AtomicU32::new(0);
 static FPS: AtomicU32 = AtomicU32::new(0);
 static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 static REVISION: AtomicU32 = AtomicU32::new(0);
-static SEQUENCE: AtomicU32 = AtomicU32::new(0);
 static LIMITED: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 const FRAME_MS: u32 = 67;
@@ -96,9 +95,10 @@ fn queue_shot(immediate: bool) -> Result<(), i32> {
     let previous = shot_state();
     if !matches!(previous, 0 | 3)
         || SHOT.compare_exchange(previous, 4, Ordering::AcqRel, Ordering::Acquire).is_err() { return Err(-16); }
-    // Reserve state 4 while publishing mode/storage/timestamp to the worker.
+    // Reserve state 4 while publishing mode/storage/format/timestamp to the worker.
     SHOT_ERROR.store(0, Ordering::Release);
-    SHOT_STORAGE.store(capture_settings::get().screenshot as u8, Ordering::Relaxed);
+    let settings = capture_settings::get();
+    SHOT_SETTINGS.store(settings.screenshot as u8 | ((settings.screenshot_png as u8) << 1), Ordering::Relaxed);
     SHOT_IMMEDIATE.store(immediate, Ordering::Relaxed);
     SHOT_STARTED.store(fw::capture_now_ms(), Ordering::Relaxed); SHOT.store(1, Ordering::Release);
     if let Err(e) = ensure_worker() { SHOT_ERROR.store(e, Ordering::Release); SHOT.store(0, Ordering::Release); return Err(e); }
@@ -115,21 +115,53 @@ impl Buffer {
 }
 impl Drop for Buffer { fn drop(&mut self) { unsafe { fw::fw_free(self.0 as _); } } }
 
+/// Once per capture, inspect both storage roots and all format variants. This
+/// survives reboot/reinjection without a counter file or per-frame filesystem IO.
+unsafe fn next_sequence(kind:Kind,day:u32)->Result<u32,i32> {
+    let mut highest=0;
+    for storage in Storage::ALL {
+        let dir=fw::opendir(storage.root().as_ptr());
+        if dir==0 {let e=fw::capture_result(-1);if e != -2{return Err(e);}continue;}
+        loop {
+            let entry=fw::readdir(dir);if entry==0{break;}
+            if ptr::read_volatile(entry as *const u8)!=8{continue;}
+            let mut name=[0;format::NAME_BYTES];let mut n=0;
+            while n<name.len(){let b=ptr::read_volatile((entry as usize+1+n)as *const u8);if b==0{break;}name[n]=b;n+=1;}
+            if let Some((k,d,index))=format::numbered(&name[..n]) {
+                if k==kind&&d==day{highest=highest.max(index);}
+            }
+        }
+        fw::closedir(dir);
+    }
+    highest.checked_add(1).ok_or(-75)
+}
+unsafe fn capture_date()->u32 {
+    fw::local_time_now().and_then(|tm|{
+        let year=u32::try_from(tm[5].checked_add(1900)?).ok()?;
+        let month=u32::try_from(tm[4].checked_add(1)?).ok()?;
+        let day=u32::try_from(tm[3]).ok()?;
+        format::date(year,month,day)
+    }).unwrap_or(0)
+}
+
 struct Output {
     fd: i32, bytes: u32, final_path: [u8; 96], temporary: [u8; 96], committed: bool,
     pending: Buffer, pending_len: usize,
 }
 impl Output {
-    unsafe fn create(kind: Kind, video: VideoFormat, storage: Storage) -> Result<Self, i32> {
+    unsafe fn create(kind: Kind, video: VideoFormat, storage: Storage, png: bool) -> Result<Self, i32> {
         if storage == Storage::Media {
             let rc = fw::capture_mkdir_path(b"/data/chaos\0".as_ptr());
             if rc < 0 && rc != -17 { return Err(rc); }
         }
         let rc = fw::capture_mkdir_path(storage.root().as_ptr());
         if rc < 0 && rc != -17 { return Err(rc); }
-        for _ in 0..128 {
+        let day=capture_date();
+        let first=next_sequence(kind,day)?;
+        for offset in 0..128 {
+            let sequence=first.checked_add(offset).ok_or(-75)?;
             let mut name = [0; format::NAME_BYTES];
-            format::name_for(&mut name, kind, video, fw::capture_now_ms() / 1000, SEQUENCE.fetch_add(1, Ordering::Relaxed));
+            format::name_with_png(&mut name,kind,video,png,day,sequence)?;
             let mut out = Self { fd: -1, bytes: 0, final_path: [0; 96], temporary: [0; 96], committed: true,
                 pending: Buffer::new(OUTPUT_BUFFER_BYTES)?, pending_len: 0 };
             format::path_at(&name, false, storage, &mut out.final_path)?;
@@ -207,7 +239,7 @@ impl Recording {
         let snapshot = Buffer::new(format::FRAME_BYTES)?;
         let indexed = Buffer::new(format::PIXELS)?;
         let current = Buffer::new(format::PIXELS)?;
-        let mut output = Output::create(Kind::Recording, settings.format, settings.recording)?;
+        let mut output = Output::create(Kind::Recording, settings.format, settings.recording, false)?;
         if settings.format == VideoFormat::Gif { format::gif_header(&mut output)?; } else { apng::header(&mut output)?; }
         let now = fw::capture_now_ms();
         Ok(Self { output, dictionary, reader, snapshot, indexed, current, video: settings.format, apng: apng::Encoder::new(),
@@ -365,9 +397,12 @@ impl Worker {
                     if space_low() { return Err(-28); }
                     let frame = self.buffer()?;
                     fw::capture_frame(frame.frame())?;
-                    let storage = if SHOT_STORAGE.load(Ordering::Acquire) == 1 { Storage::Media } else { Storage::OfflineLog };
-                    let mut out = Output::create(Kind::Screenshot, VideoFormat::Gif, storage)?;
-                    format::bmp(&mut out, frame.frame())?; out.commit()
+                    let options = SHOT_SETTINGS.load(Ordering::Acquire);
+                    let png = options & 2 != 0;
+                    let storage = if options & 1 != 0 { Storage::Media } else { Storage::OfflineLog };
+                    let mut out = Output::create(Kind::Screenshot, VideoFormat::Gif, storage, png)?;
+                    if png { apng::png(&mut out, frame.frame())?; } else { format::bmp(&mut out, frame.frame())?; }
+                    out.commit()
                 })();
                 match result {
                     Ok(()) => { SHOT.store(3, Ordering::Release); }

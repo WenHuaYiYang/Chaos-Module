@@ -936,8 +936,8 @@ unsafe extern "C" fn key_event(event: u32) {
                 fw_api::label_set_text(INPUT_LABEL, crate::page::blur_params::error_text());
             } else if COMPLETION == Completion::GyroPointer as u32 && safe_ptr(INPUT_LABEL) {
                 fw_api::label_set_text(INPUT_LABEL, crate::page::gyro_pointer::error_text());
-            } else if numeric_mode() && safe_ptr(INPUT_LABEL) {
-                fw_api::label_set_text(INPUT_LABEL, "请输入1～2147483秒\0".as_ptr());
+            } else if COMPLETION == Completion::DimmerTimeout as u32 && safe_ptr(INPUT_LABEL) {
+                fw_api::label_set_text(INPUT_LABEL, crate::dimmer_timeout::error_text());
             } else if nsh_mode() && safe_ptr(INPUT_LABEL) {
                 // Keep the buffer unchanged; the next key restores the tail.
                 fw_api::label_set_text(INPUT_LABEL, "发送失败，请重试\0".as_ptr());

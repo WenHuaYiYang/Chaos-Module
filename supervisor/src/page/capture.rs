@@ -16,6 +16,7 @@ pub(super) static PAGE_CAPTURE: CapturePage = CapturePage;
 pub(super) static PAGE_RECORDINGS: FilesPage = FilesPage { kind: Kind::Recording };
 pub(super) static PAGE_SCREENSHOTS: FilesPage = FilesPage { kind: Kind::Screenshot };
 pub(super) static PAGE_RECORDSET: SettingsPage = SettingsPage { recording: true };
+pub(super) static PAGE_PREVIEW: PreviewPage = PreviewPage;
 pub(super) static PAGE_SHOTSET: SettingsPage = SettingsPage { recording: false };
 static mut LAST_REVISION: u32 = u32::MAX;
 static mut LAST_FRAMES: u32 = u32::MAX;
@@ -160,16 +161,32 @@ impl Page for SettingsPage {
     fn fill_title(&self, buf: *mut u8) { unsafe { put_str(buf, if self.recording { "录屏设置\0".as_bytes() } else { "截图设置\0".as_bytes() }); } }
     fn render(&self, ctx: &PageCtx) -> PageResult { unsafe {
         let spec = CapSetCheck { recording: self.recording };
-        let anchor = ck_render(&spec, ctx)?;
+        let mut anchor = ck_render(&spec, ctx)?;
+        let mut footer = spec.count();
+        if !self.recording {
+            anchor = build_row(ctx, anchor, 2, &RowSpec::switch("转换为PNG\0".as_bytes()));
+            if anchor == 0 { return Err(PageError::RowFailed(2)); }
+            fw_api::row_update(anchor, core::ptr::null(), core::ptr::null(), core::ptr::null(), 0,
+                capture_settings::get().screenshot_png as u8);
+            footer += 1;
+        }
         // 条件提示行(失败/录屏中修改的说明), 跟在选项列表后
         if SETTINGS_RESULT[self.slot()] < 0 {
-            build_row(ctx, anchor, spec.count(), &RowSpec::display("设置保存失败，请重试\0".as_bytes(), core::ptr::null()));
+            build_row(ctx, anchor, footer, &RowSpec::display("设置保存失败，请重试\0".as_bytes(), core::ptr::null()));
         } else if capture::state() != State::Idle && self.recording {
-            build_row(ctx, anchor, spec.count(), &RowSpec::display("修改将在下次录屏生效\0".as_bytes(), core::ptr::null()));
+            build_row(ctx, anchor, footer, &RowSpec::display("修改将在下次录屏生效\0".as_bytes(), core::ptr::null()));
         }
         Ok(())
     } }
+    fn is_switch_row(&self, i: usize) -> bool { !self.recording && i == 2 }
+    fn on_switch(&self, i: usize) { if self.is_switch_row(i) { self.on_click(i); } }
     fn on_click(&self, i: usize) { unsafe {
+        if self.is_switch_row(i) {
+            let mut setting = capture_settings::get();
+            setting.screenshot_png = !setting.screenshot_png;
+            SETTINGS_RESULT[self.slot()] = capture_settings::set(setting).err().unwrap_or(0);
+            capture::settings_changed(); render_req(self.pid() as u32); return;
+        }
         let spec = CapSetCheck { recording: self.recording };
         ck_click(&spec, self.pid() as u32, i);
     } }
@@ -200,6 +217,8 @@ pub(super) unsafe fn reset_for_test() {
     RECORDINGS = Listing::new(); SCREENSHOTS = Listing::new(); SETTINGS_RESULT = [0; 2];
     LAST_REVISION = u32::MAX; LAST_FRAMES = u32::MAX;
     LAST_FPS = u32::MAX;
+    PREVIEW_ENTRY=Entry::EMPTY; PREVIEW_TARGET=Entry::EMPTY; PREVIEW_DELETE=false; PREVIEW_RESULT=0;
+    crate::confirm_pop::forget(crate::confirm_pop::SLOT_SHOT);
 }
 
 pub(crate) struct FilesPage { kind: Kind }
@@ -277,10 +296,11 @@ impl Page for FilesPage {
             let item = &list.entries[i];
             let mut w = W::new(list.subtitles[i].as_mut_ptr(), 64);
             w.sz(item.bytes).s(if item.storage == Storage::Media { " · 媒体".as_bytes() } else { " · 日志".as_bytes() })
-                .s(if list.armed.same_file(item) { " · 再次点击删除".as_bytes() } else { " · 点击删除".as_bytes() }).end();
-            let prefix = if self.kind == Kind::Recording { 10 } else { 11 };
-            let row = build_row(ctx, anchor, i, &RowSpec::tap(&item.name[prefix..], list.subtitles[i].as_ptr()));
+                .s(if self.kind == Kind::Screenshot { " · 点击预览".as_bytes() }
+                    else if list.armed.same_file(item) { " · 再次点击删除".as_bytes() } else { " · 点击删除".as_bytes() }).end();
+            let row = build_row(ctx, anchor, i, &RowSpec::tap(&item.name, list.subtitles[i].as_ptr()));
             if row == 0 { return Err(PageError::RowFailed(i)); } anchor = row;
+
         }
         if list.offset != 0 { anchor = build_row(ctx, anchor, 8, &RowSpec::clickable("上一页\0".as_bytes())); }
         if list.more { anchor = build_row(ctx, anchor, 9, &RowSpec::clickable("下一页\0".as_bytes())); }
@@ -299,6 +319,10 @@ impl Page for FilesPage {
             10 => { list.armed = Entry::EMPTY; }
             i if i < list.count => {
                 let item = list.entries[i];
+                if self.kind == Kind::Screenshot {
+                    PREVIEW_ENTRY = item; PREVIEW_RESULT = 0; PREVIEW_DELETE = false;
+                    nav_goto(Pid::ShotPreview as u32,0); return;
+                }
                 if list.armed.same_file(&item) { list.delete = true; }
                 else { list.armed = item; }
             }
@@ -326,4 +350,95 @@ impl Page for FilesPage {
             list.delete = false; list.armed = Entry::EMPTY; render_req(self.pid() as u32);
         } else if list.revision != capture::revision() { render_req(self.pid() as u32); }
     } }
+}
+
+
+/// The fixed container participates in scrolling; the GPU image remains its child.
+/// Clicking the container reaches the same row callback as the filename.
+unsafe fn picture(ctx:&PageCtx,prev:u32,cache:usize,row:u32,path:[u8;96],click:Option<usize>,caption:[u8;64])->Result<u32,PageError> {
+    let full=cache==8; let(w,h)=if full{(280,400)}else{(168,240)};
+    let box_=fw_api::obj_create(ctx.content,0);
+    if box_==0{return Err(PageError::RowFailed(cache));}
+    fw_api::obj_clear_box_spacing(box_);
+    fw_api::obj_set_size_wh(box_,w,h);
+    fw_api::background_set_opa(box_,0);
+    fw_api::obj_clear_flag(box_,fw_api::LV_OBJ_FLAG_SCROLLABLE|fw_api::LV_OBJ_FLAG_SCROLL_CHAIN);
+    fw_api::obj_align_to(box_,prev,fw_api::align::OUT_BOTTOM_MID,0,8);
+    if let Some(slot)=click {
+        fw_api::obj_add_flag(box_,fw_api::LV_OBJ_FLAG_CLICKABLE);
+        fw_api::obj_add_event(box_,row_cb(),7,slot as u32);
+    } else {fw_api::obj_clear_flag(box_,fw_api::LV_OBJ_FLAG_CLICKABLE);}
+    let image=fw_api::background_image_create(box_);
+    if image==0{return Err(PageError::RowFailed(cache));}
+    fw_api::obj_clear_flag(image,fw_api::LV_OBJ_FLAG_CLICKABLE|fw_api::LV_OBJ_FLAG_SCROLLABLE);
+    fw_api::obj_align(image,fw_api::align::TOP_LEFT,0,0);
+    if !crate::capture_preview::attach(cache,image,row,if full{Pid::ShotPreview as u32}else{SCREENSHOTS_PID as u32},path,if full{256}else{512},caption) {
+        fw_api::row_update(row,core::ptr::null(),core::ptr::null(),"预览暂不可用，请刷新\0".as_ptr(),0,0);
+    }
+    Ok(box_)
+}
+
+pub(crate) struct PreviewPage;
+static mut PREVIEW_ENTRY:Entry=Entry::EMPTY;
+static mut PREVIEW_TARGET:Entry=Entry::EMPTY;
+static mut PREVIEW_DELETE:bool=false;
+static mut PREVIEW_RESULT:i32=0;
+unsafe extern "C" fn preview_no(event:u32) {
+    if crate::confirm_pop::click(crate::confirm_pop::SLOT_SHOT,event)!=0 {
+        render_req(Pid::ShotPreview as u32);
+    }
+}
+unsafe extern "C" fn preview_yes(event:u32) {
+    if crate::confirm_pop::click(crate::confirm_pop::SLOT_SHOT,event)!=0 {PREVIEW_DELETE=true;}
+}
+impl Page for PreviewPage {
+    fn fill_title(&self,buf:*mut u8){unsafe{put_str(buf,"截图预览\0".as_bytes());}}
+    fn on_instance_reset(&self){unsafe{crate::confirm_pop::forget(crate::confirm_pop::SLOT_SHOT);}}
+    fn on_pause(&self){unsafe{PREVIEW_DELETE=false;}}
+    fn render(&self,ctx:&PageCtx)->PageResult{unsafe{
+        crate::confirm_pop::reset(crate::confirm_pop::SLOT_SHOT);
+        let item=PREVIEW_ENTRY;
+        let mut path=[0;96];
+        if item.name[0]==0||format::path_at(&item.name,false,item.storage,&mut path).is_err(){
+            build_row(ctx,ctx.title,0,&RowSpec::display("未选择截图\0".as_bytes(),core::ptr::null()));return Ok(());
+        }
+        let info=build_row(ctx,ctx.title,0,&RowSpec::display(&item.name,"加载预览中\0".as_ptr()));
+        if info==0{return Err(PageError::RowFailed(0));}
+        let image=picture(ctx,info,8,info,path,None,[0;64])?;
+        let delete=build_row(ctx,image,1,&RowSpec::clickable("删除截图\0".as_bytes()));
+        if delete==0{return Err(PageError::RowFailed(1));}
+        if PREVIEW_RESULT<0 {build_row(ctx,delete,2,&RowSpec::display(error_text(PREVIEW_RESULT),core::ptr::null()));}
+        Ok(())
+    }}
+    fn on_click(&self,i:usize){unsafe{
+        if i!=1||crate::confirm_pop::shown(crate::confirm_pop::SLOT_SHOT)||PREVIEW_ENTRY.name[0]==0{return;}
+        let rc=crate::confirm_pop::build(crate::confirm_pop::SLOT_SHOT,0,core::ptr::null(),0,
+            preview_no as *const()as u32,preview_yes as *const()as u32);
+        if rc==0{PREVIEW_TARGET=PREVIEW_ENTRY;}
+        else {PREVIEW_RESULT=-5;render_req(Pid::ShotPreview as u32);}
+    }}
+    fn needs_tick(&self)->bool{unsafe{PREVIEW_DELETE||crate::confirm_pop::shown(crate::confirm_pop::SLOT_SHOT)}}
+    fn tick(&self){unsafe{
+        if crate::confirm_pop::close_deferred(crate::confirm_pop::SLOT_SHOT){render_req(Pid::ShotPreview as u32);}
+        if !PREVIEW_DELETE{return;}
+        PREVIEW_DELETE=false;
+        let item=PREVIEW_TARGET;
+        let n=item.name.iter().position(|&b|b==0).unwrap_or(item.name.len());
+        if item.name[..n].ends_with(b".part")&&capture::shot_state()==2 {
+            PREVIEW_RESULT=-16;render_req(Pid::ShotPreview as u32);return;
+        }
+        let mut path=[0;96];
+        PREVIEW_RESULT=match format::path_at(&item.name,false,item.storage,&mut path) {
+            Ok(())=>fw_api::capture_result(fw_api::fs_remove(path.as_ptr())),Err(e)=>e,
+        };
+        if PREVIEW_RESULT>=0 {
+            SCREENSHOTS.result=1;PREVIEW_ENTRY=Entry::EMPTY;
+            render_req(SCREENSHOTS_PID as u32);nav_back();
+        } else {render_req(Pid::ShotPreview as u32);}
+    }}
+}
+
+#[cfg(test)]
+pub(super) unsafe fn confirm_preview_for_test(yes:bool) {
+    if yes {preview_yes(7);} else {preview_no(7);}
 }

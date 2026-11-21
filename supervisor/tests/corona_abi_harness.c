@@ -44,6 +44,13 @@ static void chaos_corona_launcher_rebind(void) {}
 static void chaos_corona_rearm_missing_source(void) {}
 static void cc_buttons_poll(void) {}
 static void chaos_v2_background_refresh(void) {}
+/* c0ebd5f9 在 poll 里加了"采集卡死兜底"(pending 超 1.5s 就放弃这次请求并冷却 3s),
+ * 它引用的外部件在这里打桩: 可控时钟 + 计数器, 不碰任何 native。 */
+static uint32_t test_clock, budget_cancels;
+static uint32_t chaos_blur_monotonic_ms(void) { return test_clock; }
+static unsigned p67_blur_pending;
+static uint32_t chaos_v2_backoff_until;
+static void p67_blur_cancel_budget(void) { ++budget_cancels; }
 
 static int rh_platform_backgrounds_commit(const struct rh_backgrounds *bg) {
     const char *paths[] = {bg->launcher, bg->control_center, bg->notifications, bg->widgets};
@@ -174,6 +181,19 @@ int main(void) {
     assert(!chaos_corona_backgrounds_idle() && chaos_corona_idle_wait==7 && surface_idle_queries==2);
     p67_surfaces[1].idle=1;
     assert(chaos_corona_backgrounds_idle() && !chaos_corona_idle_wait && surface_idle_queries==5);
-    puts("Chaos C ABI: 16 masks, mixed paths, rollback/reentry and honeycomb position guard passed");
+    /* 采集卡死兜底: pending 持续超过 1.5s 就放弃这次请求并把冷却推到 now+3s,
+     * 否则"重绘-重试"会一直贴着 100% CPU。 */
+    test_clock = 10000u; p67_blur_pending = 1u;
+    chaos_corona_backgrounds_poll();
+    test_clock = 10500u;
+    chaos_corona_backgrounds_poll();
+    assert(budget_cancels == 0u && chaos_v2_backoff_until == 0u);
+    test_clock = 12000u;
+    chaos_corona_backgrounds_poll();
+    assert(budget_cancels == 1u && chaos_v2_backoff_until == 15000u);
+    p67_blur_pending = 0u; test_clock = 0u;
+    chaos_corona_backgrounds_poll();
+    assert(budget_cancels == 1u && chaos_v2_backoff_until == 15000u);
+    puts("Chaos C ABI: 16 masks, mixed paths, rollback/reentry, honeycomb position and stuck-budget guard passed");
     return 0;
 }

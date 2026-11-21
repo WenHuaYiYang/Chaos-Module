@@ -102,6 +102,14 @@ def verify(data):
     signature(data,0xA229C,"162200af00210446")
     require(bl_target(data,0xA22A4) == 0xC7F18, "layout style getter changed")
     signature(data,0xA22BC,"02ebc301496852f833309847")
+    # Same stock layout button as S541: 220x80 native LVX button, stored at +0x5c.
+    signature(data,0x456626,"c165")
+    signature(data,0x456662,"c06d")
+    require(bl_target(data,0x457B8A)==0x456620,"stock layout-button setter changed")
+    signature(data,0x457B6A,"20465022dc21")
+    require(bl_target(data,0x457B70)==0x4C8628,"stock layout-button size setter changed")
+    require(struct.unpack_from("<I",data,0x98848C)[0]==0x2CDB9D6C,
+            "stock layout button no longer uses the CC native button class")
     print("PASS exact AP, 36-byte class, native app callback, x/y vector, zoom and runnable boot-copy mappings")
 
 def main():

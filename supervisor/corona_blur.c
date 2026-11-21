@@ -124,11 +124,14 @@ static void chaos_corona_launcher_position(void *event) {
 
 /* Sole implementation entry: includes launcher -> native provider/state
  * machine, then all three panels and the control-center battery hooks. */
-static unsigned chaos_corona_enabled, chaos_corona_in_call, chaos_cc_buttons_requested;
+static unsigned chaos_corona_enabled, chaos_corona_in_call, chaos_cc_buttons_requested, chaos_launcher_buttons_requested;
 static int chaos_cc_buttons_demand(void) {
     return chaos_corona_enabled && chaos_v2_algorithm && chaos_cc_buttons_requested;
 }
-#define P67_BLUR_EXTRA_DEMAND() chaos_cc_buttons_demand()
+static int chaos_launcher_buttons_demand(void) {
+    return chaos_corona_enabled && chaos_v2_algorithm && chaos_launcher_buttons_requested;
+}
+#define P67_BLUR_EXTRA_DEMAND() (chaos_cc_buttons_demand() || chaos_launcher_buttons_demand())
 #define P67_BLUR_COPY_UNCHANGED() chaos_v2_unchanged()
 #include "blur_interaction.h"
 extern uint32_t chaos_blur_monotonic_ms(void);
@@ -182,6 +185,14 @@ void chaos_blur_control_buttons_set(uint32_t enabled) {
     enabled=!!enabled;
     if(enabled==chaos_cc_buttons_requested) return;
     chaos_cc_buttons_requested=enabled;
+    cc_scan_ticks=0;
+    if(enabled) p67_blur_reset();
+}
+void chaos_blur_launcher_buttons_set(uint32_t enabled) {
+    enabled=!!enabled;
+    if(enabled==chaos_launcher_buttons_requested) return;
+    chaos_launcher_buttons_requested=enabled;
+    cc_scan_ticks=0;
     if(enabled) p67_blur_reset();
 }
 int chaos_blur_v2_set_params(const uint32_t *values,uint32_t count) {

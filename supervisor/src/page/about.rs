@@ -93,7 +93,7 @@ unsafe fn dbg_bump() {
     }
 }
 
-/// 版本串来自构建注入(形如 1.2.7-d)，带 "v" 前缀与结尾 NUL。
+/// 版本串读取 Cargo.toml 的 package.version，带 "v" 前缀与结尾 NUL。
 /// 静态行放不下运行期字符串，所以填一次到固定缓冲，再按 Dyn 行读。
 static mut VERSION_TXT: [u8; 32] = [0; 32];
 unsafe fn version_ptr() -> *const u8 {

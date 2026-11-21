@@ -44,6 +44,7 @@ mod btpan {
     }
 }
 mod dimmer_timeout {
+    pub unsafe fn error_text() -> *const u8 { "请输入1～2147483秒\0".as_ptr() }
     pub unsafe fn save(text: *const u8) -> bool {
         let bytes = std::ffi::CStr::from_ptr(text.cast()).to_bytes().to_vec();
         crate::mock::with(|ui| { ui.saves.push((6, bytes)); ui.save_ok })

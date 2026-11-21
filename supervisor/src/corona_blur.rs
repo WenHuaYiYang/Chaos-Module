@@ -22,6 +22,7 @@ pub(crate) const ALGO_V3: u32 = 2;
 extern "C" {
     fn chaos_blur_select_algorithm(algo: u32) -> i32;
     fn chaos_blur_control_buttons_set(enabled: u32);
+    fn chaos_blur_launcher_buttons_set(enabled: u32);
     fn chaos_corona_backgrounds_commit(enabled: u32, region_mask: u32) -> i32;
     fn chaos_corona_backgrounds_poll();
     fn chaos_corona_backgrounds_pending() -> u32;
@@ -86,23 +87,27 @@ pub(crate) unsafe fn algo() -> u32 {
     ALGO
 }
 
+/// 写盘失败后本次切换仍立即生效, 但同值调用要重试写盘 —— 否则用户改了设置、
+/// 那一刻正好 IO 失败, 就会永久"看着开着但重启即丢"。
 pub(crate) unsafe fn set_enabled(on: bool) {
     load();
-    if ENABLED == on { return; }
+    let changed = ENABLED != on;
+    if !changed && !SAVE_FAILED { return; }
     ENABLED = on;
     SAVE_FAILED = !persist();
-    crate::background_home::remount();
+    if changed { crate::background_home::remount(); }
 }
 
 /// 选算法同时打开模糊: 这三个选项本身互斥, 点哪个就切到哪个。
 pub(crate) unsafe fn set_algo(next: u32) {
     load();
     let next = next.min(ALGO_V3);
-    if ENABLED && ALGO == next { return; }
+    let changed = !ENABLED || ALGO != next;
+    if !changed && !SAVE_FAILED { return; }
     ENABLED = true;
     ALGO = next;
     SAVE_FAILED = !persist();
-    crate::background_home::remount();
+    if changed { crate::background_home::remount(); }
 }
 
 /// Commit Corona's background configuration using the shared region mask:
@@ -132,6 +137,7 @@ pub(crate) unsafe fn set_scene(id: u32) {
 pub(crate) unsafe fn backgrounds_poll() {
     crate::blur_params::apply();
     chaos_blur_control_buttons_set((algo() != 0 && crate::cc_buttons_config::enabled()) as u32);
+    chaos_blur_launcher_buttons_set((algo() != 0 && crate::launcher_buttons_config::enabled()) as u32);
     let _ = chaos_blur_select_algorithm(algo());
     chaos_corona_backgrounds_poll();
 }

@@ -53,6 +53,9 @@ mod t043 {
     // Same .043 screen-service field/setter chain used by dimmer_timeout.rs.
     pub const SCREEN_DIMMER_TIMEOUT: u32 = 0x2013_F43C;
     pub const SCREEN_TIMEOUT_REFRESH: u32 = 0x0CA7_0361;
+    // Exact .043 native setter 0x0CA7290C: screen+0xD2, then refresh 0x0CA714B4.
+    pub const SCREEN_TOUCH_PALM: u32 = 0x2013_F43A;
+    pub const SCREEN_TOUCH_PALM_REFRESH: u32 = 0x0CA7_14B5;
     // NuttX VFS; same entrypoints as the existing native file bridge.
     pub const CAPTURE_MKDIR: u32 = 0x0C1D_05E9;
     pub const CAPTURE_RENAME: u32 = 0x0C1D_12E9;

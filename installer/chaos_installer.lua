@@ -893,10 +893,8 @@ as_set = function(text, color, logged)
   if as_label then as_label:set { text = fit_status(text), text_color = color or V_TXT2 } end
 end
 
--- 标题带版本号: 版本由 build.py 在打包时注入(与容器头同一个 p67_pack.VERSION),
--- 不要把版本写死在这里, 否则改版本要动两处。
--- 固定单行: 按字节粗估宽度(ASCII≈0.56em, 三字节汉字≈1em), 超宽就逐档缩字号;
--- 宁可小一号, 也不要折行或溢出到屏幕外。
+-- 标题带版本号: 版本由 build.py 在打包时注入(与容器头同一个 p67_pack.VERSION)。
+-- 固定单行: 按字节粗估宽度, 超宽就逐档缩字号; 宁可小一号也不折行。
 local CHAOS_VERSION = "__CHAOS_VERSION__"
 local TITLE = "Chaos" .. CHAOS_VERSION .. "安装器"
 local function title_size_for(text, max_width, preferred)

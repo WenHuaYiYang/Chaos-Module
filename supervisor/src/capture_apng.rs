@@ -137,3 +137,24 @@ impl<S: Sink> Rle<'_, '_, S> {
         for byte in checksum.to_be_bytes() { self.output.byte(byte)?; } Ok(())
     }
 }
+
+/// Lossless true-colour screenshot, using the same bounded streaming encoder.
+/// Convert the owned BGR snapshot directly; no intermediate BMP or second frame.
+pub fn png(out: &mut impl Sink, bgr: &[u8]) -> Result<(), i32> {
+    if bgr.len() != crate::capture_format::FRAME_BYTES { return Err(-22); }
+    out.put(b"\x89PNG\r\n\x1a\n")?;
+    let mut ihdr = [0; 13]; ihdr[..4].copy_from_slice(&(WIDTH as u32).to_be_bytes());
+    ihdr[4..8].copy_from_slice(&(HEIGHT as u32).to_be_bytes()); ihdr[8] = 8; ihdr[9] = 2;
+    chunk(out, b"IHDR", &ihdr)?;
+    let mut sequence = 0;
+    let mut stream = DataChunks { out, sequence: &mut sequence, first: true, data: [0; 4096], len: 0 };
+    stream.byte(0x78)?; stream.byte(0x01)?;
+    let mut deflate = Rle { output: &mut stream, bits: 0, used: 0, last: 0, run: 0, a: 1, b: 0, adler_count: 0 };
+    deflate.bits(3, 3)?;
+    for row in bgr.chunks_exact(WIDTH * 3) {
+        deflate.byte(0)?;
+        for p in row.chunks_exact(3) { deflate.byte(p[2])?; deflate.byte(p[1])?; deflate.byte(p[0])?; }
+    }
+    deflate.finish()?; stream.flush()?;
+    chunk(out, b"IEND", &[])
+}

@@ -66,7 +66,7 @@
 
 ## v1.2.7-Alpha — 蓝牙名、模糊功耗、流畅度、缺陷修复与 V2/V3 双档（2026-11-19）
 
-本版基于 v1.2.6 合并发布；版本串带后缀 `Alpha`，随每次重新编译递改。
+本版基于 v1.2.6 合并发布；早期构建曾添加 `Alpha` 后缀，现已恢复从 Cargo.toml 读取版本号。
 
 ### 实机问题
 
@@ -138,19 +138,22 @@
   已全部回退：`SPACING_MIN = 224`（87.5%–200%），边缘收缩保持线性
   （中心 84px → 边缘 28px）。桌面代码与 v1.2.6 一致。
 
-### 版本号后缀
+### 版本号来源
 
-版本串形如 `v1.2.7-Alpha`。每次改完代码重新出包时，把 `tools/p67_pack.py` 的
-`VERSION_SUFFIX` 往后改一档（Alpha → Beta → …），该值自动同步到产物文件名、
-容器显示名（`Chaos127Alpha安装器`）、安装器标题与关于页。容器头数字 `VERSION`
-（`0x00010207`）不受后缀影响。
+`supervisor/Cargo.toml` 的 `[package].version` 是唯一版本来源。
+关于页和连接日志通过 Cargo 的 `CARGO_PKG_VERSION` 读取；Python 与 Node 打包脚本也读取同一文件，
+将主、次、修订号映射到容器头。没有独立版本常量或自动追加的 Alpha 后缀。
+当前为 `1.2.7`，修改版本号只需修改 Cargo.toml。
 
 ### 安装器与构建
 
-- 安装器标题带版本号（`Chaos127Alpha安装器`），由 `build.py` 从 `p67_pack.VERSION`
-  注入 Lua 占位符，与容器头同一真源；标题固定单行，超宽自动逐档缩字号。
-- 产物名带版本前缀：`v1.2.7-Alpha-chaos-installer-10p-3.101.043.bin`；
-  CI 用通配上传，升版本不用改 workflow。
+- 安装器标题与容器显示名保持简短固定串：标题是 `Chaos 安装器`，应用列表里的
+  名字是 `Chaos 安装器 10p 3.101.043`。版本号只出现在容器头与关于页两处，
+  界面标题、列表名和文件名都不再重复一遍。
+- 产物名保持短：`chaos-installer-10p-3.101.043.bin`。目标串本身已含机型与
+  固件，文件名里再叠版本号会变成
+  `v1.2.7-Alpha-chaos-installer-10p-3.101.043.bin`，在 AstroBox 的文件列表里
+  显示不下。
 
 ### 已知未改（缺真机证据）
 
@@ -239,7 +242,7 @@ C 功能桩（`-fsanitize`）在 Windows 宿主不可运行，属 Linux CI。真
 - 安装器脚本打包时瘦身（`tools/minify_lua.py`：去注释/缩进/空行，token 序列逐字比对断言），容器内 main.lua 约 46.5KB→32.9KB。
 - 容器内的模块副本在打包时 `--strip-unneeded`（`tools/build.py`，llvm/ rust-objcopy 优先，失败自动回退未 strip），副本约 1.45MB→1.40MB；构建产物 `supervisor/chaos_sup.ko` 本身不 strip。
 - `chaos-fetch/build.py` 兼容新旧两代 clang：统计计数器需要 `-Wunused-but-set-global` 豁免，但 CI 的 NDK clang 还不认识这个告警组（未知 `-Wno-*` 在 `-Werror` 下同样报错），改成运行期探测本机是否接受该开关、接受才加；重定位表校验在缺 `llvm-readelf` 的环境退用 `llvm-objdump -r`（解析只认 R_ARM_ 前缀）。
-- 容器预览块改由 `tools/gen_preview.py` 自产（构建时不存在 `dist/preview.bin` 就现场渲染，
+- 容器预览块改由 `tools/gen_preview.py` 自产（每次构建都现场重渲染，
   与固件解压函数同格式 0x5AA521E0 RLE、336x480，与旧链预览块逐字节一致）；`--preview` 仍可显式指定其它块。
   预览图字体按仓库内 MiSans → 系统中文（微软雅黑/Noto CJK/文泉驿/苹方）顺序解析，可用 `CHAOS_PREVIEW_FONT`
   指定；一个都没有时退回 Pillow 内置位图字体并告警，不再因"这台机器没装中文字体"而构建失败。

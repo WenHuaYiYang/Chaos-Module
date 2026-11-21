@@ -7,10 +7,10 @@ fn reset() {
     START_REQUEST.store(false, Ordering::Relaxed);
     ERROR.store(0, Ordering::Relaxed); SHOT_ERROR.store(0, Ordering::Relaxed);
     WORKER.store(false, Ordering::Relaxed); FRAMES.store(0, Ordering::Relaxed);
-    REVISION.store(0, Ordering::Relaxed); SEQUENCE.store(0, Ordering::Relaxed);
+    REVISION.store(0, Ordering::Relaxed);
     FPS.store(0, Ordering::Relaxed); CONSTRAINED.store(false, Ordering::Relaxed);
     LIMITED.store(false, Ordering::Relaxed);
-    REQUEST_SETTINGS.store(0, Ordering::Relaxed); SHOT_STORAGE.store(0, Ordering::Relaxed);
+    REQUEST_SETTINGS.store(0, Ordering::Relaxed); SHOT_SETTINGS.store(0, Ordering::Relaxed);
     SHOT_IMMEDIATE.store(false, Ordering::Relaxed);
     crate::capture_settings::reset_for_test(); unsafe { crate::capture_page::reset_for_test(); }
 }
@@ -19,7 +19,7 @@ fn finish(worker: &mut Worker) { toggle_recording(); unsafe { worker.step(); } a
 fn file_count(extension: &str) -> usize { world(|w| w.files.keys().filter(|s| s.ends_with(extension)).count()) }
 fn save_fixture(name: &str) { world(|w| {
     if let Ok(dir) = std::env::var("CAPTURE_TEST_OUTPUT") {
-        let data = w.files.iter().find(|(name, _)| name.ends_with(".gif") || name.ends_with(".apng") || name.ends_with(".bmp")).unwrap().1;
+        let data = w.files.iter().find(|(name, _)| name.ends_with(".gif") || name.ends_with(".apng") || name.ends_with(".bmp") || name.ends_with(".png")).unwrap().1;
         std::fs::write(std::path::Path::new(&dir).join(name), data).unwrap();
     }
 }); }
@@ -29,7 +29,7 @@ fn immediate_screenshot_captures_visible_screen_without_waiting_for_power_off() 
     reset(); let mut worker = Worker::new();
     assert_eq!(request_shot_now(), Ok(())); assert_eq!(shot_state(), 1);
     unsafe { worker.step(); }
-    assert_eq!(shot_state(), 3); assert_eq!(shot_error(), 0); assert_eq!(file_count(".bmp"), 1);
+    assert_eq!(shot_state(), 3); assert_eq!(shot_error(), 0); assert_eq!(file_count(".png"), 1);
     world(|w| assert!(w.on)); check_clean();
 }
 
@@ -37,17 +37,17 @@ fn immediate_screenshot_captures_visible_screen_without_waiting_for_power_off() 
 fn immediate_screenshot_never_steals_an_existing_one_shot_or_captures_after_sleep() {
     reset(); let mut worker = Worker::new(); toggle_shot();
     assert_eq!(request_shot_now(), Err(-16)); assert_eq!(shot_state(), 1);
-    unsafe { worker.step(); } assert_eq!(file_count(".bmp"), 0);
+    unsafe { worker.step(); } assert_eq!(file_count(".png"), 0);
     toggle_shot(); assert_eq!(shot_state(), 0); assert_eq!(request_shot_now(), Ok(()));
     world(|w| w.on = false); unsafe { worker.step(); }
     assert_eq!(shot_state(), 0); assert_eq!(shot_error(), -125);
-    world(|w| w.on = true); unsafe { worker.step(); } assert_eq!(file_count(".bmp"), 0); check_clean();
+    world(|w| w.on = true); unsafe { worker.step(); } assert_eq!(file_count(".png"), 0); check_clean();
 }
 
 #[test]
 fn apng_sixty_vsync_frames_have_exact_one_second_duration() {
     reset(); world(|w| w.frame_mode = 2);
-    crate::capture_settings::set(Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog }).unwrap();
+    crate::capture_settings::set(Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog, screenshot_png: false }).unwrap();
     let mut worker = Worker::new(); toggle_recording(); unsafe { worker.step(); }
     for i in 1..60 { world(|w| w.now = 1000 + (i * 1000 + 30) / 60); unsafe { worker.step(); } }
     world(|w| w.now = 2000); finish(&mut worker);
@@ -111,7 +111,7 @@ fn apng_noise_and_long_static_holds_decode_with_streaming_chunks() {
 #[test]
 fn settings_survive_reload_and_failed_saves_preserve_the_old_config() {
     reset(); assert_eq!(capture_settings::get(), Settings::DEFAULT);
-    let chosen = Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog };
+    let chosen = Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog, screenshot_png: false };
     capture_settings::set(chosen).unwrap(); capture_settings::reset_for_test(); assert_eq!(capture_settings::get(), chosen);
     let original = world(|w| w.files["/data/chaos/capture.cfg"].clone());
     world(|w| w.budget = 0); assert_eq!(capture_settings::set(Settings::DEFAULT), Err(-28));
@@ -123,7 +123,7 @@ fn settings_survive_reload_and_failed_saves_preserve_the_old_config() {
 
 #[test]
 fn settings_reject_invalid_bytes_and_overlong_configs() {
-    for bad in [b"CAP2\x09\0\0Z".as_slice(), b"CAP2\0\0\0X", b"CAP2\0\0\0Ztrailing", b"bad"] {
+    for bad in [b"CAP2\x09\0\0Z".as_slice(), b"CAP2\0\0\0X", b"CAP3\0\0\x04^", b"CAP3\x02\0\0X", b"CAP2\0\0\0Ztrailing", b"bad"] {
         reset(); world(|w| { w.files.insert("/data/chaos/capture.cfg".into(), bad.to_vec()); });
         assert_eq!(capture_settings::get(), Settings::DEFAULT); check_clean();
     }
@@ -134,11 +134,11 @@ fn recording_and_armed_screenshot_latch_their_own_settings() {
     reset(); world(|w| w.frame_mode = 2);
     capture_settings::set(Settings { screenshot: Storage::Media, ..Settings::DEFAULT }).unwrap();
     let mut worker = Worker::new(); toggle_recording(); unsafe { worker.step(); } toggle_shot();
-    capture_settings::set(Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog }).unwrap();
+    capture_settings::set(Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog, screenshot_png: false }).unwrap();
     world(|w| w.on = false); unsafe { worker.step(); } finish(&mut worker); check_clean();
     world(|w| {
         assert!(w.files.keys().any(|p| p.starts_with("/data/offlinelog/") && p.ends_with(".gif")));
-        assert!(w.files.keys().any(|p| p.starts_with("/data/chaos/media/") && p.ends_with(".bmp")));
+        assert!(w.files.keys().any(|p| p.starts_with("/data/chaos/media/") && p.ends_with(".png")));
     });
     world(|w| { w.on = true; w.now += 100; }); toggle_recording(); unsafe { worker.step(); } finish(&mut worker);
     assert_eq!(file_count(".apng"), 1); check_clean();
@@ -172,9 +172,9 @@ fn settings_pages_expose_both_formats_and_independent_storage_choices() {
         assert_eq!(u.events, [(101, 2000, 7), (102, 2000, 7), (103, 2000, 7), (104, 2000, 7)]);
     });
     PAGE_RECORDSET.on_click(1); PAGE_RECORDSET.on_click(2); PAGE_SHOTSET.on_click(0);
-    assert_eq!(capture_settings::get(), Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::Media });
+    assert_eq!(capture_settings::get(), Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::Media, screenshot_png: true });
     PAGE_SHOTSET.on_click(1); capture_settings::reset_for_test();
-    assert_eq!(capture_settings::get(), Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog });
+    assert_eq!(capture_settings::get(), Settings { format: VideoFormat::Apng, recording: Storage::Media, screenshot: Storage::OfflineLog, screenshot_png: true });
     ui(|u| *u = Default::default()); PAGE_SHOTSET.render(&ctx).unwrap();
     ui(|u| assert_eq!(u.events, [(101, 2000, 7), (102, 2000, 7)]));
     PAGE_CAPTURE.on_click(4); PAGE_CAPTURE.on_click(5); ui(|u| assert_eq!(u.navigations, [41, 42])); check_clean();
@@ -299,13 +299,14 @@ fn worker_waits_for_start_request_publication() {
 
 #[test]
 fn screenshot_waits_for_off_and_only_runs_once() {
-    reset(); let mut w = Worker::new(); toggle_shot(); unsafe { w.step(); }
+    reset(); capture_settings::set(Settings { screenshot_png: false, ..Settings::DEFAULT }).unwrap();
+    let mut w = Worker::new(); toggle_shot(); unsafe { w.step(); }
     assert_eq!(shot_state(), 1); world(|m| assert_eq!(m.captures, 0));
     world(|m| m.on = false); unsafe { w.step(); }
     assert_eq!(shot_state(), 3); assert_eq!(file_count(".bmp"), 1); check_clean();
     unsafe { w.step(); w.step(); } world(|m| assert_eq!(m.captures, 1));
     world(|m| {
-        let bytes = m.files.values().next().unwrap(); assert_eq!(bytes.len(), 54 + format::FRAME_BYTES);
+        let bytes = m.files.iter().find(|(name,_)|name.ends_with(".bmp")).unwrap().1; assert_eq!(bytes.len(), 54 + format::FRAME_BYTES);
         if let Ok(dir) = std::env::var("CAPTURE_TEST_OUTPUT") { std::fs::write(std::path::Path::new(&dir).join("worker.bmp"), bytes).unwrap(); }
     });
 }
@@ -313,7 +314,7 @@ fn screenshot_waits_for_off_and_only_runs_once() {
 #[test]
 fn cancel_timeout_and_clock_wrap() {
     reset(); let mut w = Worker::new(); toggle_shot(); unsafe { w.step(); } toggle_shot();
-    world(|m| m.on = false); unsafe { w.step(); } assert_eq!(file_count(".bmp"), 0);
+    world(|m| m.on = false); unsafe { w.step(); } assert_eq!(file_count(".png"), 0);
     world(|m| { m.on = true; m.now = u32::MAX - 100; }); toggle_shot(); unsafe { w.step(); }
     world(|m| m.now = m.now.wrapping_add(60_000)); unsafe { w.step(); }
     assert_eq!(shot_state(), 0); assert_eq!(shot_error(), -110); check_clean();
@@ -332,7 +333,7 @@ fn screenshot_and_recording_share_one_worker() {
     reset(); let mut w = Worker::new(); toggle_recording(); unsafe { w.step(); }
     let recording_heap: usize = world(|m| m.allocations.values().map(|layout| layout.size()).sum());
     toggle_shot(); world(|m| m.on = false); unsafe { w.step(); }
-    assert_eq!(state(), State::Recording); assert_eq!(file_count(".bmp"), 1);
+    assert_eq!(state(), State::Recording); assert_eq!(file_count(".png"), 1);
     assert_eq!(world(|m| m.allocations.values().map(|layout| layout.size()).sum::<usize>()), recording_heap,
         "saving a screenshot must release its large transient buffer while recording continues");
     finish(&mut w); assert_eq!(file_count(".gif"), 1); check_clean();
@@ -397,7 +398,7 @@ fn spawn_failure_and_collision_do_not_clobber_existing_files() {
 
 #[test]
 fn filename_boundaries_and_free_space_units() {
-    let mut name = [0; format::NAME_BYTES]; format::name(&mut name, Kind::Screenshot, u32::MAX, u32::MAX);
+    let mut name = [0; format::NAME_BYTES]; format::name_with_png(&mut name, Kind::Screenshot, VideoFormat::Gif, false, 99991231, u32::MAX).unwrap();
     let n = name.iter().position(|&b| b == 0).unwrap(); assert_eq!(format::kind(&name[..n]), Some(Kind::Screenshot));
     let mut path = [0; 96]; assert!(format::path(b"../apps.json", false, &mut path).is_err());
     for bad in [b"chaos-rec-00000001-00000000.gif/../apps.json".as_slice(), b"chaos-rec-xxxxxxxx-00000000.gif", b"other.gif"] {
@@ -540,4 +541,134 @@ fn snapshot_repair_is_single_attempt_and_skips_slow_copies() {
         assert_eq!(frames(), 1); assert_eq!(state(), State::Recording);
         finish(&mut worker); assert_eq!(error(), 0); check_clean();
     }
+}
+
+#[test]
+fn png_switch_persists_migrates_cap2_and_latches_at_request() {
+    use crate::{capture_page::PAGE_SHOTSET, page::Page};
+    reset();
+    world(|w| { w.files.insert("/data/chaos/capture.cfg".into(), b"CAP2\x01\x01\x00\x5a".to_vec()); });
+    let old = capture_settings::get();
+    assert_eq!(old.format, VideoFormat::Apng); assert_eq!(old.recording, Storage::Media);
+    assert!(old.screenshot_png);
+    assert!(PAGE_SHOTSET.is_switch_row(2));
+    capture_settings::set(old).unwrap(); capture_settings::reset_for_test();
+    assert!(capture_settings::get().screenshot_png);
+    let ctx = crate::page::PageCtx { content: 1, title: 2, rows: std::ptr::null_mut() };
+    crate::ui(|u| *u = Default::default()); PAGE_SHOTSET.render(&ctx).unwrap();
+    crate::ui(|u| { assert_eq!(u.rows[2].1,"转换为PNG"); assert!(u.selected[&2]); });
+    world(|w| w.budget=0); PAGE_SHOTSET.on_switch(2);
+    capture_settings::reset_for_test(); assert!(capture_settings::get().screenshot_png);
+    crate::ui(|u| *u = Default::default()); PAGE_SHOTSET.render(&ctx).unwrap();
+    crate::ui(|u| assert_eq!(u.rows[3].1,"设置保存失败，请重试"));
+    world(|w| w.budget=usize::MAX);
+    let mut worker = Worker::new(); toggle_shot();
+    PAGE_SHOTSET.on_click(2); // Armed shot retains PNG despite subsequent edits.
+    world(|w| { w.on = false; w.write_size = 97; w.interrupts = 2; });
+    unsafe { worker.step(); }
+    assert_eq!(shot_state(), 3); assert_eq!(shot_error(), 0);
+    assert_eq!(file_count(".png"), 1); assert_eq!(file_count(".bmp"), 0);
+    save_fixture("worker.png"); check_clean();
+    world(|w| { w.on = true; }); request_shot_now().unwrap(); unsafe { worker.step(); }
+    assert_eq!(file_count(".bmp"), 1); check_clean();
+}
+
+#[test]
+fn png_transaction_failure_removes_partial_file_and_keeps_previous_screenshot() {
+    reset(); capture_settings::set(Settings { screenshot_png: true, ..Settings::DEFAULT }).unwrap();
+    let mut worker = Worker::new(); request_shot_now().unwrap(); unsafe { worker.step(); }
+    assert_eq!(file_count(".png"), 1);
+    world(|w| { w.budget = 200; });
+    request_shot_now().unwrap(); unsafe { worker.step(); }
+    assert_eq!(shot_error(), -28); assert_eq!(file_count(".png"), 1);
+    world(|w| assert!(!w.files.keys().any(|n| n.ends_with(".part")))); check_clean();
+}
+
+#[test]
+fn png_long_runs_keep_true_colour_and_are_managed_alongside_bmp() {
+    use crate::{capture_page::{PAGE_SCREENSHOTS,PAGE_PREVIEW,confirm_preview_for_test}, page::Page};
+    reset(); capture_settings::set(Settings { screenshot_png: true, screenshot: Storage::Media, ..Settings::DEFAULT }).unwrap();
+    world(|w| w.frame_mode = 1);
+    let mut worker = Worker::new(); request_shot_now().unwrap(); unsafe { worker.step(); }
+    save_fixture("solid.png");
+    world(|w| assert!(w.files.keys().any(|p| p.starts_with("/data/chaos/media/") && p.ends_with(".png"))));
+    let ctx = crate::page::PageCtx { content: 1, title: 2, rows: std::ptr::null_mut() };
+    crate::ui(|u| *u = Default::default());
+    PAGE_SCREENSHOTS.render(&ctx).unwrap();
+    crate::ui(|u| assert!(u.rows[0].1.ends_with(".png")));
+    let name=b"chaos-shot-00000001-00000000.png";
+    assert_eq!(format::file_kind(name),Some(Kind::Screenshot));
+    assert_eq!(format::file_kind(b"chaos-shot-00000001-00000000.png.part"),Some(Kind::Screenshot));
+    PAGE_SCREENSHOTS.on_click(0); PAGE_PREVIEW.on_click(1);
+    unsafe { confirm_preview_for_test(true); } PAGE_PREVIEW.tick();
+    assert_eq!(file_count(".png"),0); check_clean();
+}
+
+#[test]
+fn screenshot_preview_opens_without_deleting_and_requires_system_confirmation() {
+    use crate::{capture_page::*,page::Page,ui};
+    reset();ui(|u|*u=Default::default());
+    let filename="chaos-shot-00000001-00000000.png";
+    let media=format!("/data/chaos/media/{filename}");let log=format!("/data/offlinelog/{filename}");
+    world(|w|{w.files.insert(log.clone(),vec![1]);w.files.insert(media.clone(),vec![2]);});
+    let ctx=crate::page::PageCtx{content:1,title:2,rows:std::ptr::null_mut()};
+    PAGE_SCREENSHOTS.render(&ctx).unwrap();
+    ui(|u|assert_eq!(u.image_attaches,0));
+    PAGE_SCREENSHOTS.on_click(0);PAGE_SCREENSHOTS.tick();
+    assert_eq!(file_count(".png"),2);ui(|u|assert_eq!(u.navigations.last(),Some(&62)));
+    PAGE_PREVIEW.render(&ctx).unwrap();ui(|u|{assert!(u.rows.iter().any(|r|r.1=="删除截图"));assert_eq!(u.image_attaches,1);});
+    PAGE_PREVIEW.on_click(1);PAGE_PREVIEW.tick();assert_eq!(file_count(".png"),2);
+    unsafe{confirm_preview_for_test(false);}PAGE_PREVIEW.tick();assert_eq!(file_count(".png"),2);
+    PAGE_PREVIEW.on_click(1);unsafe{confirm_preview_for_test(true);}PAGE_PREVIEW.tick();
+    assert_eq!(file_count(".png"),1);world(|w|{assert!(w.files.contains_key(&media));assert!(!w.files.contains_key(&log));});
+    ui(|u|assert_eq!(u.navigations.last(),Some(&u32::MAX)));check_clean();
+}
+
+#[test]
+fn capture_names_use_civil_date_decimal_sequence_and_preserve_legacy_recognition() {
+    let mut name=[0;format::NAME_BYTES];
+    for (kind,video,png,expected) in [
+        (Kind::Screenshot,VideoFormat::Gif,true,"Chaos-Shot-20260101-01.png"),
+        (Kind::Screenshot,VideoFormat::Gif,false,"Chaos-Shot-20260101-01.bmp"),
+        (Kind::Recording,VideoFormat::Gif,false,"Chaos-Rec-20260101-01.gif"),
+        (Kind::Recording,VideoFormat::Apng,false,"Chaos-Rec-20260101-01.apng"),
+    ] {
+        format::name_with_png(&mut name,kind,video,png,20260101,1).unwrap();
+        assert_eq!(crate::cstr(name.as_ptr()),expected);
+        assert_eq!(format::kind(expected.as_bytes()),Some(kind));
+        assert_eq!(format::numbered(format!("{expected}.part").as_bytes()),Some((kind,20260101,1)));
+    }
+    format::name_with_png(&mut name,Kind::Screenshot,VideoFormat::Gif,true,20240229,100).unwrap();
+    assert_eq!(crate::cstr(name.as_ptr()),"Chaos-Shot-20240229-100.png");
+    assert_eq!(format::date(2025,2,29),None);
+    assert_eq!(format::date(2026,11,21),Some(20261121));
+    for bad in ["Chaos-Shot-20260229-01.png","Chaos-Shot-20260101-00.png","Chaos-Shot-20260101-001.png",
+        "Chaos-Shot-20260101-01.gif","Chaos-Rec-20260101-01.png","Chaos-Shot-20260101-4294967296.png",
+        "Chaos-Shot-20260101-01.png/../apps.json"] {assert!(format::file_kind(bad.as_bytes()).is_none(),"{bad}");}
+    assert_eq!(format::file_kind(b"chaos-shot-00000001-00000000.png"),Some(Kind::Screenshot));
+    assert_eq!(format::file_kind(b"chaos-rec-00000001-00000000.apng.part"),Some(Kind::Recording));
+}
+
+#[test]
+fn capture_names_continue_across_storage_formats_and_injection_without_overwriting() {
+    reset();world(|w|{
+        w.files.insert("/data/offlinelog/Chaos-Shot-20260101-01.png".into(),b"first".to_vec());
+        w.files.insert("/data/chaos/media/Chaos-Shot-20260101-02.bmp.part".into(),b"partial".to_vec());
+        w.files.insert("/data/chaos/media/Chaos-Rec-20260101-03.apng".into(),b"recording".to_vec());
+    });
+    unsafe {
+        let mut out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::OfflineLog,true).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/offlinelog/Chaos-Shot-20260101-03.png");out.commit().unwrap();drop(out);
+        let mut out=Output::create(Kind::Recording,VideoFormat::Gif,Storage::Media,false).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Rec-20260101-04.gif");out.commit().unwrap();drop(out);
+        let mut out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::Media,false).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Shot-20260101-04.bmp");out.commit().unwrap();drop(out);
+        world(|w|w.date.as_mut().unwrap()[3]=2);
+        let out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::Media,true).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Shot-20260102-01.png");drop(out);
+        world(|w|w.date=None);
+        let out=Output::create(Kind::Screenshot,VideoFormat::Gif,Storage::Media,true).unwrap();
+        assert_eq!(crate::cstr(out.final_path.as_ptr()),"/data/chaos/media/Chaos-Shot-00000000-01.png");drop(out);
+    }
+    world(|w|assert_eq!(w.files["/data/offlinelog/Chaos-Shot-20260101-01.png"],b"first"));check_clean();
 }

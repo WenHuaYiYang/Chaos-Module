@@ -21,11 +21,11 @@ fn main() {
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::copy(symbols.join("firmware.rs"), out_dir.join("firmware.rs"))
         .expect("cannot generate selected firmware bindings");
-    // 版本串由构建脚本注入(build.py 的 CHAOS_VERSION_TEXT, 形如 1.2.7-d);
-    // 直接用 cargo build 时退回 Cargo.toml 里的版本, 不会编译失败。
+    // 版本串: build.py 注入带构建号的串(1.2.7-<构建号>); 直接 cargo build 时
+    // 退回 Cargo.toml 的版本, 保证两条路都能编。
     let version = std::env::var("CHAOS_VERSION_TEXT")
         .or_else(|_| std::env::var("CARGO_PKG_VERSION"))
-        .unwrap_or_else(|_| "0.0.0".into());
+        .expect("Cargo did not provide the package version");
     std::fs::write(out_dir.join("version.rs"),
         format!("pub const VERSION_TEXT: &str = {:?};\n", version))
         .expect("cannot generate version.rs");

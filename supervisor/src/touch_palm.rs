@@ -4,26 +4,19 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 // 新语义独立保存，避免旧版“允许遮盖熄屏”的值被解释为“禁止”。
 const CONFIG: &[u8] = b"/data/chaos/disable-touch-palm.cfg\0";
+const TEMP: &[u8] = b"/data/chaos/disable-touch-palm.cfg.tmp\0";
+static mut SAVE_FAILED: bool = false;
 static VALUE: AtomicU8 = AtomicU8::new(0);
 
 pub(crate) unsafe fn ensure_applied() {
     if VALUE.load(Ordering::Acquire) != 0 { return; }
-    let mut value = 0u8;
-    let fd = fw_api::open(CONFIG.as_ptr(), fw_api::oflag::RDONLY, 0);
-    if fd >= 0 {
-        if fw_api::read(fd, &mut value, 1) != 1 || value != 1 { value = 0; }
-        fw_api::close(fd);
-    }
+    let value = crate::settings_store::read::<1>(CONFIG).filter(|v| v[0] <= 1).map(|v| v[0]).unwrap_or(0);
     apply(value);
     VALUE.store(value + 1, Ordering::Release);
 }
 
 unsafe fn apply(value: u8) {
-    // 0x0CA7290C 写 +D2，随后调用 0x0CA714B4 刷新触摸策略。
-    // 跳过原 setter 的持久属性写入，只更新内存。
-    core::ptr::write_volatile(0x2013F43Ausize as *mut u8, if value == 0 { 1 } else { 0 });
-    let refresh: unsafe extern "C" fn() = core::mem::transmute(0x0CA714B5usize);
-    refresh();
+    fw_api::screen_touch_palm_set(value == 0);
 }
 
 pub(crate) unsafe fn enabled() -> bool {
@@ -35,9 +28,10 @@ pub(crate) unsafe fn toggle() {
     let value = if enabled() { 0u8 } else { 1u8 };
     apply(value);
     VALUE.store(value + 1, Ordering::Release);
-    let fd = fw_api::open(CONFIG.as_ptr(), fw_api::oflag::WRONLY | fw_api::oflag::CREAT, 0o640);
-    if fd >= 0 {
-        fw_api::write(fd, &value, 1);
-        fw_api::close(fd);
-    }
+    SAVE_FAILED = !crate::settings_store::save(CONFIG, TEMP, &[value]);
 }
+pub(crate) unsafe fn status() -> *const u8 {
+    if SAVE_FAILED { "保存失败，仅本次生效\0".as_ptr() } else { core::ptr::null() }
+}
+#[cfg(test)]
+pub(crate) unsafe fn reset_for_test() { VALUE.store(0, Ordering::Release); SAVE_FAILED = false; }

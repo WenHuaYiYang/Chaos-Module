@@ -89,5 +89,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chaos-installer-10p-3.101.043
-          path: dist/10p-3.101.043/v*-chaos-installer-10p-3.101.043.bin
+          path: dist/10p-3.101.043/chaos-installer-10p-3.101.043.bin
           if-no-files-found: error

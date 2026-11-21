@@ -17,6 +17,7 @@ mod fw_api {
  pub unsafe fn close(fd:i32){super::state(|s|{s.fds.remove(&fd);});}
 }
 #[path="../src/cc_buttons_config.rs"]mod cc_buttons_config;
+#[path="../src/launcher_buttons_config.rs"]mod launcher_buttons_config;
 #[path="../src/blur_zone.rs"]mod blur_zone;
 fn main(){unsafe{
  let mode=std::env::args().nth(1).unwrap();let key="/data/chaos/blur_cc_buttons.cfg";
@@ -24,8 +25,10 @@ fn main(){unsafe{
  if mode=="invalid"{state(|s|{s.files.insert(key.into(),99);});}
  state(|s|{s.files.insert("/data/chaos/blur_regions.cfg".into(),5);});
  assert_eq!(blur_zone::mask(),5);
- assert_eq!(blur_zone::on(4),mode!="off");assert_eq!(blur_zone::REGION_N,5);
- assert!(!blur_zone::on(5)&&!blur_zone::set(5,true));
+ assert_eq!(blur_zone::on(4),mode!="off");assert_eq!(blur_zone::REGION_N,6);
+ assert!(blur_zone::on(5));assert!(blur_zone::set(5,false));assert!(!blur_zone::on(5));
+ assert!(!blur_zone::on(6)&&!blur_zone::set(6,true));
+ state(|s|assert_eq!(s.files["/data/chaos/blur_launcher_button.cfg"],0));
  let next=mode=="off";
  if mode=="retry"{state(|s|s.fail=true);}
  assert!(blur_zone::set(4,next));assert_eq!(blur_zone::on(4),next);

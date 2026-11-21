@@ -7,51 +7,17 @@
 use crate::*;
 use core::sync::atomic::{AtomicU8, Ordering};
 
-const CONFIG: &[u8] = b"/data/chaos/screen-rotation.cfg\0";
-/// 配置值：1 = 正常方向，2 = 翻转 180°。0 只表示"还没读过"。
+/// 只保存本次运行状态；每次注入从正常方向开始，不读取旧配置。
 const VALUE_NORMAL: u8 = 1;
 const VALUE_FLIPPED: u8 = 2;
 const ROTATION_0: u32 = 0;
 const ROTATION_180: u32 = 2;
 
-static VALUE: AtomicU8 = AtomicU8::new(0);
+static VALUE: AtomicU8 = AtomicU8::new(VALUE_NORMAL);
 /// 最近一次真正下发给 LVGL 的状态，避免每帧重复调用。
 static APPLIED: AtomicU8 = AtomicU8::new(0);
 
-fn load() {
-    if VALUE.load(Ordering::Acquire) != 0 {
-        return;
-    }
-    let mut value = VALUE_NORMAL;
-    unsafe {
-        let fd = fw_api::open(CONFIG.as_ptr(), fw_api::oflag::RDONLY, 0);
-        if fd >= 0 {
-            let mut byte = VALUE_NORMAL;
-            if fw_api::read(fd, &mut byte, 1) == 1 && byte == VALUE_FLIPPED {
-                value = VALUE_FLIPPED;
-            }
-            fw_api::close(fd);
-        }
-    }
-    VALUE.store(value, Ordering::Release);
-}
-
-fn persist(value: u8) {
-    unsafe {
-        let fd = fw_api::open(
-            CONFIG.as_ptr(),
-            fw_api::oflag::WRONLY | fw_api::oflag::CREAT,
-            0o640,
-        );
-        if fd >= 0 {
-            let _ = fw_api::write(fd, &value, 1);
-            fw_api::close(fd);
-        }
-    }
-}
-
 pub(crate) fn enabled() -> bool {
-    load();
     VALUE.load(Ordering::Acquire) == VALUE_FLIPPED
 }
 
@@ -70,13 +36,11 @@ pub(crate) unsafe fn before() -> Option<&'static [u8; 64]> {
 
 /// 翻转显示方向。返回切换后的状态（true = 已翻转 180°）。
 pub(crate) unsafe fn toggle() -> bool {
-    load();
     let (_, snapshot) = probe();
     BEFORE = snapshot;
     BEFORE_VALID = true;
     let next = if enabled() { VALUE_NORMAL } else { VALUE_FLIPPED };
     VALUE.store(next, Ordering::Release);
-    persist(next);
     apply_now(next);
     next == VALUE_FLIPPED
 }
@@ -103,11 +67,10 @@ unsafe fn invalidate_pages() {
     }
 }
 
-/// 页面渲染时调用：只在"配置值"与"已下发值"不一致时动 display。
+/// 页面渲染时调用：只在"运行状态"与"已下发值"不一致时动 display。
 /// display 还没就绪（返回 0）就留到下一次，不动状态。
 pub(crate) unsafe fn ensure_applied() {
-    load();
-    let want = if enabled() { VALUE_FLIPPED } else { VALUE_NORMAL };
+    let want = VALUE.load(Ordering::Acquire);
     if APPLIED.load(Ordering::Acquire) == want {
         return;
     }
@@ -130,4 +93,11 @@ pub(crate) unsafe fn probe() -> (u32, [u8; 64]) {
         }
     }
     (disp, bytes)
+}
+
+#[cfg(test)]
+pub(crate) unsafe fn reset_for_test() {
+    VALUE.store(VALUE_NORMAL, Ordering::Release);
+    APPLIED.store(0, Ordering::Release);
+    BEFORE_VALID = false;
 }

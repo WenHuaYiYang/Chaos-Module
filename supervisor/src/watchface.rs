@@ -397,6 +397,7 @@ unsafe fn tick_busy() -> bool {
     || confirm_pop::pending()
     || background_home::pending()
     || crate::s541_launcher::pending()
+    || crate::capture_preview::pending()
     || crate::quickapp_animation::pending()
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()
@@ -452,6 +453,7 @@ unsafe fn tick_adapt() {
 unsafe fn tick_terminal() {
     // 终端输出即使别的页在前台也要排掉, 所以放在最前、且不过开机延迟门。
     crate::terminal_ui::poll_output();
+    crate::capture_preview::poll();
     // 文件桥只在这里启动/停止：UI owner 已就绪，且开关变化由维护 tick
     // 统一落地，避免在 LVGL 点击回调里创建/撤销 timer。
     crate::bridge_cfg::tick();
@@ -472,6 +474,11 @@ unsafe fn tick_app() -> bool {
     // guest 复位(实例当场消失), 所以模拟器里整段跳过; 真机默认不走这条路。
     let lite = st_rd!(SIM_LITE) != 0;
     if !lite {
+        // UI owner after the boot gate: restore module preferences even if the
+        // Chaos app is never opened. Each helper applies only once per injection.
+        crate::screen_rotation::ensure_applied();
+        crate::dimmer_timeout::ensure_applied();
+        crate::touch_palm::ensure_applied();
         crate::appmgr::boot_apply();
         // 运行期看门狗: 换绑新手机/手机重发应用清单会触发固件重注册应用,
         // 普通隐藏的隐藏位会被新节点重置, 这里持续补回(见 appmgr::watch_keep 注释)。

@@ -14,7 +14,7 @@ use std::{cell::RefCell, collections::HashMap};
 struct World {
     files: HashMap<String, Vec<u8>>, handles: HashMap<i32, (String, usize)>,
     allocations: HashMap<usize, std::alloc::Layout>, next_fd: i32,
-    now: u32, clock_step: u32, on: bool, captures: usize, spawn_result: i32, frame_error: i32,
+    date: Option<[i32;11]>, now: u32, clock_step: u32, on: bool, captures: usize, spawn_result: i32, frame_error: i32,
     write_size: usize, interrupts: u32, zero_write: bool, budget: usize,
     free_bytes: Option<u64>, fail_alloc: bool, rename_error: i32, close_error: i32,
     stop_during_capture: bool, lost_vsync: bool, write_cost_ms: u32, read_cost_ms: u32, switch_every_copy: bool,
@@ -25,7 +25,7 @@ struct World {
 impl Default for World {
     fn default() -> Self { Self {
         files: HashMap::new(), handles: HashMap::new(), allocations: HashMap::new(), next_fd: 3,
-        now: 1000, clock_step: 0, on: true, captures: 0, spawn_result: 42, frame_error: 0,
+        date: Some([0,0,0,1,0,126,0,0,0,0,0]), now: 1000, clock_step: 0, on: true, captures: 0, spawn_result: 42, frame_error: 0,
         write_size: usize::MAX, interrupts: 0, zero_write: false, budget: usize::MAX,
         free_bytes: Some(64 * 1024 * 1024), fail_alloc: false, rename_error: 0, close_error: 0,
         stop_during_capture: false, lost_vsync: false, write_cost_ms: 0, read_cost_ms: 0, switch_every_copy: false,
@@ -40,8 +40,21 @@ fn cstr(p: *const u8) -> String { unsafe { std::ffi::CStr::from_ptr(p.cast()).to
 
 mod fw_api {
     use super::*;
+    pub const LV_OBJ_FLAG_SCROLLABLE:u32=16;
+    pub const LV_OBJ_FLAG_SCROLL_CHAIN:u32=0x300;
+    pub const LV_OBJ_FLAG_CLICKABLE:u32=2;
+    pub mod align {pub const OUT_BOTTOM_MID:u32=14;pub const TOP_LEFT:u32=1;}
+    pub unsafe fn obj_create(_:u32,_:u32)->u32{500}
+    pub unsafe fn obj_clear_box_spacing(_:u32){}
+    pub unsafe fn obj_set_size_wh(_:u32,_:u32,_:u32){}
+    pub unsafe fn background_set_opa(_:u32,_:u32){}
+    pub unsafe fn obj_clear_flag(_:u32,_:u32){}
+    pub unsafe fn obj_add_flag(_:u32,_:u32){}
+    pub unsafe fn obj_align_to(_:u32,_:u32,_:u32,_:i32,_:i32){}
+    pub unsafe fn obj_align(_:u32,_:u32,_:i32,_:i32){}
+    pub unsafe fn background_image_create(_:u32)->u32{600}
     pub mod oflag { pub const RDONLY: u32 = 1; pub const WRONLY: u32 = 2; pub const CREAT: u32 = 4; }
-    pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX: u32 = 2; }
+    pub mod trailing { pub const RADIO: u32 = 6; pub const CHECKBOX: u32 = 2; pub const SWITCH: u32 = 1; }
     pub unsafe fn row_trailing(row: u32) -> u32 { row + 100 }
     pub unsafe fn obj_add_event(object: u32, callback: u32, event: u32, _: u32) {
         crate::ui(|u| u.events.push((object, callback, event)));
@@ -55,6 +68,7 @@ mod fw_api {
         let Some(bytes) = w.files.remove(&cstr(a)) else { return -2; };
         w.files.insert(cstr(b), bytes); 0
     }) }
+    pub unsafe fn local_time_now()->Option<[i32;11]>{world(|w|w.date)}
     pub fn capture_now_ms() -> u32 { world(|w| { let now = w.now; w.now = w.now.wrapping_add(w.clock_step); now }) }
     pub unsafe fn capture_free_bytes() -> Option<u64> { world(|w| w.free_bytes) }
     pub unsafe fn heap_malloc(n: u32) -> usize { world(|w| {
@@ -183,13 +197,13 @@ mod fw_api {
 }
 
 #[derive(Default)]
-struct Ui { rows: Vec<(usize, String, String, bool)>, slots: [u32; 12], navigations: Vec<u32>, renders: Vec<usize>, selected: HashMap<usize, bool>, events: Vec<(u32, u32, u32)> }
+struct Ui { image_attaches:usize, rows: Vec<(usize, String, String, bool)>, slots: [u32; 12], navigations: Vec<u32>, renders: Vec<usize>, selected: HashMap<usize, bool>, events: Vec<(u32, u32, u32)> }
 thread_local! { static UI: RefCell<Ui> = RefCell::new(Ui::default()); }
 fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R { UI.with(|u| f(&mut u.borrow_mut())) }
 
 mod page {
     pub mod kit { pub use crate::checklist; }
-    pub(crate) use crate::fw_api;
+    pub(crate) use crate::{fw_api,row_cb};
     pub(crate) use std::ptr::read_volatile;
     pub const DT_REG: u8 = 8;
     pub struct PageCtx { pub content: u32, pub title: u32, pub rows: *mut u32 }
@@ -200,11 +214,16 @@ mod page {
         fn fill_title(&self, buf: *mut u8);
         fn render(&self, ctx: &PageCtx) -> PageResult;
         fn on_click(&self, i: usize);
+        fn on_instance_reset(&self) {}
+        fn on_pause(&self) {}
+        fn is_switch_row(&self, _: usize) -> bool { false }
+        fn on_switch(&self, _: usize) {}
         fn needs_tick(&self) -> bool { false }
         fn tick(&self) {}
     }
     pub struct RowSpec<'a> { pub text: &'a [u8], pub sub: *const u8, pub clickable: bool, pub trailing: u32 }
     impl<'a> RowSpec<'a> {
+        pub fn switch(text: &'a [u8]) -> Self { Self { text, sub: std::ptr::null(), clickable: true, trailing: crate::fw_api::trailing::SWITCH } }
         pub fn clickable(text: &'a [u8]) -> Self { Self { text, sub: std::ptr::null(), clickable: true, trailing: 0 } }
         pub fn tap(text: &'a [u8], sub: *const u8) -> Self { Self { text, sub, clickable: true, trailing: 0 } }
         pub fn display(text: &'a [u8], sub: *const u8) -> Self { Self { text, sub, clickable: false, trailing: 0 } }
@@ -221,6 +240,8 @@ mod page {
     }
     pub unsafe fn put_str(out: *mut u8, bytes: &[u8]) { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()); }
     pub fn render_req(pid: u32) { crate::ui(|u| u.renders.push(pid as usize)); }
+    pub enum Pid {ShotPreview=62}
+    pub unsafe fn nav_back(){crate::ui(|u|u.navigations.push(u32::MAX));}
     pub unsafe fn nav_goto(pid: u32, _: u32) { crate::ui(|u| u.navigations.push(pid)); }
     pub fn page_rows_ptr(_: usize) -> *mut u32 { crate::ui(|u| u.slots.as_mut_ptr()) }
     pub unsafe fn row_ev_fn(slot: usize) -> u32 { 1000 + slot as u32 }
@@ -242,3 +263,17 @@ use page::*;
 const MAX_PID: usize = 42;
 fn row_cb() -> u32 { 2000 }
 unsafe fn cstr_len(p: *const u8) -> usize { std::ffi::CStr::from_ptr(p.cast()).to_bytes().len() }
+
+mod capture_preview {
+    pub unsafe fn attach(_:usize,_:u32,_:u32,_:u32,_:[u8;96],_:u32,_:[u8;64])->bool{crate::ui(|u|u.image_attaches+=1);true}
+}
+mod confirm_pop {
+    pub const SLOT_SHOT:usize=4;
+    pub static mut SHOWN:bool=false;
+    pub unsafe fn forget(_:usize){SHOWN=false;}
+    pub unsafe fn reset(_:usize){SHOWN=false;}
+    pub unsafe fn shown(_:usize)->bool{SHOWN}
+    pub unsafe fn build(_:usize,_:u32,_:*const u8,_:usize,_:u32,_:u32)->u32{SHOWN=true;0}
+    pub unsafe fn click(_:usize,event:u32)->u32{if SHOWN&&event==7{SHOWN=false;1}else{0}}
+    pub unsafe fn close_deferred(_:usize)->bool{false}
+}

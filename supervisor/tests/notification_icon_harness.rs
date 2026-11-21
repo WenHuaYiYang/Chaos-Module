@@ -203,6 +203,12 @@ mod notification_icon {
         (0..LIMIT).any(|slot| ENTRIES[slot].object == object)
     }
 }
+/// 实验性省电开关的宿主桩: 这里关闭跳拍(1 = 每拍都扫), 保持既有用例
+/// "每次 tick 推进一个图源"的语义; 跳拍本身是纯调度优化, 不改变扫描结果。
+mod power_mode {
+    pub unsafe fn quiet_skip() -> u32 { 1 }
+}
+
 mod palette {
     unsafe fn rd8(address: *const u8) -> u8 { core::ptr::read_volatile(address) }
     include!(env!("CHAOS_NOTIFICATION_PALETTE_SOURCE"));

@@ -7,6 +7,11 @@ import struct
 import unittest
 from lupa import LuaRuntime
 
+try:  # 预览块渲染器需要 Pillow; 只做几何比对时没有它也应当能跑
+    import gen_preview
+except ImportError:  # pragma: no cover - 该解释器没装 Pillow
+    gen_preview = None
+
 ROOT = Path(__file__).resolve().parents[1]
 FETCH_SCRIPT = b'/data/rc.d/chaos-fetch.sh'
 FETCH_CONFIG = b'/data/chaos/fetch.cfg'
@@ -59,7 +64,7 @@ class Installer:
             if p.text then table.insert(observed.messages,{text=p.text,color=p.text_color})end
           end
           function n:clear_flag(_)end
-          function n:add_flag(_)end
+          function n:add_flag(f)self.flags=self.flags or {};self.flags[f]=true end
           function n:onClicked(cb)self.click=cb end
           return n
         end
@@ -293,6 +298,111 @@ class InstallerTests(unittest.TestCase):
             if n.props[b'text']:
                 n.props[b'text'].decode('utf-8')
 
+
+class PreviewLayoutTests(unittest.TestCase):
+    """预览块里写死的几何必须与 chaos_installer.lua 建出来的节点一致。
+
+    表盘列表的缩略图是 gen_preview.py 按 LAYOUTS/INSTALLER_BUTTONS 画的, 而真实
+    界面在 installer/chaos_installer.lua。两边一旦漂开, 缩略图就和点进去的界面不是
+    一回事(加过一张"安装日志"卡片而预览块没跟上就是这种事故)。这里拿夹具跑真 Lua,
+    把主界面每个按钮的文案/y_ofs/宽高与预览块的常量逐个比一遍。
+    """
+
+    def setUp(self):
+        if gen_preview is None:
+            self.skipTest('gen_preview 需要 Pillow')
+        self.app = Installer()
+        self.nodes = self.app.observed.nodes
+        self.root = self.nodes[1]
+        self.main = next(n for n in self.nodes.values()
+                         if n.parent is not None and n.parent.id == self.root.id
+                         and self.y_ofs(n) == 0)
+
+    @staticmethod
+    def y_ofs(node):
+        align = node.props[b'align']
+        return None if align is None else align[b'y_ofs']
+
+    def main_children(self):
+        return [n for n in self.nodes.values()
+                if n.parent is not None and n.parent.id == self.main.id]
+
+    CLICKABLE = 2  # lvgl.FLAG.CLICKABLE: make_button 给每个按钮加的唯一标记
+
+    def buttons(self):
+        """主界面按钮: {文案: 按钮节点} —— 文案在按钮挂的 Label 上, 不在按钮自身。
+
+        用 CLICKABLE 区分按钮与状态卡(卡片只加 EVENT_BUBBLE), 不去比对文案,
+        否则文案改了就直接"少一个按钮", 报不出真正的问题。
+        """
+        found = {}
+        for node in self.main_children():
+            flags = node.flags
+            if flags is None or not flags[self.CLICKABLE]:
+                continue
+            for label in self.nodes.values():
+                text = label.props[b'text']
+                if text is not None and label.parent is not None and label.parent.id == node.id:
+                    found[text.decode()] = node
+        return found
+
+    def test_button_text_rows_and_sizes_match_preview_constants(self):
+        layout = gen_preview.LAYOUTS['installer']
+        buttons = self.buttons()
+        self.assertEqual(set(buttons), {text for text, _ in gen_preview.INSTALLER_BUTTONS})
+        self.assertEqual(len(buttons), len(layout['btn_ys']))
+        for (text, _style), y_ofs in zip(gen_preview.INSTALLER_BUTTONS, layout['btn_ys']):
+            node = buttons[text]
+            self.assertEqual(self.y_ofs(node), y_ofs, text)
+            self.assertEqual(node.props[b'w'], layout['btn_w'], text)
+            self.assertEqual(node.props[b'h'], layout['btn_h'], text)
+
+    def test_title_and_status_card_match_preview_constants(self):
+        layout = gen_preview.LAYOUTS['installer']
+        title = next(n for n in self.main_children() if n.props[b'text'] is not None)
+        self.assertEqual(self.y_ofs(title), layout['title_y'])
+        # 标题带版本号: 预览用占位符原文渲染, 打包时由 build.py 注入 "127"。
+        expected = gen_preview.INSTALLER_TITLE.encode()
+        got = title.props[b'text']
+        if got != expected:
+            self.assertEqual(got, expected.replace(b' ', b'').replace(
+                b'Chaos', b'Chaos__CHAOS_VERSION__'))
+        card = next(n for n in self.main_children()
+                    if n.props[b'text'] is None and self.y_ofs(n) == layout['card_y'])
+        self.assertEqual(self.y_ofs(card), layout['card_y'])
+        self.assertEqual((card.props[b'w'], card.props[b'h']),
+                         (layout['card_w'], layout['card_h']))
+        self.assertEqual(card.props[b'border_color'], 0x2A2A2C)
+
+    FOREGROUND = {'primary': (0xF2, 0xF2, 0xF2), 'ghost': (0xB3, 0xB3, 0xB3),
+                  'danger': (0xFF, 0x45, 0x3A)}
+
+    def test_rendered_block_draws_button_labels_on_their_lua_rows(self):
+        """画出来的文字行要落在 Lua 给的 y 上(证明常量真的进了画布)。"""
+        layout = gen_preview.LAYOUTS['installer']
+        width, height, palette, pixels = gen_preview.decode_block(gen_preview.build_blob())
+        self.assertEqual((width, height), (gen_preview.W, gen_preview.H))
+
+        def text_pixels(row, fg):
+            base = row * width
+            count = 0
+            for x in range(width):
+                i = pixels[base + x] * 4
+                b, g, r, a = palette[i:i + 4]
+                if a and all(abs(c - t) <= 12 for c, t in zip((r, g, b), fg)):
+                    count += 1
+            return count
+
+        for (text, style), y_ofs in zip(gen_preview.INSTALLER_BUTTONS, layout['btn_ys']):
+            center = gen_preview.H // 2 + y_ofs
+            fg = self.FOREGROUND[style]
+            # 文字的上下边界中点应落在按钮中心: 单看最亮一行会偏, 因为汉字
+            # 各行的笔画密度不同(实测最大偏差 9px), 包围盒的中点才是排版中心。
+            rows = [row for row in range(center - 24, center + 25) if text_pixels(row, fg)]
+            self.assertTrue(rows, f'{text} 没画出来')
+            midpoint = (rows[0] + rows[-1]) / 2
+            self.assertLessEqual(abs(midpoint - center), 3, f'{text} 的文字行偏了: {midpoint} vs {center}')
+            self.assertLessEqual(len(rows), 26, f'{text} 的文字高度异常: {len(rows)} 行')
 
 if __name__ == '__main__':
     unittest.main()

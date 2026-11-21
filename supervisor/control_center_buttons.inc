@@ -6,13 +6,14 @@
  * DELETE callback. Destruction of widgets merely retires the texture. */
 #include "control_center_button_pixels.h"
 #include "blur_v2_params.h"
-#define CC_BUTTON_LIMIT 16u
+#define CC_BUTTON_LIMIT 17u
 #define CC_BUTTON_CLASS 0x2cdb9d6cu
-struct cc_button { uint32_t object,root,generation,image,stamp; unsigned ready,w,h,radius,scale,original_opa,applied_opa,tinted; int x,y; };
+struct cc_button { uint32_t object,root,generation,image,stamp; unsigned launcher,ready,w,h,radius,scale,original_opa,applied_opa,tinted; int x,y; };
 static struct cc_button cc_buttons[CC_BUTTON_LIMIT];
 static uint32_t cc_serial,cc_draws,cc_updates,cc_failures;
 static unsigned cc_working;
 static unsigned cc_scan_ticks;
+static uint32_t cc_scan_root,cc_scan_launcher,cc_scan_launcher_root;
 #ifndef CC_PARAM
 static uint32_t cc_default_params[BP_COUNT]=BP_DEFAULTS;
 #define CC_PARAM(i) cc_default_params[i]
@@ -103,7 +104,7 @@ static int cc_buffer(uint32_t image,unsigned w,unsigned h,unsigned char **out,un
     uint32_t header=P67_U32(image),pixels=P67_U32(image+16),allocation=P67_U32(image+20);
     *stride=P67_U32(image+8)&0xffffu; *size=P67_U32(image+12);
     if((header&0xffffu)!=0x1019u || P67_U32(image+4)!=(w|(h<<16)) ||
-       *stride<w*4 || *stride>1024 || *size<*stride*h || *size>131072 ||
+       *stride<w*4 || *stride>2048 || *size<*stride*h || *size>262144 ||
        (pixels&63u) || pixels<allocation || pixels-allocation>63 ||
        !p67_blur_native_ram(allocation,*size+pixels-allocation) ||
        P67_U32(image+24)!=0x20103244u) return 0;
@@ -145,7 +146,22 @@ static void cc_submit(uint32_t layer,uint32_t image,const int *area) {
 }
 #endif
 
-static int cc_wanted(void) { return chaos_cc_buttons_demand(); }
+#ifndef CC_LAUNCHER_DEMAND
+#ifdef CHAOS_CC_BUTTONS_HOST
+#define CC_LAUNCHER_DEMAND() 0
+#define CC_LAUNCHER_TARGET(root) (*(root)=0,0u)
+#else
+extern uint32_t chaos_blur_launcher_target(uint32_t *root);
+#define CC_LAUNCHER_DEMAND() chaos_launcher_buttons_demand()
+#define CC_LAUNCHER_TARGET(root) chaos_blur_launcher_target(root)
+#endif
+#endif
+static int cc_wanted(void) { return chaos_cc_buttons_demand() || CC_LAUNCHER_DEMAND(); }
+static int cc_current(const struct cc_button *b) {
+    if(!b->launcher) return chaos_cc_buttons_demand() && b->root==cc_root_slot();
+    uint32_t root=0;
+    return CC_LAUNCHER_DEMAND() && CC_LAUNCHER_TARGET(&root)==b->object && root==b->root;
+}
 static unsigned cc_resources(void) {
     unsigned n=0;
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) n+=!!(cc_buttons[i].object || cc_buttons[i].image);
@@ -160,19 +176,19 @@ static void cc_button_event(void *event) {
         struct cc_button *b=&cc_buttons[i];
         if(b->object!=object || b->generation!=generation) continue;
         if(code==36) { b->object=0;b->ready=0;b->tinted=0;cc_scan_ticks=0;return; }
-        if(cc_working || !cc_wanted() || !b->ready || !b->image || b->root!=cc_root_slot() ||
+        if(cc_working || !cc_wanted() || !b->ready || !b->image || !cc_current(b) ||
            !cc_attached(object,b->root) || !words[4]) return;
         int area[4];cc_coords(object,area);
         if(area[2]-area[0]+1!=(int)b->w || area[3]-area[1]+1!=(int)b->h) return;
         cc_submit(words[4],b->image,area);++cc_draws;return;
     }
 }
-struct cc_scan { uint32_t objects[CC_BUTTON_LIMIT]; unsigned count,visited,overflow; };
+struct cc_scan { uint32_t objects[CC_BUTTON_LIMIT],roots[CC_BUTTON_LIMIT]; unsigned count,visited,overflow; };
 static int cc_find(uint32_t object,void *cookie) {
     struct cc_scan *s=cookie;
     if(++s->visited>256) { s->overflow=1;return 2; }
     if(cc_class(object)!=CC_BUTTON_CLASS) return 0;
-    if(s->count==CC_BUTTON_LIMIT) { s->overflow=1;return 2; }
+    if(s->count==CC_BUTTON_LIMIT-1u) { s->overflow=1;return 2; }
     s->objects[s->count++]=object;return 0;
 }
 static int cc_seen(const struct cc_scan *scan,uint32_t object) {
@@ -192,7 +208,6 @@ static void cc_detach(struct cc_button *b) {
 }
 static void cc_update_pixels(int frame) {
     struct cc_pixels source;uint32_t stamp=0;
-    uint32_t root=cc_root_slot();
     /* Retirement must work even after demand or the source disappeared. */
     unsigned fenced=0;
     if(!frame) for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
@@ -202,7 +217,7 @@ static void cc_update_pixels(int frame) {
             uint32_t old=b->image;b->image=0;b->ready=0;cc_free(old);
         }
     }
-    if(!cc_wanted() || !cc_awake() || !root || !cc_source(&source,&stamp)) return;
+    if(!cc_wanted() || !cc_awake() || !cc_source(&source,&stamp)) return;
     int atlas_dirty=!cc_atlas_ready || cc_atlas_source!=stamp || cc_atlas_params!=CC_PARAM_EPOCH();
     uint32_t changed[CC_BUTTON_LIMIT]={0},generations[CC_BUTTON_LIMIT]={0};
     unsigned visible=0,flushed=0;
@@ -210,10 +225,10 @@ static void cc_update_pixels(int frame) {
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
         struct cc_button *b=&cc_buttons[i];
         if(!b->object) continue;
-        if(b->root!=root || !cc_attached(b->object,root)) continue;
+        if(!cc_current(b) || !cc_attached(b->object,b->root)) continue;
         int area[4];cc_coords(b->object,area);
         int w=area[2]-area[0]+1,h=area[3]-area[1]+1;
-        if(w<1 || h<1 || w>160 || h>128 || area[0]>335 || area[1]>479 || area[2]<0 || area[3]<0) continue;
+        if(w<1 || h<1 || w>336 || h>128 || area[0]>335 || area[1]>479 || area[2]<0 || area[3]<0) continue;
         ++visible;
         if(frame && !b->ready) continue;
         unsigned radius=frame?b->radius:cc_radius(b->object);
@@ -233,8 +248,8 @@ static void cc_update_pixels(int frame) {
             same_position=b->x/2==area[0]/2 && b->y/2==area[1]/2;
         if(!shape && !atlas_dirty && b->stamp==cc_atlas_serial && (!frame || same_position)) continue;
         if(!fenced) {if(!cc_fence())break;fenced=1;}
-        if(!cc_wanted() || cc_root_slot()!=root || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
-        if(b->object!=object || b->generation!=generation || !cc_attached(object,root)) continue;
+        if(!cc_wanted() || !cc_current(b) || !cc_source(&source,&current_stamp) || current_stamp!=stamp) break;
+        if(b->object!=object || b->generation!=generation || !cc_attached(object,b->root)) continue;
         if(atlas_dirty) {
             struct chaos_blur_color style={CC_PARAM(BP_BUTTON_BRIGHTNESS),CC_PARAM(BP_BUTTON_SATURATION),CC_PARAM(BP_BUTTON_CONTRAST),
                 CC_PARAM(BP_BUTTON_TINT),CC_PARAM(BP_BUTTON_RED),CC_PARAM(BP_BUTTON_GREEN),CC_PARAM(BP_BUTTON_BLUE)};
@@ -269,7 +284,7 @@ static void cc_update_pixels(int frame) {
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) if(changed[i]) {
         if(!flushed) {cc_flush();flushed=1;}
         if(cc_buttons[i].object==changed[i] && cc_buttons[i].generation==generations[i] &&
-           cc_root_slot()==root && (!frame || source_changed)) cc_invalidate(changed[i]);
+           cc_current(&cc_buttons[i]) && (!frame || source_changed)) cc_invalidate(changed[i]);
     }
     /* Source capture is bounded separately from sprite updates. Replenish the
      * existing safe START budget; never capture a framebuffer containing icons. */
@@ -282,11 +297,10 @@ static void cc_buttons_frame(void) {
     if(cc_working || !cc_wanted() || !cc_resources() || !cc_idle()) return;
     // Observe geometry separately from published texture coordinates. Comparing
     // only b->x/y would renew the gate forever while a stale texture is held.
-    uint32_t root=cc_root_slot();
     unsigned geometry_moved=0;
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
         struct cc_button *b=&cc_buttons[i];
-        if(!b->object || !b->ready || b->root!=root || !cc_attached(b->object,root)) continue;
+        if(!b->object || !b->ready || !cc_current(b) || !cc_attached(b->object,b->root)) continue;
         int area[4];cc_coords(b->object,area);
         unsigned moved=0;
         if(cc_observed_generation[i]==b->generation) {
@@ -308,11 +322,14 @@ static void cc_buttons_poll(void) {
     if(cc_wanted() && CC_INTERACTION_BUSY()) return;
     /* Draw events use the native GPU image path and raw root identity. Bound
      * expensive integrity scans to one in eight owner polls when cached. */
-    if(cc_wanted() && cc_scan_ticks && cc_root_slot()==cc_buttons[0].root) {
+    uint32_t root=chaos_cc_buttons_demand()?cc_root_slot():0;
+    uint32_t launcher_root=0,launcher=CC_LAUNCHER_DEMAND()?CC_LAUNCHER_TARGET(&launcher_root):0;
+    if(cc_wanted() && cc_scan_ticks && root==cc_scan_root &&
+       launcher==cc_scan_launcher && launcher_root==cc_scan_launcher_root) {
         unsigned complete=1;
         for(unsigned i=0;i<CC_BUTTON_LIMIT;++i)
             if(cc_buttons[i].image && !cc_buttons[i].object) complete=0;
-            else if(cc_buttons[i].object && !cc_buttons[i].ready) complete=0;
+            else if(cc_buttons[i].object && (!cc_buttons[i].ready || !cc_current(&cc_buttons[i]))) complete=0;
         if(complete && ++cc_scan_ticks<=8u) {
             if(!cc_working && cc_idle()) {cc_working=1;cc_update_pixels(0);cc_working=0;}
             return;
@@ -320,28 +337,34 @@ static void cc_buttons_poll(void) {
     }
     if(cc_working || !cc_idle()) return;
     cc_working=1;
-    uint32_t root=cc_wanted()?cc_root():0;
+    root=chaos_cc_buttons_demand()?cc_root():0;
     struct cc_scan scan={0};
     if(root) cc_walk(root,cc_find,&scan);
+    for(unsigned i=0;i<scan.count;++i) scan.roots[i]=root;
+    if(launcher && launcher_root && cc_attached(launcher,launcher_root) &&
+       cc_class(launcher)==CC_BUTTON_CLASS && scan.count<CC_BUTTON_LIMIT) {
+        scan.objects[scan.count]=launcher;scan.roots[scan.count++]=launcher_root;
+    }
     if(scan.overflow || (root && root!=cc_root_slot())) { ++cc_failures;goto done; }
-    cc_scan_ticks=root?1u:0u;
+    cc_scan_ticks=(root || launcher)?1u:0u;
+    cc_scan_root=root;cc_scan_launcher=launcher;cc_scan_launcher_root=launcher_root;
     for(unsigned i=0;i<CC_BUTTON_LIMIT;++i) {
         struct cc_button *b=&cc_buttons[i];
-        if(b->object && (b->root!=root || !cc_seen(&scan,b->object))) cc_detach(b);
+        if(b->object && (!cc_current(b) || !cc_seen(&scan,b->object))) cc_detach(b);
         if(b->object) {
             uint32_t *record=cc_record(b->object);
             if(!record || record[1]!=b->generation || record[2]!=0) cc_detach(b);
         }
     }
     for(unsigned i=0;i<scan.count;++i) {
-        uint32_t object=scan.objects[i];unsigned j;
-        if(!cc_attached(object,root)) continue;
+        uint32_t object=scan.objects[i],object_root=scan.roots[i];unsigned j;
+        if(!cc_attached(object,object_root)) continue;
         for(j=0;j<CC_BUTTON_LIMIT;++j) if(cc_buttons[j].object==object) break;
         if(j<CC_BUTTON_LIMIT) continue;
         for(j=0;j<CC_BUTTON_LIMIT;++j) if(!cc_buttons[j].object && !cc_buttons[j].image) break;
         if(j==CC_BUTTON_LIMIT || cc_record(object)) continue;
         struct cc_button *b=&cc_buttons[j];
-        b->root=root;b->generation=++cc_serial;b->object=object;
+        b->root=object_root;b->launcher=(object==launcher && object_root==launcher_root);b->generation=++cc_serial;b->object=object;
         uint32_t generation=b->generation;
         uint32_t *added=cc_add(object,generation);
         if(b->object!=object || b->generation!=generation) continue;

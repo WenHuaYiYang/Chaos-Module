@@ -15,10 +15,10 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 CASES = (
     "missing", "empty", "invalid", "short-read", "read-error",
-    "read-open-error", "read-once", "independent-load", "combinations",
-    "independent-save", "restart", "unchanged", "native-abi",
-    "save-open-error", "save-write-error", "save-short-write",
-    "save-invalid-count", "save-disable-retry", "save-latest-value",
+    "read-open-error", "read-once", "legacy-migrate", "legacy-off",
+    "legacy-ignored", "combinations", "reopen", "restart", "unchanged",
+    "native-abi", "save-open-error", "save-write-error", "save-short-write",
+    "save-invalid-count", "save-latest-value",
 )
 
 

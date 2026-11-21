@@ -23,7 +23,16 @@ const fs = require('fs');
 const path = require('path');
 
 const MAGIC = 0x1234a55a;
-const VERSION = 0x00010207;
+// Keep the Node packer on the same Cargo package version as the Python build.
+const manifest = fs.readFileSync(path.join(__dirname, '..', 'supervisor', 'Cargo.toml'), 'utf8');
+const packageSection = manifest.match(/^\[package\]\s*$\n([\s\S]*?)(?=^\[|(?![\s\S]))/m);
+const versionField = packageSection && packageSection[1].match(/^version\s*=\s*["']([^"']+)["']\s*(?:#.*)?$/m);
+const VERSION_TEXT = versionField && versionField[1];
+const versionParts = VERSION_TEXT && VERSION_TEXT.match(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
+if (!versionParts || versionParts.slice(1).some(n => Number(n) > 255)) {
+  throw new Error('无效或超出容器范围的 Cargo package.version');
+}
+const VERSION = (Number(versionParts[1]) << 16) | (Number(versionParts[2]) << 8) | Number(versionParts[3]);
 const HDR = 0xa8;
 const PAIR_OFF = 0xa8;
 const PAIRS = 11;
@@ -255,5 +264,5 @@ function main() {
   }
 }
 
-module.exports = { MAGIC, VERSION, inspect, build, readBlock };
+module.exports = { MAGIC, VERSION, VERSION_TEXT, inspect, build, readBlock };
 if (require.main === module) main();

@@ -115,3 +115,26 @@ python3 tools/build.py --firmware 10p-3.101.043
 额外执行旧 `tools/test_network_platform.py` 时，其 Rust 8 项通过，但 C glue 旧 harness
 缺少已有 `network_connect_address` 叶子，且仍假定旧密码最短 8 位；这是既有测试漂移。
 本轮保留该 harness 原样，时钟变更用上面的生产 Rust wrapper 回归单独验证。
+
+
+## 启动器布局按钮（V2/V3 共用）
+
+“系统模糊 → 模糊区域”增加独立的“启动器按钮”开关，默认开启，保存在
+`/data/chaos/blur_launcher_button.cfg`。原四区与控制中心按钮配置不变。
+“模糊V2参数 → 按钮调整”同时控制 V2/V3 的控制中心和启动器按钮。
+
+精确核对 10 Pro / 3.101.043 AP：`0x0c517b10` 创建原生按钮，工厂
+`0x0ca48474` 使用与控制中心相同的 `0x2cdb9d6c` 类；
+`0x0c517b6a` 设置 220×80，`0x0c517b8a` 调用 `0x0c516620` 将按钮存入
+launcher grid 的 `+0x5c`（getter `0x0c516660`）。这些证据加入
+`tools/verify_honeycomb_abi.py`。绑定时通过现有 S541 目标解析和当前父子关系取对象，
+仅添加背景绘制监听；官方文字、图标、位置、输入与布局切换回调均保留。
+三种官方布局都使用这个对象，编辑模式不绑定。S541 启用时让出目标，保留其控制条。
+
+实现与控制中心共用一个 atlas、参数代数、发布源、fence 和清缓存批次。
+新增按钮通常只需 110×40 的半尺寸纹理，由原生 GPU 放大、透明混合；
+管理槽位为原 16 个控制中心按钮加 1 个 launcher 按钮。
+切换区域、重建布局、DELETE、S541 接管及关闭后按原有 fence 退休流程恢复底色和回收纹理。
+`tools/test_cc_buttons.py` 新增执行 `launcher_button_harness.c`，覆盖两个独立 root、
+准确目标、尺寸、共享参数、静止零重复计算、目标重建及过期 DELETE；这是主机回归，
+不能替代真机画质、GPU、FPS 验收。

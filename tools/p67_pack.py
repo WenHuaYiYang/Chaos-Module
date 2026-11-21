@@ -19,14 +19,34 @@ from __future__ import annotations
 
 import argparse
 import struct
+import re
 from pathlib import Path
 
 MAGIC = 0x1234A55A
-VERSION = 0x00010207
-# 构建号: 每次构建前更新为当前的 git 短哈希(工作区有未提交改动时追加 d)。
-# 只改这一处; 产物文件名、关于页版本串、连接日志都从这里派生。
+def read_version(manifest: Path) -> tuple[str, int]:
+    """Read the package version; container components each occupy one byte."""
+    source = manifest.read_text(encoding="utf-8")
+    package = re.search(r"(?ms)^\[package\]\s*$\n(.*?)(?=^\[|\Z)", source)
+    version = re.search(r"(?m)^version\s*=\s*[\"']([^\"']+)[\"']\s*(?:#.*)?$", package[1] if package else "")
+    if version is None:
+        raise ValueError(f"找不到 [package].version: {manifest}")
+    text = version[1]
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", text)
+    if match is None:
+        raise ValueError(f"无效的 Cargo 版本号: {text}")
+    major, minor, patch = map(int, match.groups())
+    if max(major, minor, patch) > 255:
+        raise ValueError(f"容器版本分量不能超过255: {text}")
+    return text, (major << 16) | (minor << 8) | patch
+
+
+# Cargo.toml 是版本号的唯一真源(上游正式版起的约定)。
+_CARGO_TEXT, VERSION = read_version(Path(__file__).resolve().parents[1] / "supervisor" / "Cargo.toml")
+# 构建号: 每次构建前更新为当前 git 短哈希(工作区有未提交改动时追加 d)。
+# 只改这一处; 产物文件名、关于页版本串、安装器标题都从这里派生。
 VERSION_BUILD = "a1a0bbdd"
-VERSION_TEXT = "%d.%d.%d-%s" % ((VERSION >> 16) & 0xFF, (VERSION >> 8) & 0xFF, VERSION & 0xFF, VERSION_BUILD)
+VERSION_TEXT = "%s-%s" % (_CARGO_TEXT, VERSION_BUILD)
+
 HDR = 0xA8
 PAIR_OFF = 0xA8
 PAIRS = 11

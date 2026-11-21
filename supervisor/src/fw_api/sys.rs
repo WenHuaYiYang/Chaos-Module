@@ -49,6 +49,13 @@ pub(crate) unsafe fn screen_timeout_set(milliseconds: u32) {
     screen_timeout_refresh();
 }
 
+/// RAM-only counterpart of the verified .043 touch-palm setter.
+pub(crate) unsafe fn screen_touch_palm_set(enabled: bool) {
+    core::ptr::write_volatile(super::fwaddr::SCREEN_TOUCH_PALM as *mut u8, enabled as u8);
+    let refresh: unsafe extern "C" fn() = transmute(super::fwaddr::SCREEN_TOUCH_PALM_REFRESH as usize);
+    refresh();
+}
+
 pub(crate) unsafe fn local_time_now() -> Option<[i32; 11]> {
     let (_, now) = charge_time_local(0)?;
     charge_time_local(now).map(|(tm, _)| tm)
