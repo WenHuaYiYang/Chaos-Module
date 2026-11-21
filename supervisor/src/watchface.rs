@@ -409,7 +409,6 @@ unsafe fn tick_busy() -> bool {
     || crate::terminal_ui::busy()
     || crate::connect_permission::pending()!=0
     || crate::floating_ball::busy()
-    || crate::buzz_music::busy()
 }
 
 /// 按忙闲改本定时器的周期(只在句柄验过之后才动; 变了才写, 不每拍写)。

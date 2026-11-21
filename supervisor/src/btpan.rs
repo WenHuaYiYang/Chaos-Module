@@ -691,14 +691,15 @@ static POWER_SAVER: ToggleDef = ToggleDef {
 };
 
 static EXP_ROWS: &[RowModel] = &[
-    RowModel::toggle("极致省电模式\0".as_bytes(), &POWER_SAVER),
-    RowModel::note("开启后维护节拍降到 1 秒一拍、模糊自愈与通知变化的检测间隔拉长到数秒：静置 CPU 与耗电更低，代价是这些变化响应变慢；装配、滚动、采集和失败恢复仍是快节拍。设置随重启保留。\0".as_bytes()),
     RowModel { label: "btpan联网\0".as_bytes(), sub: RowSub::Static("蓝牙网络共享实验功能\0".as_bytes()),
                kind: RowKind::Nav(PAGE_BTPAN_PID), trailing: 0, refresh: None },
     RowModel { label: "网页服务器\0".as_bytes(), sub: RowSub::Static("局域网控制台(实验)\0".as_bytes()),
                kind: RowKind::Nav(PAGE_WEBSRV_PID), trailing: 0, refresh: None },
     RowModel { label: "蓝牙诊断\0".as_bytes(), sub: RowSub::Static("配对回调与 IPC 现场\0".as_bytes()),
                kind: RowKind::Nav(PAGE_DIAG_PID), trailing: 0, refresh: None },
+    // 放在这一页最底下: 它是个"更省电但更慢"的取舍开关, 不是常用入口。
+    RowModel::toggle("极致省电模式\0".as_bytes(), &POWER_SAVER),
+    RowModel::note("开启后维护节拍降到 1 秒一拍、模糊自愈与通知变化的检测间隔拉长到数秒：静置 CPU 与耗电更低，代价是这些变化响应变慢；装配、滚动、采集和失败恢复仍是快节拍。设置随重启保留。\0".as_bytes()),
 ];
 
 impl crate::page::kit::MenuSpec for ExpPage {

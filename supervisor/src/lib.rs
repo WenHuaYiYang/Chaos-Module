@@ -73,8 +73,6 @@ mod cadence;
 mod quickapp_splash;
 mod quickapp_exit;
 mod touch_palm;
-mod buzz_music;
-mod web_buzz;
 mod gyro_pointer;
 mod dimmer_timeout;
 mod settings_store;

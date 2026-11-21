@@ -89,7 +89,6 @@ pub(crate) enum Pid {
     FloatingBallAction = 60,
     GyroPointer = 61,
     ShotPreview = 62,
-    BuzzMusic = 63,
 }
 
 /// 注册表: 一行 = (Pid 变体, 页名 static, 页实例)。行序就是页号, 顺序不许变。
@@ -197,5 +196,4 @@ pages! {
     FloatingBallAction = 60, PAGE_FLOATING_BALL_ACTION, super::floating_ball::ACTION;
     GyroPointer = 61, PAGE_GYRO_POINTER, super::gyro_pointer::PAGE;
     ShotPreview = 62, PAGE_SHOT_PREVIEW, capture::PAGE_PREVIEW;
-    BuzzMusic = 63, PAGE_BUZZ, super::buzz::PAGE;
 }
