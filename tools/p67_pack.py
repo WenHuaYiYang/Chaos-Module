@@ -44,7 +44,7 @@ def read_version(manifest: Path) -> tuple[str, int]:
 _CARGO_TEXT, VERSION = read_version(Path(__file__).resolve().parents[1] / "supervisor" / "Cargo.toml")
 # 构建号: 每次构建前更新为当前 git 短哈希(工作区有未提交改动时追加 d)。
 # 只改这一处; 产物文件名、关于页版本串、安装器标题都从这里派生。
-VERSION_BUILD = "a1a0bbdd"
+VERSION_BUILD = "6d5d866d"
 VERSION_TEXT = "%s-%s" % (_CARGO_TEXT, VERSION_BUILD)
 
 HDR = 0xA8
