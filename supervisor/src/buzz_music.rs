@@ -16,8 +16,11 @@ use crate::fw_api;
 const DIR: &[u8] = b"/data/chaos/music/\0";
 /// 文件槽位数: /data/chaos/music/buzz1.buzz .. buzz6.buzz
 pub(crate) const SLOTS: usize = 6;
-/// 内置示例两条。
-pub(crate) const BUILTIN: usize = 2;
+/// 内置示例三条: 鼓点 / 音阶 / 编译进固件的歌曲。
+pub(crate) const BUILTIN: usize = 3;
+/// 内置歌曲(STRUCT - UdieNnx), 由 tools/make_buzz.py 从音频分析生成:
+/// 844 个脉冲, 覆盖约 104 秒, 2540 字节。改歌就重跑工具覆盖这个文件。
+static SONG: &[u8] = include_bytes!("buzz_song.buzz");
 pub(crate) const ITEMS: usize = BUILTIN + SLOTS;
 
 const MAGIC: [u8; 4] = *b"BZ01";
@@ -123,13 +126,19 @@ unsafe fn load_slot(slot: usize) -> Option<usize> {
 }
 
 unsafe fn load_builtin(which: usize) -> usize {
-    let src = if which == 0 { DEMO_BEAT } else { DEMO_SCALE };
+    let src = if which == 0 {
+        DEMO_BEAT
+    } else if which == 1 {
+        DEMO_SCALE
+    } else {
+        SONG
+    };
     let buf = core::ptr::addr_of_mut!(BUF) as *mut u8;
     let n = src.len().min(BUF_LEN);
     for i in 0..n {
         core::ptr::write_volatile(buf.add(i), src[i]);
     }
-    BPM = 120;
+    BPM = if which == 2 { 0 } else { 120 };
     n / 3
 }
 
@@ -170,8 +179,10 @@ pub(crate) unsafe fn play(which: usize) -> bool {
     let label = if which < BUILTIN {
         if which == 0 {
             "鼓点示例\0".as_bytes()
-        } else {
+        } else if which == 1 {
             "音阶示例\0".as_bytes()
+        } else {
+            "歌曲示例\0".as_bytes()
         }
     } else {
         "文件\0".as_bytes()
@@ -182,6 +193,19 @@ pub(crate) unsafe fn play(which: usize) -> bool {
     }
     LABEL[n] = 0;
     true
+}
+
+/// 删除文件槽 1..SLOTS (内置示例不受影响)。返回删掉的个数。
+pub(crate) unsafe fn clear_files() -> usize {
+    let mut n = 0usize;
+    for slot in 1..=SLOTS {
+        let mut path = [0u8; 40];
+        let p = slot_path(slot, &mut path);
+        if fw_api::fs_remove(p) == 0 {
+            n += 1;
+        }
+    }
+    n
 }
 
 pub(crate) unsafe fn stop() {

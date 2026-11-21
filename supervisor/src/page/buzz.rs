@@ -29,7 +29,7 @@ unsafe fn refresh() {
     if pid > MAX_PID {
         return;
     }
-    let r = read_volatile(page_rows_ptr(pid).add(8));
+    let r = read_volatile(page_rows_ptr(pid).add(9));
     if r != 0 {
         fw_api::row_update(
             r,
@@ -39,6 +39,14 @@ unsafe fn refresh() {
             0,
             0,
         );
+    }
+}
+
+unsafe fn clear_status() -> *const u8 {
+    if CLEAR_TEXT[0] == 0 {
+        b"\xe5\x88\xa0\xe9\x99\xa4\xe6\x96\x87\xe4\xbb\xb6\xe6\xa7\xbd\xe5\x86\x85\xe5\xae\xb9\0".as_ptr()
+    } else {
+        core::ptr::addr_of!(CLEAR_TEXT) as *const u8
     }
 }
 
@@ -62,6 +70,19 @@ unsafe fn slot5() -> *const u8 { slot_text(5) }
 
 unsafe fn play0() { play(0) }
 unsafe fn play1() { play(1) }
+unsafe fn play2() { play(2) }
+static mut CLEAR_TEXT: [u8; 24] = [0; 24];
+unsafe fn clear_files() {
+    let n = buzz_music::clear_files();
+    buzz_music::stop();
+    let p = core::ptr::addr_of_mut!(CLEAR_TEXT) as *mut u8;
+    let mut w = W::new(p, 24);
+    w.s("已清除 ".as_bytes());
+    w.n(n as u32);
+    w.s(" 个文件".as_bytes());
+    w.end();
+    refresh();
+}
 unsafe fn play_s0() { play_slot(0) }
 unsafe fn play_s1() { play_slot(1) }
 unsafe fn play_s2() { play_slot(2) }
@@ -72,6 +93,7 @@ unsafe fn play_s5() { play_slot(5) }
 static ROWS: &[RowModel] = &[
     RowModel::action("示例·鼓点 120BPM\0".as_bytes(), play0, 0, None),
     RowModel::action("示例·音阶（听 type 差异）\0".as_bytes(), play1, 0, None),
+    RowModel::action("示例·歌曲 STRUCT\0".as_bytes(), play2, 0, None),
     RowModel { label: "文件 1\0".as_bytes(), sub: RowSub::Dyn(slot0), kind: RowKind::Fn(play_s0), trailing: 0, refresh: None },
     RowModel { label: "文件 2\0".as_bytes(), sub: RowSub::Dyn(slot1), kind: RowKind::Fn(play_s1), trailing: 0, refresh: None },
     RowModel { label: "文件 3\0".as_bytes(), sub: RowSub::Dyn(slot2), kind: RowKind::Fn(play_s2), trailing: 0, refresh: None },
@@ -80,7 +102,9 @@ static ROWS: &[RowModel] = &[
     RowModel { label: "文件 6\0".as_bytes(), sub: RowSub::Dyn(slot5), kind: RowKind::Fn(play_s5), trailing: 0, refresh: None },
     RowModel { label: "状态\0".as_bytes(), sub: RowSub::Dyn(buzz_music::status), kind: RowKind::Display, trailing: 0, refresh: None },
     RowModel::action("停止\0".as_bytes(), stop, 0, None),
-    RowModel::note("马达只有预设效果, 没有音高: 用节奏和不同 type 表达鼓点与强弱。手机同步器: 浏览器打开「网页服务器」页显示的地址并在末尾加 /buzz（例如 http://192.168.42.1/buzz），选歌即可分析并上传到文件 1-6。示例·音阶 会依次触发 type 1-15, 用来听哪些效果适合做鼓点/旋律。\0".as_bytes()),
+    RowModel { label: "清除所有文件\0".as_bytes(), sub: RowSub::Dyn(clear_status),
+               kind: RowKind::Fn(clear_files), trailing: 0, refresh: None },
+    RowModel::note("马达只有预设效果, 没有音高: 用节奏和不同 type 表达鼓点与强弱。手机同步器: 浏览器打开「网页服务器」页显示的地址并在末尾加 /buzz（例如 http://192.168.42.1/buzz），选歌即可分析并上传到文件 1-6。示例·音阶 会依次触发 type 1-15。示例·歌曲 是编译进固件的完整曲目; 清除所有文件 只删上传的文件槽, 不影响内置示例。\0".as_bytes()),
 ];
 
 impl MenuSpec for BuzzPage {
