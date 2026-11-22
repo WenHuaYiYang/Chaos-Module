@@ -125,6 +125,8 @@ static void chaos_corona_launcher_position(void *event) {
 /* Sole implementation entry: includes launcher -> native provider/state
  * machine, then all three panels and the control-center battery hooks. */
 static unsigned chaos_corona_enabled, chaos_corona_in_call, chaos_cc_buttons_requested, chaos_launcher_buttons_requested;
+/* 极致省电档(V2 周期重采间隔加倍); 定义在 poll 段, 声明提前给 351 行用。 */
+static unsigned chaos_power_saver;
 static int chaos_cc_buttons_demand(void) {
     return chaos_corona_enabled && chaos_v2_algorithm && chaos_cc_buttons_requested;
 }
@@ -347,7 +349,9 @@ static void chaos_v2_background_refresh(void) {
     if(!(regions&p67_blur_allowed_entries)) return;
     uint32_t now=chaos_blur_monotonic_ms();
     if((int32_t)(now-chaos_v2_backoff_until)<0) return;
-    if(now-chaos_v2_background_last_capture<chaos_v2_params[BP_BG_INTERVAL]) return;
+    uint32_t interval=chaos_v2_params[BP_BG_INTERVAL];
+    if(chaos_power_saver) interval*=2u;
+    if(now-chaos_v2_background_last_capture<interval) return;
     /* 2026-11-19 第二次修复(CPU 98%): 之前用 p67_blur_draws(模糊层绘制次数)当判据,
      * 但**采集本身会请求一次整屏重绘**(wake → invalidate 全屏 → 重画模糊层),
      * 这次重绘正好把 draws 抬高 —— 于是每一轮采集都给下一轮"画面变了"的证据:
@@ -366,6 +370,8 @@ static void chaos_v2_background_refresh(void) {
 /* 空闲 poll 降频倍数: 标准 2, 实验性「极致省电」档 4(Rust 侧写入)。 */
 static unsigned chaos_poll_skip = 2u;
 void chaos_corona_set_poll_skip(unsigned n) { chaos_poll_skip = n ? n : 1u; }
+/* 极致省电: V2 的周期重采(C 侧每次都要整屏重绘+抓帧+滤波) 间隔放大一倍。 */
+void chaos_blur_set_power_saver(unsigned n) { chaos_power_saver = n ? 1u : 0u; }
 
 void chaos_corona_backgrounds_poll(void) {
     static unsigned idle_skip;

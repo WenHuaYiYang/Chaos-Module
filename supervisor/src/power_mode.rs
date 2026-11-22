@@ -16,6 +16,10 @@ static mut SAVE_FAILED: bool = false;
 extern "C" {
     /// C 侧 poll 降频档: 空闲时每 n 次 poll 才完整跑一次上游观察者校验。
     fn chaos_corona_set_poll_skip(n: u32);
+    /// ChaosConnect 桥的空闲轮询档(20/100/200ms)与连接扫描间隔。
+    fn chaos_bridge_set_power_saver(on: u32);
+    /// V2 周期重采间隔倍数。
+    fn chaos_blur_set_power_saver(on: u32);
 }
 
 unsafe fn load() {
@@ -32,7 +36,15 @@ unsafe fn load() {
         ENABLED = value != 0;
     }
     fw_api::close(fd);
+    apply_to_c();
+}
+
+/// 把当前档位同步给 C 侧(启动与切换开关时都调)。
+unsafe fn apply_to_c() {
     chaos_corona_set_poll_skip(poll_skip());
+    let on = ENABLED as u32;
+    chaos_bridge_set_power_saver(on);
+    chaos_blur_set_power_saver(on);
 }
 
 pub(crate) unsafe fn enabled() -> bool {
@@ -73,5 +85,5 @@ pub(crate) unsafe fn set_enabled(on: bool) {
     if fd >= 0 {
         fw_api::close(fd);
     }
-    chaos_corona_set_poll_skip(poll_skip());
+    apply_to_c();
 }
