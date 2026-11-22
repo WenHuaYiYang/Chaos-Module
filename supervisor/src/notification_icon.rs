@@ -23,9 +23,7 @@ static mut ACTIVE: bool = false;
 /// 桌面静置时通知树没有变化, 每拍(200ms)深度遍历 8 层子节点纯属空转 —— 这是
 /// 静置 CPU 的主要来源之一。有变化(mutated)或发现不完整时立刻恢复每拍。
 static mut QUIET: u32 = 0;
-const QUIET_SKIP: u32 = 8;
-
-/// 空闲跳拍档位(实验性「极致省电」开关拉到 12 拍)。
+/// 空闲跳拍档位: 标准 8 拍, 实验性「极致省电」开关拉到 12 拍(见 power_mode)。
 unsafe fn quiet_skip() -> u32 {
     crate::power_mode::quiet_skip()
 }

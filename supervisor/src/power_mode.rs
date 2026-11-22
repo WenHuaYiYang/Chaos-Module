@@ -40,10 +40,6 @@ pub(crate) unsafe fn enabled() -> bool {
     ENABLED
 }
 
-pub(crate) unsafe fn save_failed() -> bool {
-    SAVE_FAILED
-}
-
 /// 空闲时上游 poll 的间隔倍数。
 /// 2026-11-21 实测: 拉到 4(配合 1s 节拍 = 4s 一次) 会让模糊 owner 心跳超时,
 /// 上游反复 detach/commit 重建整屏纹理, 静置 CPU 反而从 20-30% 飙到 95%。
