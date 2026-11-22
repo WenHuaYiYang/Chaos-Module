@@ -2,6 +2,7 @@ fn main() {
     // option_env! 不被 cargo 自动跟踪: 不写这一行, 改了 CHAOS_BUILD_TIME 也不会重编,
     // 关于页会一直显示第一次编译进去的那个时间。
     println!("cargo:rerun-if-env-changed=CHAOS_BUILD_TIME");
+    println!("cargo:rerun-if-env-changed=CHAOS_VERSION_TEXT");
     println!("cargo:rerun-if-env-changed=CHAOS_FIRMWARE");
     println!("cargo:rerun-if-env-changed=PYTHON");
     let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
@@ -20,8 +21,10 @@ fn main() {
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::copy(symbols.join("firmware.rs"), out_dir.join("firmware.rs"))
         .expect("cannot generate selected firmware bindings");
-    // Cargo.toml is the only version source, including direct cargo builds.
-    let version = std::env::var("CARGO_PKG_VERSION")
+    // 版本串: build.py 注入带构建号的串(1.2.7-<构建号>); 直接 cargo build 时
+    // 退回 Cargo.toml 的版本, 保证两条路都能编。
+    let version = std::env::var("CHAOS_VERSION_TEXT")
+        .or_else(|_| std::env::var("CARGO_PKG_VERSION"))
         .expect("Cargo did not provide the package version");
     std::fs::write(out_dir.join("version.rs"),
         format!("pub const VERSION_TEXT: &str = {:?};\n", version))

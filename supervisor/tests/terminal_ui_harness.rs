@@ -23,6 +23,17 @@ mod page {
         fn on_click(&self, idx: usize);
         fn needs_tick(&self) -> bool { false }
         fn tick(&self) {}
+        fn on_tree_gone(&self) {}
+        fn on_instance_reset(&self) {}
+    }
+    /// terminal 页只用到滚动视口的创建, 宿主桩给出同样的几何返回值。
+    pub mod kit {
+        pub mod scroll {
+            pub unsafe fn viewport_abs(_content: u32, x: i32, y: i32, w: u32, h: u32, _v: bool) -> u32 {
+                let _ = (x, y, w, h);
+                0
+            }
+        }
     }
 }
 #[derive(Clone, Default)]

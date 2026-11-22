@@ -121,4 +121,7 @@ void chaos_web_sysinfo_read(struct chaos_web_sysinfo *out)
     int n=chaos_network_read_meminfo(out->meminfo,sizeof(out->meminfo)-1);
     if(n>0){if((unsigned)n>=sizeof(out->meminfo))n=sizeof(out->meminfo)-1;out->meminfo[n]=0;out->valid|=CHAOS_WEB_HAVE_MEMINFO;}
 }
+/* 蓝牙名: 仅入队, 由 PAN worker 执行(见 network_service.c)。 */
+int chaos_net_set_bt_name(const char *name){return network_set_bt_name(name);}
+int chaos_net_bt_name_result(void){return network_bt_name_result();}
 int chaos_web_reboot(void){extern int chaos_network_reboot(void);return chaos_network_reboot();}

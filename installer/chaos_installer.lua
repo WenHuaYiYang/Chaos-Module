@@ -893,9 +893,9 @@ as_set = function(text, color, logged)
   if as_label then as_label:set { text = fit_status(text), text_color = color or V_TXT2 } end
 end
 
--- 标题保持一个固定短串: 版本号在「关于」页与容器头里, 界面标题不重复一遍。
+-- 标题固定短串(用户指定: "chaos安装器"); 版本号在「关于」页与容器头里。
 lvgl.Label(main_view, {
-  text = "Chaos 安装器",
+  text = "chaos安装器",
   text_color = V_TXT,
   text_font = lvgl.Font(F_BODY, 32),
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -212 },

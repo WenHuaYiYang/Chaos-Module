@@ -5,6 +5,7 @@
 #![no_main]
 #![allow(static_mut_refs)]
 
+mod power_mode;
 mod state;
 mod version_text {
     include!(concat!(env!("OUT_DIR"), "/version.rs"));
@@ -59,6 +60,7 @@ mod corona_blur;
 mod notification_icon;
 mod web_nsh;
 mod connect_nsh;
+mod bt_name;
 mod btpan;
 
 mod text;

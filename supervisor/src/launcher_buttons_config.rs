@@ -2,7 +2,9 @@
 use crate::fw_api;
 const CONFIG: &[u8] = b"/data/chaos/blur_launcher_button.cfg\0";
 static mut LOADED: bool = false;
-static mut ENABLED: bool = true;
+// 默认关闭(2026-11-21): 开启会让 P67_BLUR_EXTRA_DEMAND 恒真, 模糊引擎
+// 永久有需求 —— 静置 CPU/耗电明显变高。需要玻璃效果的人在 模糊区域 里手动开。
+static mut ENABLED: bool = false;
 static mut SAVE_FAILED: bool = false;
 
 pub(crate) unsafe fn enabled() -> bool {

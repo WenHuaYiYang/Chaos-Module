@@ -344,7 +344,26 @@ const TICK_FAST_MS: u32 = 50;
 /// 中档: 亮屏但没有任何逐拍活(用户停在表盘/其它应用, 各流水线都空闲)。
 /// 5Hz 的维护节拍 vs 旧版 20Hz 空转 —— 亮屏闲时本模块贡献的唤醒少了 3/4。
 /// 所有需要 50ms 的东西都会出现在 tick_busy() 里, 档位切换对它们透明。
-const TICK_MID_MS: u32 = 200;
+/// 亮屏无活的稳定节拍。2026-11-20: 200 -> 400ms —— 实测静置 CPU 60-70%,
+/// 一半来自这条每拍五段流水线 + corona poll + 通知扫描。有活时仍走 FAST(50ms),
+/// 失败恢复/装配/滚动自愈都在忙态, 不受影响。
+const TICK_MID_MS: u32 = 400;
+/// 极致省电模式的中档节拍。
+/// 2026-11-21 实测: 1s 节拍会让"拍数换算"的恢复逻辑(如通知图标 20 拍重试)
+/// 变成 20 秒, 期间 busy 判定反复翻转、定时器在 50ms/1s 之间抖动, CPU 贴到 95%。
+/// 600ms 是既降唤醒(1.7Hz)又不逼出抖动的保守值。
+const TICK_POWER_MS: u32 = 600;
+
+/// 当前稳定态节拍(实验性「极致省电」开关可拉到 1s)。
+fn tick_mid_ms() -> u32 {
+    unsafe {
+        if crate::power_mode::enabled() {
+            TICK_POWER_MS
+        } else {
+            TICK_MID_MS
+        }
+    }
+}
 /// 息屏档从 1s 加深到 4s: 息屏时唯一可能的长活是后台终端会话(它有自己的
 /// busy 信号), 其余全是旗标检查。4s 一拍 = 整夜唤醒再降 4 倍。
 const TICK_IDLE_MS: u32 = 4000;
@@ -382,7 +401,11 @@ unsafe fn tick_busy() -> bool {
     || confirm_pop::pending()
     || background_home::pending()
     || crate::s541_launcher::pending()
-    || crate::capture_preview::pending()
+    // 2026-11-21: 上游直接把它无条件加进来 —— 截图缩略图槽的 status==0 会一直
+    // 残留(离开页面后无人推进), 于是 FG_PAGE 停在截图页、APP_FG=0 时仍然每拍
+    // 返回"忙", 整机永久 50ms 快拍, 省电模式的节拍设置被完全绕过。
+    // 缩略图只在截图 App 真的在前台时才值得为它加快节拍。
+    || (st_rd!(APP_FG) != 0 && crate::capture_preview::pending())
     || crate::quickapp_animation::pending()
     || beautify_restore::pending()
     || crate::desktop_scale::scrolling()
@@ -408,7 +431,7 @@ unsafe fn tick_adapt() {
     } else if fw_api::screen_is_on() || crate::connect_permission::state()&1!=0 {
         // An active plugin may request on-watch consent while the screen is off;
         // keep its UI mailbox responsive instead of sleeping for four seconds.
-        TICK_MID_MS
+        tick_mid_ms()
     } else {
         TICK_IDLE_MS
     };

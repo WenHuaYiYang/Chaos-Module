@@ -125,6 +125,8 @@ static void chaos_corona_launcher_position(void *event) {
 /* Sole implementation entry: includes launcher -> native provider/state
  * machine, then all three panels and the control-center battery hooks. */
 static unsigned chaos_corona_enabled, chaos_corona_in_call, chaos_cc_buttons_requested, chaos_launcher_buttons_requested;
+/* 极致省电档(V2 周期重采间隔加倍); 定义在 poll 段, 声明提前给 351 行用。 */
+static unsigned chaos_power_saver;
 static int chaos_cc_buttons_demand(void) {
     return chaos_corona_enabled && chaos_v2_algorithm && chaos_cc_buttons_requested;
 }
@@ -347,7 +349,9 @@ static void chaos_v2_background_refresh(void) {
     if(!(regions&p67_blur_allowed_entries)) return;
     uint32_t now=chaos_blur_monotonic_ms();
     if((int32_t)(now-chaos_v2_backoff_until)<0) return;
-    if(now-chaos_v2_background_last_capture<chaos_v2_params[BP_BG_INTERVAL]) return;
+    uint32_t interval=chaos_v2_params[BP_BG_INTERVAL];
+    if(chaos_power_saver) interval*=2u;
+    if(now-chaos_v2_background_last_capture<interval) return;
     /* 2026-11-19 第二次修复(CPU 98%): 之前用 p67_blur_draws(模糊层绘制次数)当判据,
      * 但**采集本身会请求一次整屏重绘**(wake → invalidate 全屏 → 重画模糊层),
      * 这次重绘正好把 draws 抬高 —— 于是每一轮采集都给下一轮"画面变了"的证据:
@@ -363,15 +367,33 @@ static void chaos_v2_background_refresh(void) {
     p67_blur_request();p67_wake_pending=1;
 }
 
+/* 空闲 poll 降频倍数: 标准 2, 实验性「极致省电」档 4(Rust 侧写入)。 */
+static unsigned chaos_poll_skip = 2u;
+void chaos_corona_set_poll_skip(unsigned n) { chaos_poll_skip = n ? n : 1u; }
+/* 极致省电: V2 的周期重采(C 侧每次都要整屏重绘+抓帧+滤波) 间隔放大一倍。 */
+void chaos_blur_set_power_saver(unsigned n) { chaos_power_saver = n ? 1u : 0u; }
+
 void chaos_corona_backgrounds_poll(void) {
+    static unsigned idle_skip;
+    unsigned busy;
     if (chaos_corona_in_call) return;
     /* 自愈也挂在 poll 上：标记卡住时上游 poll 会在门口直接 return，
      * 而 commit 又要求 idle —— 只有 poll 是每拍都跑的那条路。 */
     chaos_corona_latch_rescue();
     chaos_corona_in_call = 1;
-    chaos_corona_display_rebind();
-    chaos_corona_launcher_rebind();
-    rh_platform_backgrounds_poll();
+    /* 空闲降频(2026-11-20): 上游 poll 每拍要做观察者/描述符校验并遍历三个
+     * surface 的通知列表, 桌面静置时这些检查全部为"无变化"。稳定态下每
+     * 2 次才完整跑一次(配合维护节拍 400ms -> 约 0.8s 一次); 一旦有活
+     * (采集未完成/待重绘/刚装配/冷却/交互)立刻恢复每拍, 恢复速度不变。 */
+    busy = p67_blur_pending || p67_wake_pending || p67_blur_busy || p67_blur_polling
+        || chaos_blur_interacting() || !chaos_corona_enabled;
+    if (busy || ++idle_skip >= chaos_poll_skip) {
+        idle_skip = 0;
+        /* rebind 也是自愈的一环, 跟着同一档节流; 忙态仍每拍。 */
+        chaos_corona_display_rebind();
+        chaos_corona_launcher_rebind();
+        rh_platform_backgrounds_poll();
+    }
     /* 采集卡住的兜底: 上游 poll_rearm 只要看到 pending 就每拍置 wake 并请求
      * 整屏重绘; 如果这次采集因为 owner/门禁永远完不成, 就变成"重绘-重试"死循环。
      * 超过 1.5s 没完成就主动放弃这次请求并冷却 3s, 保证不会长期贴 100% CPU。 */
@@ -385,7 +407,9 @@ void chaos_corona_backgrounds_poll(void) {
     }
     chaos_corona_rearm_missing_source();
     chaos_v2_background_refresh();
-    cc_buttons_poll();
+    /* 按钮纹理轮询同样只在"该跑的那一拍"执行: 创建/更新按钮图源是重活,
+     * 桌面静置时结果不会变。忙态(按钮正在做/有需求变化)仍每拍。 */
+    if (busy || !idle_skip || idle_skip + 1 >= chaos_poll_skip) cc_buttons_poll();
     chaos_corona_in_call = 0;
 }
 

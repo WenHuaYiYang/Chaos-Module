@@ -32,6 +32,10 @@ struct request {volatile uint32_t state;uint32_t epoch,id;uint16_t handle,len;ui
 static struct request rx[RX_SLOTS],tx[TX_SLOTS];
 static uint8_t probe[CC_MAX_WIRE],plain[CC_MAX_FRAME],send_copy[CC_MAX_WIRE];
 static volatile uint32_t rx_read,rx_write,tx_read,tx_write,epoch,started,reset_pending,wanted;
+/* 2026-11-22 功耗: 原先空闲每 20ms 轮询(50Hz), 与维护节拍无关, 省电模式对它无效。
+ * 空闲 100ms(省电档 200ms), 有请求待处理仍回到 2ms; 连接列表扫描 250->750ms。 */
+static uint32_t bridge_power_saver;
+void chaos_bridge_set_power_saver(uint32_t on){bridge_power_saver=on?1u:0u;}
 static volatile uint32_t notice_pending,notice_attempts;
 static uint16_t notice_handle;
 static void *notice_session;
@@ -162,7 +166,8 @@ static void poll(void){
     uint32_t now=chaos_connect_now_ms();
     /* A connection-list scan masks interrupts. Discover new legacy links at
      * 4 Hz, with an immediate pass for every enable/disable epoch. */
-    if(attach_epoch!=epoch || now-attach_last>=250u){
+    uint32_t scan=bridge_power_saver?1500u:750u;
+    if(attach_epoch!=epoch || now-attach_last>=scan){
         attach_epoch=epoch;attach_last=now;attach(!wanted||!started);
     }
     if(!wanted||!started)return;if(!bt_init)(void)bt_start(20);
@@ -186,8 +191,15 @@ static void poll(void){
     }
     if(tx[tx_read].state==2)(void)bt_start(2);
 }
+/* 2026-11-22 功耗: 原先空闲时每 20ms 轮询一次(50Hz), 与维护节拍无关 ——
+ * 静置时省电模式对它完全无效。空闲降到 100ms(省电档 200ms); 一旦有请求
+ * 待处理立刻回到 2ms, 传输速度不受影响。 */
 static int owner_start(uint32_t period);
-static void owner_tick(void *unused){(void)unused;poll();(void)owner_start(!started?1000:rx[rx_read].state==2?2:20);}
+static void owner_tick(void *unused){
+    (void)unused;poll();
+    uint32_t idle=bridge_power_saver?200u:100u;
+    (void)owner_start(!started?1000u:(rx[rx_read].state==2?2u:idle));
+}
 static int owner_start(uint32_t period){
     void *loop=*(void *volatile *)(uintptr_t)OWNER_LOOP;if(!loop)return -1;if(owner_period==period)return 0;
     if(!owner_init){if(FN(TIMER_INIT,init_fn)(loop,owner_timer))return -1;owner_init=1;}

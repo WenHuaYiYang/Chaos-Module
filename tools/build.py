@@ -47,7 +47,7 @@ from firmware_symbols import DEFAULT_TARGET, load_target
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 DEVICE_DIR = "xiaomi-band-10-pro"
 DEFAULT_ID = "979820260926"
-DEFAULT_NAME = "Chaos 安装器"
+DEFAULT_NAME = "chaos安装器"
 
 
 def run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
@@ -96,6 +96,10 @@ def build_ko(repo: Path, out: Path, build_time: str, ident: str = DEFAULT_TARGET
     out.parent.mkdir(parents=True, exist_ok=True)
     env = firmware_env(ident)
     env["CHAOS_BUILD_TIME"] = build_time
+    # 版本串(含构建号)交给 build.rs 生成 version.rs; 关于页/连接日志显示它。
+    sys.path.insert(0, str(repo / "tools"))
+    import p67_pack  # noqa: PLC0415
+    env["CHAOS_VERSION_TEXT"] = p67_pack.VERSION_TEXT
     # build.rs reads CARGO_PKG_VERSION directly from supervisor/Cargo.toml.
     run(["sh", str(repo / "tools" / "build_ko.sh"), "supervisor", str(out)], repo, env)
     if not out.is_file() or out.stat().st_size == 0:
@@ -425,13 +429,15 @@ def main() -> int:
     # 预览块(容器头里的缩略图): 与固件解压函数同格式(0x5AA521E0 RLE, 336x480),
     # 每次都按当前的 installer/chaos_installer.lua 重渲染 —— 见 prepare_preview。
     preview = prepare_preview(repo, dist, args.preview, icon_python)
-    # 产物名保持短: chaos-installer-<目标>.bin。目标串里已含机型与固件,
-    # 版本号在容器头(p67_pack.VERSION)与 build-report.json 里, 文件名不再重复。
-    out = args.out or dist / f"chaos-installer-{target['id']}.bin"
-    # 应用列表里显示的容器名保持简短: "Chaos 安装器 <机型> <固件>"。
-    # 版本号只在容器头(p67_pack.VERSION)与关于页上, 名字里再塞一遍会挤成
-    # 很长的安装器名，列表里既难读也难认。
-    display_name = f"{args.name} {target['model']} {target['version']}"
+    # 产物名带版本号+构建号前缀(v1.2.7-a1a0bbdd-chaos-installer-<目标>.bin):
+    # 一眼能区分手上是哪个包; 版本号真源仍是 Cargo.toml/容器头。
+    sys.path.insert(0, str(repo / "tools"))
+    import p67_pack  # noqa: PLC0415
+    version = "v" + p67_pack.VERSION_TEXT
+    out = args.out or dist / f"{version}-chaos-installer-{target['id']}.bin"
+    # 应用列表里的容器名与安装界面标题一致: "chaos安装器 <机型> <固件>"。
+    shown_name = args.name
+    display_name = f"{shown_name} {target['model']} {target['version']}"
     info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")
     for name, size in info["blocks"]:

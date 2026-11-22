@@ -19,6 +19,14 @@ const EMPTY: Entry = Entry { object: 0, tag: 0, owned: false };
 static mut ENTRIES: [Entry; LIMIT] = [EMPTY; LIMIT];
 static mut NEXT_TAG: u32 = 1;
 static mut ACTIVE: bool = false;
+/// 空闲跳拍: 上一轮扫描"找到但没改任何东西"时, 每 QUIET_SKIP 拍才重扫一次。
+/// 桌面静置时通知树没有变化, 每拍(200ms)深度遍历 8 层子节点纯属空转 —— 这是
+/// 静置 CPU 的主要来源之一。有变化(mutated)或发现不完整时立刻恢复每拍。
+static mut QUIET: u32 = 0;
+/// 空闲跳拍档位: 标准 8 拍, 实验性「极致省电」开关拉到 12 拍(见 power_mode)。
+unsafe fn quiet_skip() -> u32 {
+    crate::power_mode::quiet_skip()
+}
 static mut SOURCE: u32 = 0;
 static mut RETRY_TICKS: u32 = 0;
 
@@ -132,6 +140,13 @@ unsafe fn owns_images() -> bool {
 
 pub(crate) unsafe fn pending() -> bool { st_rd!(ACTIVE) || owns_images() }
 
+/// 真的有活要推进: 重试未清零, 或还持有要回收的图源。
+/// 2026-11-21: `pending()` 把"功能启用"也算作真(ACTIVE 一旦开过恒真), 于是
+/// `background_home::pending()` 恒真、`tick_busy` 永远是"忙", 维护节拍降不下来;
+/// 和 1s 节拍组合时还会来回抖动, 静置 CPU 从 20-30% 顶到 95%。
+/// 维护节拍只该为真活让路, 所以那里改用 busy()。
+pub(crate) unsafe fn busy() -> bool { st_rd!(RETRY_TICKS) != 0 || owns_images() }
+
 pub(crate) unsafe fn tick(wanted: bool) -> bool {
     if !wanted && !owns_images() {
         st_wr!(ACTIVE, false);
@@ -139,6 +154,11 @@ pub(crate) unsafe fn tick(wanted: bool) -> bool {
         return true;
     }
     st_wr!(ACTIVE, true);
+    // 空闲跳拍: 上一轮已扫完且没改动时, 每 QUIET_SKIP 拍才再扫一次。
+    if wanted && st_rd!(QUIET) != 0 {
+        st_wr!(QUIET, st_rd!(QUIET) - 1);
+        return true;
+    }
     if wanted && st_rd!(SOURCE) == 0 {
         if st_rd!(RETRY_TICKS) != 0 {
             st_wr!(RETRY_TICKS, st_rd!(RETRY_TICKS) - 1);
@@ -165,10 +185,17 @@ pub(crate) unsafe fn tick(wanted: bool) -> bool {
     if !wanted {
         if owns_images() { return false; }
         st_wr!(ACTIVE, false);
+        st_wr!(QUIET, 0);
         return true;
     }
     // 每拍至多写一个图源，其余活对象下一拍重新获取 root 后处理。
     // 有界重扫也覆盖清空消息后晚建的占位图标。
+    if mutated || !complete || !found {
+        st_wr!(QUIET, 0);
+    } else if st_rd!(QUIET) == 0 {
+        // 本轮扫完且无改动: 接下来 QUIET_SKIP-1 拍直接跳过。
+        st_wr!(QUIET, quiet_skip().saturating_sub(1));
+    }
     found && complete
 }
 

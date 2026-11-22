@@ -1,5 +1,5 @@
 //! BTPAN and HTTP pages. Firmware calls stay in fw_api and the audited C port.
-use crate::page::kit::{RowKind, RowModel, RowSub};
+use crate::page::kit::{RowKind, RowModel, RowSub, ToggleDef};
 use crate::*;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -7,6 +7,8 @@ pub(crate) const PAGE_BTPAN_PID: u32 = 32;
 pub(crate) const PAGE_WEBSRV_PID: u32 = 33;
 pub(crate) const PAGE_NETINFO_PID: u32 = 34;
 pub(crate) const PAGE_DIAG_PID: u32 = 36;
+/// 修改蓝牙名页(与 page::Pid::BtName 同号)。
+pub(crate) const PAGE_BTNAME_PID: u32 = 63;
 const PAN_ROWS: usize = 12;
 const WEB_ROWS: usize = 9; /* 0开关 1状态 2地址 3用户名 4密码 5设置密码 6btpan跳转 7统计 8诊断 */
 const DEV_FIRST: usize = 6; /* 设备行 6..11, 扫到几台显示几台, 其余隐藏 */
@@ -68,6 +70,7 @@ unsafe extern "C" {
     fn chaos_pan_disconnect();
     fn chaos_pan_pair_confirm();
     fn network_service_view(out: *mut NetworkView);
+    fn network_pending_commands() -> i32;
     fn pan_ip_info(out: *mut IpInfo);
     fn chaos_pan_bt_poll();
     fn chaos_pan_net_poll(now_ms: u32);
@@ -117,9 +120,13 @@ unsafe extern "C" fn net_worker_entry(_argc: i32, _argv: *mut *mut u8) -> i32 {
     loop {
         let now = fw_api::network_monotonic_ms();
         chaos_pan_net_poll(now);
-        if now.wrapping_sub(last_bt) >= 250 { last_bt = now; chaos_pan_bt_poll(); }
         let mut view: NetworkView = core::mem::zeroed(); network_service_view(&mut view);
         let mut http: HttpView = core::mem::zeroed(); chaos_httpd_snapshot(&mut http);
+        /* BT 状态机: 网络功能开着或有待办命令时 250ms; 全空闲时 2s ——
+         * worker 现在也会为了"改蓝牙名"被拉起, 不该因此常驻 4Hz 轮询。 */
+        let busy = view.enabled != 0 || http.enabled != 0 || network_pending_commands() != 0;
+        let period = if busy { 250 } else { 2_000 };
+        if now.wrapping_sub(last_bt) >= period { last_bt = now; chaos_pan_bt_poll(); }
         fw_api::nsh_usleep(net_poll_interval(&view, &http));
     }
 }
@@ -677,9 +684,19 @@ impl crate::page::Page for WebSrvPage {
     fn tick(&self) {unsafe{if visible(PAGE_WEBSRV_PID) && fw_api::screen_is_on(){refresh_web();}}}
 }
 
-/// 主页 -> 实验性功能(页35)。收拢未稳定入口: btpan联网 / 网页服务器 / 连接信息。
+/// 主页 -> 实验性功能(页35)。收拢未稳定入口: btpan联网 / 网页服务器 / 连接信息,
+/// 以及极致省电开关。
 pub(crate) struct ExpPage;
 pub(crate) static PAGE_EXP_P: ExpPage = ExpPage;
+
+unsafe fn power_saver() -> bool { crate::power_mode::enabled() }
+unsafe fn power_saver_toggle() { crate::power_mode::set_enabled(!crate::power_mode::enabled()); }
+static POWER_SAVER: ToggleDef = ToggleDef {
+    get: power_saver,
+    toggle: power_saver_toggle,
+    status: None,
+};
+
 static EXP_ROWS: &[RowModel] = &[
     RowModel { label: "btpan联网\0".as_bytes(), sub: RowSub::Static("蓝牙网络共享实验功能\0".as_bytes()),
                kind: RowKind::Nav(PAGE_BTPAN_PID), trailing: 0, refresh: None },
@@ -687,6 +704,11 @@ static EXP_ROWS: &[RowModel] = &[
                kind: RowKind::Nav(PAGE_WEBSRV_PID), trailing: 0, refresh: None },
     RowModel { label: "蓝牙诊断\0".as_bytes(), sub: RowSub::Static("配对回调与 IPC 现场\0".as_bytes()),
                kind: RowKind::Nav(PAGE_DIAG_PID), trailing: 0, refresh: None },
+    RowModel { label: "修改蓝牙名\0".as_bytes(), sub: RowSub::Static("手机蓝牙列表里看到的名字\0".as_bytes()),
+               kind: RowKind::Nav(PAGE_BTNAME_PID), trailing: 0, refresh: None },
+    // 放在这一页最底下: 它是个"更省电但更慢"的取舍开关, 不是常用入口。
+    RowModel::toggle("极致省电模式\0".as_bytes(), &POWER_SAVER),
+    RowModel::note("开启后维护节拍降到 0.6 秒一拍、模糊自愈与通知变化的检测间隔拉长到数秒，并暂时关闭控制中心/启动器按钮的模糊（它们是持续的额外合成负载）：静置 CPU 与耗电明显更低，代价是这些变化响应变慢、按钮变回普通样式。装配、滚动、采集和失败恢复仍是快节拍。设置随重启保留。\0".as_bytes()),
 ];
 
 impl crate::page::kit::MenuSpec for ExpPage {

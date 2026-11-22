@@ -154,7 +154,7 @@ class ContainerIntegrityTests(unittest.TestCase):
             repo = Path(directory); assets = repo / 'dist/assets'; stage = repo / 'dist/stage'
             assets.mkdir(parents=True); stage.mkdir(); (repo / 'installer').mkdir()
             (repo / 'installer/chaos_installer.lua').write_text(
-                'local V = 1\nreturn true')
+                'local V = "__CHAOS_VERSION__"\nreturn true')
             names = ('chaos_sup.bin', 'fetch-module.bin', 'capatch.bin', 'ca.pem',
                      'chaos_icon.bin', 'chaos_icon_settings.bin', 'lxgw.ttf')
             for i, name in enumerate(names): (assets / name).write_bytes(bytes([i]) * (10 + i))

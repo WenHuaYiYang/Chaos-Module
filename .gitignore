@@ -10,7 +10,7 @@ fonts/
 !supervisor/assets/floating-ball/arc-masks.bin
 !supervisor/assets/floating-ball/glyphs.bin
 # 发布产物: Alpha 版安装包放仓库根目录, 供直接下载刷机
-!/v1.2.7-Alpha-chaos-installer-10p-3.101.043.bin
+!/v1.2.7-*-chaos-installer-10p-3.101.043.bin
 *.a
 *.o
 *.elf

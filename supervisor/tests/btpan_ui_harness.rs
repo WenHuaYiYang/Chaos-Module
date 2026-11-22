@@ -3,6 +3,7 @@
 use std::sync::{Mutex, OnceLock};
 
 pub use core::ptr::{read_volatile, write_volatile};
+pub use text::W;
 pub const FW_STYLE_HR_NAME: u32 = 1;
 pub const APP_ID: u32 = 200;
 pub static mut FG_PAGE: u32 = 34;
@@ -168,6 +169,21 @@ pub mod connect_radio {
 #[no_mangle] pub extern "C" fn chaos_connect_pan_cancel(){}
 
 pub mod keyboard { #[derive(Clone, Copy)] pub enum Completion { WebPassword } pub unsafe fn open(_: *const u8, _: Completion) {} }
+/// ChaosConnect 设置目录的宿主桩: 只提供 btpan 用到的值类型。
+pub mod control_catalog {
+    pub(crate) type Value = [u8; 256];
+}
+
+/// 实验性「极致省电」开关的宿主桩: 只记内存状态, 不落盘。
+pub mod power_mode {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ON: AtomicBool = AtomicBool::new(false);
+    pub unsafe fn enabled() -> bool { ON.load(Ordering::Relaxed) }
+    pub unsafe fn set_enabled(on: bool) { ON.store(on, Ordering::Relaxed); }
+    pub unsafe fn save_failed() -> bool { false }
+    pub unsafe fn poll_skip() -> u32 { if enabled() { 4 } else { 2 } }
+    pub unsafe fn quiet_skip() -> u32 { if enabled() { 12 } else { 8 } }
+}
 
 #[no_mangle] pub extern "C" fn chaos_pan_enable(on:i32) { let mut s=host_state().lock().unwrap();s.pan_enable_calls+=1;if s.auto_apply_pan{s.network.enabled=(on!=0)as u32;} }
 #[no_mangle] pub extern "C" fn chaos_pan_scan() { host_state().lock().unwrap().scan_calls+=1; }

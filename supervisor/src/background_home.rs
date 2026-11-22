@@ -721,7 +721,9 @@ pub(crate) unsafe fn pending() -> bool {
     } else if st_rd!(CORONA_BG_ACTIVE) != 0 || crate::corona_blur::backgrounds_pending() {
         return true;
     }
-    crate::notification_icon::pending() || st_rd!(REQUEST) != 0 || SCENE.pending()
+    // 只用"真的有活"(busy), 不用"功能启用"(pending): 后者一旦开过通知图标
+    // 就恒真, 会把维护节拍永久钉在 50ms。
+    crate::notification_icon::busy() || st_rd!(REQUEST) != 0 || SCENE.pending()
         || st_rd!(REFRESH) != 0 || crate::background_surfaces::pending()
 }
 
@@ -734,6 +736,7 @@ pub(crate) unsafe fn tick() {
     load_mode();
     consume_deleted();
     vib_tick();   // 滑动震动 + 震动测试
+    crate::bt_name::tick(); // 开机后补下发蓝牙名(未设置或已成功时立即返回)
     if !crate::font_apply::quiet() { return; }
     sv_watch_tick();
     // 档位或状态一变就排一次整页重建: 回调里(事件派发链上)只登记请求, 控件由这里
