@@ -361,12 +361,8 @@ class PreviewLayoutTests(unittest.TestCase):
         layout = gen_preview.LAYOUTS['installer']
         title = next(n for n in self.main_children() if n.props[b'text'] is not None)
         self.assertEqual(self.y_ofs(title), layout['title_y'])
-        # 标题带版本号: 预览用占位符原文渲染, 打包时由 build.py 注入 "127"。
-        expected = gen_preview.INSTALLER_TITLE.encode()
-        got = title.props[b'text']
-        if got != expected:
-            self.assertEqual(got, expected.replace(b' ', b'').replace(
-                b'Chaos', b'Chaos__CHAOS_VERSION__'))
+        # 标题固定短串 "chaos安装器"; 版本号在关于页与容器头里。
+        self.assertEqual(title.props[b'text'], gen_preview.INSTALLER_TITLE.encode())
         card = next(n for n in self.main_children()
                     if n.props[b'text'] is None and self.y_ofs(n) == layout['card_y'])
         self.assertEqual(self.y_ofs(card), layout['card_y'])

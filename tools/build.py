@@ -47,7 +47,7 @@ from firmware_symbols import DEFAULT_TARGET, load_target
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 DEVICE_DIR = "xiaomi-band-10-pro"
 DEFAULT_ID = "979820260926"
-DEFAULT_NAME = "Chaos 安装器"
+DEFAULT_NAME = "chaos安装器"
 
 
 def run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
@@ -279,14 +279,6 @@ def stage_installer(repo: Path, stage: Path, assets: Path) -> list[dict]:
     sys.path.insert(0, str(repo / "tools"))
     import minify_lua  # noqa: PLC0415
     text = (repo / "installer" / "chaos_installer.lua").read_text(encoding="utf-8")
-    # 标题里的版本号与容器头同一个真源(p67_pack.VERSION): 1.2.7 -> "127"。
-    # 注入要在瘦身之前做, 这样下面 token 序列的断言仍然覆盖最终文本。
-    import p67_pack  # noqa: PLC0415
-    _ver = f"{(p67_pack.VERSION >> 16) & 0xFF}.{(p67_pack.VERSION >> 8) & 0xFF}.{p67_pack.VERSION & 0xFF}"
-    if "__CHAOS_VERSION__" not in text:
-        raise RuntimeError("安装器脚本缺少 __CHAOS_VERSION__ 占位符, 标题会缺版本号")
-    # 标题只带主版本(127): 构建号放进文件名与关于页, 避免标题过长被缩字号。
-    text = text.replace("__CHAOS_VERSION__", _ver.replace(".", ""))
     slim = minify_lua.strip_source(text)
     if minify_lua.tokens(text) != minify_lua.tokens(slim):
         raise RuntimeError("安装器瘦身改变了 token 序列, 中止打包")
@@ -443,10 +435,8 @@ def main() -> int:
     import p67_pack  # noqa: PLC0415
     version = "v" + p67_pack.VERSION_TEXT
     out = args.out or dist / f"{version}-chaos-installer-{target['id']}.bin"
-    # 应用列表里显示的容器名保持短: "Chaos127安装器 <机型> <固件>", 不带构建号。
-    default_named = args.name == DEFAULT_NAME
-    _major = "%d%d%d" % ((p67_pack.VERSION >> 16) & 0xFF, (p67_pack.VERSION >> 8) & 0xFF, p67_pack.VERSION & 0xFF)
-    shown_name = f"Chaos{_major}安装器" if default_named else args.name
+    # 应用列表里的容器名与安装界面标题一致: "chaos安装器 <机型> <固件>"。
+    shown_name = args.name
     display_name = f"{shown_name} {target['model']} {target['version']}"
     info = build_container(repo, out, preview, stage, assets, args.id, display_name, args.style)
     print(f"容器: {out} ({info['size']} bytes)")

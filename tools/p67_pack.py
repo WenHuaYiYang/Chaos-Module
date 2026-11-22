@@ -42,9 +42,8 @@ def read_version(manifest: Path) -> tuple[str, int]:
 
 # Cargo.toml 是版本号的唯一真源(上游正式版起的约定)。
 _CARGO_TEXT, VERSION = read_version(Path(__file__).resolve().parents[1] / "supervisor" / "Cargo.toml")
-# 构建号: 每次构建前更新为当前 git 短哈希(工作区有未提交改动时追加 d)。
-# 只改这一处; 产物文件名、关于页版本串、安装器标题都从这里派生。
-VERSION_BUILD = "e004f0ad"
+# 版本后缀: 每次构建前手动改(A -> B -> ...); 产物文件名与关于页都从这里派生。
+VERSION_BUILD = "A"
 VERSION_TEXT = "%s-%s" % (_CARGO_TEXT, VERSION_BUILD)
 
 HDR = 0xA8

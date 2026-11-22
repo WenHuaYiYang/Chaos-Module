@@ -893,30 +893,11 @@ as_set = function(text, color, logged)
   if as_label then as_label:set { text = fit_status(text), text_color = color or V_TXT2 } end
 end
 
--- 标题带版本号: 版本由 build.py 在打包时注入(与容器头同一个 p67_pack.VERSION)。
--- 固定单行: 按字节粗估宽度, 超宽就逐档缩字号; 宁可小一号也不折行。
-local CHAOS_VERSION = "__CHAOS_VERSION__"
-local TITLE = "Chaos" .. CHAOS_VERSION .. "安装器"
-local function title_size_for(text, max_width, preferred)
-  local size = preferred
-  while size > 16 do
-    local w = 0
-    for i = 1, #text do
-      local b = text:byte(i)
-      if b < 0x80 then w = w + size * 0.56
-      elseif b >= 0xE0 then w = w + size end
-    end
-    if w <= max_width then break end
-    size = size - 2
-  end
-  return size
-end
-local TITLE_SIZE = title_size_for(TITLE, SCR_W - 48, 32)
-
+-- 标题固定短串(用户指定: "chaos安装器"); 版本号在「关于」页与容器头里。
 lvgl.Label(main_view, {
-  text = TITLE,
+  text = "chaos安装器",
   text_color = V_TXT,
-  text_font = lvgl.Font(F_BODY, TITLE_SIZE),
+  text_font = lvgl.Font(F_BODY, 32),
   align = { type = lvgl.ALIGN.CENTER, x_ofs = 0, y_ofs = -212 },
 })
 
