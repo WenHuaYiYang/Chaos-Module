@@ -1,5 +1,12 @@
 # 更新日志
 
+## v1.2.7-304fa87e+font — 字体包假名补全工具（2026-11-22）
+
+- 新增 `tools/font_pack_merge.py`：给字体投递包补充字形（默认日文假名），
+  源字体 Yu Gothic，处理 unitsPerEm 缩放与组合字形，按原容器布局重打包。
+- 实测第三方 Phi 包：15437 汉字、**0 假名、0 emoji**；补全后 +189 假名字形。
+- 说明文档 `docs/FONT-PACK-SUPPLEMENT.md`（含 Emoji 为何需要运行时 fallback）。
+
 ## v1.2.7-e004f0ad — 代码体检（2026-11-22）
 
 全量审查 + 测试分类后清掉的问题：
