@@ -7,6 +7,8 @@ pub(crate) const PAGE_BTPAN_PID: u32 = 32;
 pub(crate) const PAGE_WEBSRV_PID: u32 = 33;
 pub(crate) const PAGE_NETINFO_PID: u32 = 34;
 pub(crate) const PAGE_DIAG_PID: u32 = 36;
+/// 修改蓝牙名页(与 page::Pid::BtName 同号)。
+pub(crate) const PAGE_BTNAME_PID: u32 = 63;
 const PAN_ROWS: usize = 12;
 const WEB_ROWS: usize = 9; /* 0开关 1状态 2地址 3用户名 4密码 5设置密码 6btpan跳转 7统计 8诊断 */
 const DEV_FIRST: usize = 6; /* 设备行 6..11, 扫到几台显示几台, 其余隐藏 */
@@ -68,6 +70,7 @@ unsafe extern "C" {
     fn chaos_pan_disconnect();
     fn chaos_pan_pair_confirm();
     fn network_service_view(out: *mut NetworkView);
+    fn network_pending_commands() -> i32;
     fn pan_ip_info(out: *mut IpInfo);
     fn chaos_pan_bt_poll();
     fn chaos_pan_net_poll(now_ms: u32);
@@ -117,9 +120,13 @@ unsafe extern "C" fn net_worker_entry(_argc: i32, _argv: *mut *mut u8) -> i32 {
     loop {
         let now = fw_api::network_monotonic_ms();
         chaos_pan_net_poll(now);
-        if now.wrapping_sub(last_bt) >= 250 { last_bt = now; chaos_pan_bt_poll(); }
         let mut view: NetworkView = core::mem::zeroed(); network_service_view(&mut view);
         let mut http: HttpView = core::mem::zeroed(); chaos_httpd_snapshot(&mut http);
+        /* BT 状态机: 网络功能开着或有待办命令时 250ms; 全空闲时 2s ——
+         * worker 现在也会为了"改蓝牙名"被拉起, 不该因此常驻 4Hz 轮询。 */
+        let busy = view.enabled != 0 || http.enabled != 0 || network_pending_commands() != 0;
+        let period = if busy { 250 } else { 2_000 };
+        if now.wrapping_sub(last_bt) >= period { last_bt = now; chaos_pan_bt_poll(); }
         fw_api::nsh_usleep(net_poll_interval(&view, &http));
     }
 }
@@ -697,6 +704,8 @@ static EXP_ROWS: &[RowModel] = &[
                kind: RowKind::Nav(PAGE_WEBSRV_PID), trailing: 0, refresh: None },
     RowModel { label: "蓝牙诊断\0".as_bytes(), sub: RowSub::Static("配对回调与 IPC 现场\0".as_bytes()),
                kind: RowKind::Nav(PAGE_DIAG_PID), trailing: 0, refresh: None },
+    RowModel { label: "修改蓝牙名\0".as_bytes(), sub: RowSub::Static("手机蓝牙列表里看到的名字\0".as_bytes()),
+               kind: RowKind::Nav(PAGE_BTNAME_PID), trailing: 0, refresh: None },
     // 放在这一页最底下: 它是个"更省电但更慢"的取舍开关, 不是常用入口。
     RowModel::toggle("极致省电模式\0".as_bytes(), &POWER_SAVER),
     RowModel::note("开启后维护节拍降到 0.6 秒一拍、模糊自愈与通知变化的检测间隔拉长到数秒，并暂时关闭控制中心/启动器按钮的模糊（它们是持续的额外合成负载）：静置 CPU 与耗电明显更低，代价是这些变化响应变慢、按钮变回普通样式。装配、滚动、采集和失败恢复仍是快节拍。设置随重启保留。\0".as_bytes()),

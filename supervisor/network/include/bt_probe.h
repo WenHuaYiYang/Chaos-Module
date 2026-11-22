@@ -6,6 +6,8 @@ void bt_probe_action(uint32_t id);
 void bt_probe_next(void);
 void bt_probe_connect(void);
 int bt_probe_connect_address(const uint8_t address[6],const char *name);
+/* 设置 adapter 本地蓝牙名(cmd 0x22, 上限 63 字节)。0 成功。 */
+int bt_probe_set_local_name(const char *name);
 void bt_probe_disconnect(void);
 void bt_probe_bnep(void);
 void bt_probe_poll(void);

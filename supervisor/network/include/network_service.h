@@ -18,6 +18,14 @@ int network_connect_address(const uint8_t address[6],const char *name);
 void network_disconnect(void);
 void network_pair_confirm(void);
 void network_enable(int enabled);
+/* 设置本地蓝牙名(手机蓝牙列表里看到的名字)。UI 线程只入队, 真正的 BT IPC
+ * 由 PAN worker 执行 —— adapter 只在 worker 里创建, 跨线程直调会返回 -601。
+ * 0 = 已入队; -22 名字非法/为空; 队列满时静默丢弃(调用方按拍重试)。 */
+int network_set_bt_name(const char *name);
+/* 最近一次设置结果: -999 = 尚无结果, 0 = 成功, 其它为 bt_probe 返回码。 */
+int network_bt_name_result(void);
+/* 队列里还有待办命令(worker 据此临时加快 BT 拍)。 */
+int network_pending_commands(void);
 void network_service_poll(void);
 void network_service_view(struct network_view *);
 /* One independent PSM1 channel. Poll/start/result only on PAN worker. */

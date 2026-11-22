@@ -217,6 +217,23 @@ static int prepare(void)
     return 0;
 }
 
+/* 设置 adapter 本地蓝牙名: 固件 bttool 的 "name" 命令 -> cmd 0x22,
+ * payload = NUL 结尾名字(strncpy 上限 63)。返回 0 成功; 负值本地错误;
+ * 正值蓝牙服务返回码。注意固件重启后会按系统"设备名称"重新应用一次,
+ * 所以持久效果由 Chaos 侧(bt_name 模块)在开机后重新下发。 */
+int bt_probe_set_local_name(const char *name)
+{
+    uint8_t buf[64] = {0};
+    unsigned i = 0;
+    if (!name) return -22;
+    for (; name[i] && i < 63; i++) buf[i] = (uint8_t)name[i];
+    if (!i) return -22;
+    /* adapter/registration 只在 prepare 里建; 少了这一步 exchange 直接 -601。
+     * 本函数只应由 PAN worker(chaos.net) 调用。 */
+    if (prepare()) return -601;
+    return request(0x22, buf, sizeof(buf));
+}
+
 int bt_probe_local_address(uint8_t address[6])
 {
     if(!address)return -22;

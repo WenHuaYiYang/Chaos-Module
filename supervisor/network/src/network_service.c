@@ -50,6 +50,26 @@ int network_connect_address(const uint8_t *address,const char *name)
     request(6,0);
     return 0;
 }
+/* 待设置的本地蓝牙名(UI 线程写、worker 取走即用), 与命令 7 配对。 */
+static char pending_bt_name[32];
+static int bt_name_result=-999;
+int network_set_bt_name(const char *name)
+{
+    unsigned i;
+    if(!name)return -22;
+    for(i=0;i<31 && name[i];i++)if((unsigned char)name[i]<0x20||name[i]==0x7f)return -22;
+    if(!i)return -22;
+    unsigned p=lock();
+    memset(pending_bt_name,0,sizeof(pending_bt_name));
+    for(unsigned k=0;k<i;k++)pending_bt_name[k]=name[k];
+    bt_name_result=-999;
+    unlock(p);
+    request(7,0);
+    return 0;
+}
+int network_bt_name_result(void){unsigned p=lock();int r=bt_name_result;unlock(p);return r;}
+/* 队列里还有待办命令: worker 据此把 BT 拍临时加快(空闲时放慢)。 */
+int network_pending_commands(void){unsigned p=lock();int n=command_count!=0;unlock(p);return n;}
 void network_service_view(struct network_view *out){if(out){unsigned p=lock();memcpy(out,&published,sizeof(*out));unlock(p);
     /* A quarantined PAN worker no longer polls/publishes. Report the atomic
      * fault from the UI reader instead of showing stale NETWORK_READY. */
@@ -85,6 +105,13 @@ void network_service_poll(void)
                 } else error(-16,2);
             } else error(-16,2);
         }
+    }
+    if(c==7){
+        char name[32];p=lock();memcpy(name,pending_bt_name,32);unlock(p);
+        int rc=name[0]?bt_probe_set_local_name(name):-22;
+        p=lock();bt_name_result=rc;unlock(p);
+        if(rc)error(rc,8);
+        c=0;
     }
     if(!state.enabled)c=0;
     if(state.enabled && scan_when_idle && bt.phase==0 && !bt.cid){scan_when_idle=0;c=1;}

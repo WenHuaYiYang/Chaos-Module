@@ -60,6 +60,7 @@ mod corona_blur;
 mod notification_icon;
 mod web_nsh;
 mod connect_nsh;
+mod bt_name;
 mod btpan;
 
 mod text;

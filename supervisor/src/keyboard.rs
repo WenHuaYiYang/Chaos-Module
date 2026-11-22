@@ -138,6 +138,7 @@ pub(crate) enum Completion {
     FileName,
     BlurParam,
     GyroPointer,
+    BtName,
 }
 
 static mut TEXT: [u8; NSH_CAPACITY + 1] = [0; NSH_CAPACITY + 1];
@@ -916,6 +917,13 @@ unsafe extern "C" fn key_event(event: u32) {
                 }
                 x if x == Completion::DeviceName as u32 => {
                     crate::device_name::save_custom(core::ptr::addr_of!(TEXT) as *const u8)
+                }
+                x if x == Completion::BtName as u32 => {
+                    let ok = crate::bt_name::save(core::ptr::addr_of!(TEXT) as *const u8);
+                    if ok {
+                        crate::render_req(crate::page::Pid::BtName as u32);
+                    }
+                    ok
                 }
                 x if x == Completion::DeviceModel as u32 => {
                     crate::device_model::save_custom(core::ptr::addr_of!(TEXT) as *const u8)
