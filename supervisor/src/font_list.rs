@@ -694,3 +694,20 @@ pub(crate) unsafe fn tick() {
         }
     }
 }
+
+pub(crate) unsafe fn remote_select(slot:u32)->bool {
+    if font_apply::busy()||font_apply::revert_busy()!=0||FL_DEL_ST!=0{return false;}
+    if slot==0{let pending=font_apply::pending_get();if pending!=0{font_apply::cancel_pending(pending);}FL_SEL=FL_OFFICIAL_PENDING;return true;}
+    refresh();if !FL_ID[..FL_N as usize].contains(&slot)||!slot_file_ok(slot){return false;}
+    FL_SEL=slot;if slot!=font_apply::live_get(){font_apply::set_pending(slot);}else{let pending=font_apply::pending_get();if pending!=0{font_apply::cancel_pending(pending);}}true
+}
+pub(crate) unsafe fn remote_selected()->u32 {
+    if FL_SEL==FL_OFFICIAL_PENDING{0}else{let pending=font_apply::pending_get();if pending!=0{pending}else{font_apply::live_get()}}
+}
+pub(crate) unsafe fn remote_delete(slot:u32)->bool {
+    refresh();if FL_DEL_ST!=0||!FL_ID[..FL_N as usize].contains(&slot)||!slot_file_ok(slot){return false;}request_delete(slot);true
+}
+pub(crate) unsafe fn remote_options()->crate::control_catalog::Value {
+    refresh();let mut out=[0;256];let mut w=W::new(out.as_mut_ptr(),256);w.s("官方字体".as_bytes());
+    for slot in 1..=8{w.c(b'|').n(slot).c(b':');if let Some(i)=FL_ID[..FL_N as usize].iter().position(|id|*id==slot){w.s(core::slice::from_raw_parts(FL_NAMES[i].as_ptr(),cstr_len(FL_NAMES[i].as_ptr())));}else{w.s("空槽".as_bytes());}}w.end();out
+}

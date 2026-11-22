@@ -1165,3 +1165,18 @@ pub(crate) unsafe fn tick() {
         }
     }
 }
+
+/// Remote selection uses the same deferred apply/restore path as the native page.
+pub(crate) unsafe fn remote_select(pack:u32)->bool {
+    if restore_busy(){return false;}
+    if pack!=0{return restore_selection(pack);}
+    st_wr!(IC_PACK,0);st_wr!(IC_BUILT,0);st_wr!(IC_REQ,2);
+    crate::beautify_restore::remember_icon(0);true
+}
+pub(crate) unsafe fn remote_delete(pack:u32)->bool {
+    refresh_packs();if pending()||!IC_PACK_ID[..IC_PACK_N as usize].contains(&pack){return false;}request_delete(pack);true
+}
+pub(crate) unsafe fn remote_options()->crate::control_catalog::Value {
+    refresh_packs();let mut out=[0;256];let mut w=W::new(out.as_mut_ptr(),256);w.s("系统图标".as_bytes());
+    for slot in 1..=8{w.c(b'|').n(slot).c(b':');if let Some(i)=IC_PACK_ID[..IC_PACK_N as usize].iter().position(|id|*id==slot){let p=IC_PACKS[i].as_ptr();w.s(core::slice::from_raw_parts(p,cstr_len(p)));}else{w.s("空槽".as_bytes());}}w.end();out
+}

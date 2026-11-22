@@ -24,7 +24,7 @@ pub(crate) const WRITE:u32=2;
 pub(crate) const MANAGE:u32=4;
 pub(crate) const DEVELOPER:u32=8;
 pub(crate) const NSH:u32=32;
-pub(crate) const CONTROL:u32=16; // Reserved: no control opcode is implemented yet.
+pub(crate) const CONTROL:u32=16; // Android settings control; enforced by CCN1 and UI owner.
 
 const PATH:&[u8]=b"/data/chaos/connect-permissions.cfg\0";
 const TEMP:&[u8]=b"/data/chaos/connect-permissions.tmp\0";
@@ -64,6 +64,7 @@ pub(crate) unsafe fn set_policy(value:u32){
 }
 pub(crate) fn state()->u32{STATE.load(Ordering::Acquire)}
 pub(crate) fn disconnect(){
+    crate::control_catalog::chaos_control_reset();
     STATE.store(0,Ordering::Release);TOKEN.store(0,Ordering::Release);DECISION.store(0,Ordering::Release);
 }
 pub(crate) fn pending()->u32{
@@ -95,7 +96,7 @@ pub(crate) unsafe fn set_android(policy:u32,mask:u32) {
     let mut ok=false;
     if fd>=0 {ok=fw_api::write(fd,b.as_ptr(),7)==7;ok=fw_api::close(fd)==0 && ok;}
     if ok {ok=fw_api::capture_rename(ANDROID_TEMP.as_ptr(),ANDROID_PATH.as_ptr())==0;}
-    if ok {ANDROID_POLICY.store(policy,Ordering::Release);ANDROID_MASK.store(mask,Ordering::Release);connect_log::line("Android权限已保存，由手环实时执行");}
+    if ok {if policy==DENY||mask&CONTROL==0{crate::control_catalog::chaos_control_reset();}ANDROID_POLICY.store(policy,Ordering::Release);ANDROID_MASK.store(mask,Ordering::Release);connect_log::line("Android权限已保存，由手环实时执行");}
     else {fw_api::fs_remove(ANDROID_TEMP.as_ptr());connect_log::line("Android权限保存失败，保持原策略");}
 }
 #[no_mangle] pub extern "C" fn chaos_connect_android_policy()->u32 {android_policy()}

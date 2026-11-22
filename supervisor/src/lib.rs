@@ -39,6 +39,7 @@ mod connect_log;
 mod file_manager;
 mod connect_log_buffer;
 mod connect_permission;
+mod control_catalog;
 mod connect_radio;
 mod connect_prompt;
 mod cacheclean;

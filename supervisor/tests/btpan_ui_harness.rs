@@ -3,6 +3,7 @@
 use std::sync::{Mutex, OnceLock};
 
 pub use core::ptr::{read_volatile, write_volatile};
+pub use text::W;
 pub const FW_STYLE_HR_NAME: u32 = 1;
 pub const APP_ID: u32 = 200;
 pub static mut FG_PAGE: u32 = 34;
@@ -168,6 +169,11 @@ pub mod connect_radio {
 #[no_mangle] pub extern "C" fn chaos_connect_pan_cancel(){}
 
 pub mod keyboard { #[derive(Clone, Copy)] pub enum Completion { WebPassword } pub unsafe fn open(_: *const u8, _: Completion) {} }
+/// ChaosConnect 设置目录的宿主桩: 只提供 btpan 用到的值类型。
+pub mod control_catalog {
+    pub(crate) type Value = [u8; 256];
+}
+
 /// 实验性「极致省电」开关的宿主桩: 只记内存状态, 不落盘。
 pub mod power_mode {
     use std::sync::atomic::{AtomicBool, Ordering};

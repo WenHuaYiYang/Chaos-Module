@@ -1,5 +1,15 @@
 # 更新日志
 
+## v1.2.7-304fa87e — 融合上游 ChaosConnect 设置控制（2026-11-22）
+
+- 上游 2 个提交：**Android 端 Chaos 设置控制与权限校验**、按关联项回传设置状态、
+  目录批量读取（ChaosConnect 插件现在能远程改设置、换表盘）。
+- 新增 `control_catalog` 模块；`watchface::remote_select` 支持远程换表盘；
+  `tick_busy` 计入 `control_catalog::busy()`（按"1 秒内有过请求"的时间窗判定，
+  不会像之前几处那样恒真）。
+- 本分支的省电修复（截图前台门、notification busy 语义、s541 让路、600ms/proll 2）
+  全部保留。
+
 ## v1.2.7-4a6a33ed — 修掉省电模式反而 95% CPU 的抖动（2026-11-21）
 
 实测：不开省电 20–30%（已达标），开省电反而 **95%**。三个"恒真忙判定 + 过度节流"

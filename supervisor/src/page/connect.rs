@@ -130,9 +130,9 @@ static ANDROID_ROWS:&[RowModel]=&[
     RowModel::toggle("删除和重命名\0".as_bytes(),&MANAGE_DEF),
     RowModel::toggle("开发者模式\0".as_bytes(),&DEV_DEF),
     RowModel::toggle("NSH终端\0".as_bytes(),&NSH_DEF),
-    RowModel::toggle("设备控制（预留）\0".as_bytes(),&CONTROL_DEF),
+    RowModel::toggle("设备控制\0".as_bytes(),&CONTROL_DEF),
     RowModel{label:"开发者模式二次确认\0".as_bytes(),sub:RowSub::Dyn(policy_text),kind:kit::RowKind::Fn(open_developer_policy),trailing:0,refresh:None},
-    RowModel::note("默认每次连接需确认，仅允许读取文件。NSH终端默认关闭，允许后可直接执行系统命令，不受文件目录限制。关闭权限立即中止对应操作。开发者模式还须通过原开发者策略确认。设备控制为后续功能预留，目前无控制指令。手机不能修改这些权限。\0".as_bytes()),
+    RowModel::note("默认每次连接需确认，仅允许读取文件。NSH终端默认关闭，允许后可直接执行系统命令，不受文件目录限制。关闭权限立即中止对应操作。开发者模式还须通过原开发者策略确认。设备控制允许Android修改Chaos设置，不能修改ChaosConnect本身。手机不能修改这些权限。\0".as_bytes()),
 ];
 impl MenuSpec for AndroidPermissionsPage{fn rows(&self)->&'static [RowModel]{ANDROID_ROWS}}
 impl Page for AndroidPermissionsPage{
@@ -163,9 +163,9 @@ static PLUGIN_ROWS:&[RowModel]=&[
     RowModel::toggle("写入文件\0".as_bytes(),&PLUGIN_WRITE_DEF),
     RowModel::toggle("删除和重命名\0".as_bytes(),&PLUGIN_MANAGE_DEF),
     RowModel::toggle("开发者模式\0".as_bytes(),&PLUGIN_DEV_DEF),
-    RowModel::toggle("设备控制（预留）\0".as_bytes(),&PLUGIN_CONTROL_DEF),
+    RowModel::toggle("设备控制\0".as_bytes(),&PLUGIN_CONTROL_DEF),
     RowModel{label:"开发者模式二次确认\0".as_bytes(),sub:RowSub::Dyn(policy_text),kind:kit::RowKind::Fn(open_developer_policy),trailing:0,refresh:None},
-    RowModel::note("默认每次连接需确认，文件操作仅允许读取。写入与删除权限独立；开发者模式还需通过两端共用的二次确认策略。插件NSH终端无需独立权限，连接允许后即可使用。关闭连接许可或停用ChaosConnect会中止终端。客户端不能修改这些设置。旧插件在手环确认连接后可刷新目录；上传前需允许写入。设备控制位暂未实现操作。\0".as_bytes()),
+    RowModel::note("默认每次连接需确认，文件操作仅允许读取。写入与删除权限独立；开发者模式还需通过两端共用的二次确认策略。客户端不能修改这些设置。旧插件在手环确认连接后可刷新目录；上传前需允许写入。手环设置控制仅向Android提供。\0".as_bytes()),
 ];
 impl MenuSpec for PluginPermissionsPage{fn rows(&self)->&'static [RowModel]{PLUGIN_ROWS}}
 impl Page for PluginPermissionsPage{
